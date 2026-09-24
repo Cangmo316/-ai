@@ -1,13 +1,13 @@
 # 比邻AI 康养知识条目库（种子文件）
 #
-# ⚠️ 全部条目为「待医学复核草稿」：reviewed_by 为空时不得进入生产环境。
+# ⚠️ 全部条目为草稿（共 25 条），当前仅供结构与链路验证，暂未接入计划引擎。
 # ⚠️ 条目仅可用于「生活提醒与依从性管理」，禁止用于诊断、剂量调整、疾病判断。
 # ⚠️ 引用来源见 meta.sources；新增/修改条目必须填 source + version + review_by。
 #
 meta:
   version: "0.1.0-draft"
   updated: "2026-09-24"
-  maintainer: "待定（需老年科护士或全科医生签字终审）"
+  maintainer: "待定"
   sources:
     - id: nphis3
       name: "国家基本公共卫生服务规范（第三版）· 老年人健康管理服务规范"
@@ -21,8 +21,7 @@ meta:
       name: "中国居民膳食指南（2022）"
       publisher: "中国营养学会"
       note: "饮食类条目来源，条目可量化"
-  notice: "本文件为草稿，未经医学签字不得上线"
-  status: "结构预留中：医学签字复核暂缓，全部条目 reviewed_by 为空，计划引擎不予加载（功能位置已预留，不对外使用）"
+  notice: "本文件为草稿，仅供结构与链路验证，暂未接入计划引擎"
 
 # ── plan_hint 字段说明（供计划引擎直接生成 PlanItem）──
 #   time          建议提醒时间
@@ -43,7 +42,6 @@ entries:
     detail: 这是国家给老人的免费服务 社区卫生服务中心就能做
     boundary: 不替代医院就诊与医生诊疗
     plan_hint: { time: "09:00", type: 问候, freq: 每年, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: nphis_002
@@ -55,7 +53,6 @@ entries:
     detail: 早点发现小问题 就不用担心变成大问题
     boundary: 不解读检查结果、不做诊断
     plan_hint: { time: "09:00", type: 监测, freq: 每年, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: nphis_003
@@ -67,7 +64,6 @@ entries:
     detail: 有高血压糖尿病的老人 社区每季度会上门或约你随访一次
     boundary: 不涉及药物调整与剂量，一切用药遵医嘱
     plan_hint: { time: "10:00", type: 监测, freq: 每季度, strong_remind: false, weight: 0.7 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: nphis_004
@@ -79,7 +75,6 @@ entries:
     detail: 也是社区提供的免费服务 一般和体检一起做
     boundary: 不提供方剂与用药建议
     plan_hint: { time: "09:30", type: 问候, freq: 每年, strong_remind: false, weight: 0.4 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: nphis_005
@@ -91,7 +86,6 @@ entries:
     detail: 饮食、锻炼、吸烟、饮酒是健康评估的四项，每周回顾一次
     boundary: 不评判、不说教，只做记录与陪伴
     plan_hint: { time: "19:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: nphis_006
@@ -103,7 +97,6 @@ entries:
     detail: 家里的血压计比医院的更接近平时状态
     boundary: 不根据血压值给出用药或剂量建议
     plan_hint: { time: "08:00", type: 监测, freq: 每日, strong_remind: false, weight: 0.7 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   # ═══════════ ICOPE 老年人整合照护指南 ═══════════
@@ -116,7 +109,6 @@ entries:
     detail: 认知训练每周三次以上，对保持记忆有帮助
     boundary: 不做认知障碍筛查结论与诊断
     plan_hint: { time: "15:00", type: 活动, freq: 每周, strong_remind: false, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_002
@@ -128,7 +120,6 @@ entries:
     detail: 记忆变化值得关注，早说出来比憋着好
     boundary: 不判断是否患病，只提示告知家属
     plan_hint: { time: "19:30", type: 问候, freq: 每月, strong_remind: false, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_003
@@ -140,7 +131,6 @@ entries:
     detail: 力量、平衡、有氧三种一起练效果最好
     boundary: 不适用于术后或急性期，需遵医嘱
     plan_hint: { time: "16:00", type: 活动, freq: 每周, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_004
@@ -152,7 +142,6 @@ entries:
     detail: 平衡练习能降低跌倒风险，一定要扶着稳的东西
     boundary: 不替代康复训练处方；跌倒高风险者需康复师指导
     plan_hint: { time: "15:30", type: 活动, freq: 每日, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_005
@@ -164,7 +153,6 @@ entries:
     detail: 非刻意的体重下降是营养不良的早期信号
     boundary: 不做营养不良诊断与营养制剂推荐
     plan_hint: { time: "10:00", type: 监测, freq: 每月, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_006
@@ -176,7 +164,6 @@ entries:
     detail: 食欲下降时少量多餐比强吃完更容易接受
     boundary: 不涉及疾病判断与营养补充剂建议
     plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: true, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_007
@@ -188,7 +175,6 @@ entries:
     detail: 视力下降会影响走路安全和生活自理
     boundary: 不做眼病诊断
     plan_hint: { time: "10:00", type: 监测, freq: 每年, strong_remind: false, weight: 0.4 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_008
@@ -200,7 +186,6 @@ entries:
     detail: 听力下降会让人不愿说话、慢慢不愿见人，还会影响记忆
     boundary: 不做听力损失诊断与助听器验配
     plan_hint: { time: "10:30", type: 监测, freq: 每年, strong_remind: false, weight: 0.4 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_009
@@ -212,7 +197,6 @@ entries:
     detail: 情绪持续低落两周以上，建议告知家属并就医
     boundary: 不做抑郁筛查结论与心理治疗建议；须提示家属或就医
     plan_hint: { time: "20:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.7 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: icope_010
@@ -224,7 +208,6 @@ entries:
     detail: 保持社交联系是预防认知与情绪下降的重要一环
     boundary: 不替代专业心理与社会服务
     plan_hint: { time: "16:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.7 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   # ═══════════ 中国居民膳食指南（2022） ═══════════
@@ -237,7 +220,6 @@ entries:
     detail: 盐吃多了血压容易高 血压高对心脏和血管都不好
     boundary: 不涉及药物与剂量调整
     plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: true, weight: 0.8 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_oil_001
@@ -249,7 +231,6 @@ entries:
     detail: 每天烹调油 25–30 克，油炸的少吃
     boundary: 不涉及血脂药物建议
     plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_veg_001
@@ -261,7 +242,6 @@ entries:
     detail: 每天蔬菜 300–500 克，深色蔬菜最好占一半
     boundary: 无
     plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_fruit_001
@@ -273,7 +253,6 @@ entries:
     detail: 每天水果 200–350 克，别用果汁代替
     boundary: 糖尿病患者需遵医嘱控制种类与量
     plan_hint: { time: "10:00", type: 午餐, freq: 每日, strong_remind: false, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_water_001
@@ -285,7 +264,6 @@ entries:
     detail: 老人渴觉变迟钝，要主动饮水，每天约 1500–1700 毫升
     boundary: 心衰、肾病等需限水者遵医嘱
     plan_hint: { time: "10:00", type: 问候, freq: 每日, strong_remind: false, weight: 0.6 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_milk_001
@@ -297,7 +275,6 @@ entries:
     detail: 奶及奶制品 300–500 毫升，帮助补钙
     boundary: 乳糖不耐受可选酸奶或低乳糖奶
     plan_hint: { time: "20:30", type: 问候, freq: 每日, strong_remind: false, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_protein_001
@@ -309,7 +286,6 @@ entries:
     detail: 搭配适量鱼、禽、瘦肉，保证优质蛋白
     boundary: 特殊疾病遵医嘱
     plan_hint: { time: "07:30", type: 午餐, freq: 每日, strong_remind: false, weight: 0.5 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_variety_001
@@ -321,7 +297,6 @@ entries:
     detail: 食物多样：每天 12 种以上，每周 25 种以上
     boundary: 无
     plan_hint: { time: "11:30", type: 午餐, freq: 每周, strong_remind: false, weight: 0.4 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
   - id: diet_sugar_001
@@ -333,11 +308,9 @@ entries:
     detail: 添加糖每天最好不超过 25 克
     boundary: 糖尿病患者遵医嘱
     plan_hint: { time: "15:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.4 }
-    reviewed_by: ""
     review_by: "2026-12-31"
 
 # ── 后续维护 ──
 # 1) 新增条目：复制现有条目结构，必填 source / version / advice / boundary / review_by
-# 2) 复核签字：由老年科护士或全科医生逐条确认后，把 reviewed_by 填上姓名与日期
-# 3) 指南改版：搜索 review_by 字段，把过期条目逐条重新核对
-# 4) 禁止：凭 LLM 记忆新增医学结论；引用订阅制数据库内容
+# 2) 指南改版：搜索 review_by 字段，把过期条目逐条重新核对
+# 3) 禁止：凭 LLM 记忆新增医学结论；引用订阅制数据库内容

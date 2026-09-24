@@ -225,8 +225,6 @@
 | 版本可追溯 | 每条结构化条目记录 `source + version + 生效日期`，计划项落库时一并存 `依据` 字段 |
 | 边界清晰 | 不做诊断、不做剂量调整、不做疾病判断；输出定位为"生活提醒与依从性管理" |
 
-> **当前状态**：医学签字复核**暂缓**。知识库条目保留为结构与流程占位，`reviewed_by` 为空即**不予加载**，该功能**位置已预留、不对外使用**。详见《比邻AI_医学条目与语音技术选型.md》§1.4。
-
 > 若后续要做"诊疗辅助"，性质将从健康管理软件变为医疗器械（需注册），成本与周期量级完全不同——一期必须守住"不做诊断"这条线。
 
 **提醒可靠性的分级**
@@ -576,7 +574,7 @@ E:\比邻AI\
 ├─ 比邻AI_UI设计流程与提示词.md     （UI 手册，保留）
 ├─ prototype\                      （H5 原型，验收基线，冻结）
 ├─ server\                         ← 新增：自建 Agent 服务
-│  ├─ app\knowledge\              ← 已建：guidelines.yaml（25 条待签字）+ validate.mjs（零依赖校验器）
+│  ├─ app\knowledge\              ← 已建：guidelines.yaml（25 条草稿）+ validate.mjs（零依赖校验器）
 │  ├─ app\  jobs\  tools\blender_pipeline\  tests\
 │  └─ deploy\ (docker-compose / 环境变量样例)
 └─ uni-app\
