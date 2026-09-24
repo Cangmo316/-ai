@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>比邻AI · App 原型 V1</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ 图标库 ============ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M8 3v4M16 3v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-me" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4.5 20.5c0-3.8 3.4-6 7.5-6s7.5 2.2 7.5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4.2" fill="currentColor"/><path d="M3.6 21c0-4.2 3.8-6.8 8.4-6.8s8.4 2.6 8.4 6.8z" fill="currentColor"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="2" y="6" width="13" height="12" rx="3.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 11l6.2-3.6v9.2L15 13z" fill="currentColor"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-emoji" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5.2l3.4 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.5S4.5 15.7 4.5 10.6A4.7 4.7 0 0 1 12 7.3a4.7 4.7 0 0 1 7.5 3.3c0 5.1-7.5 9.9-7.5 9.9z" fill="currentColor"/></symbol>
+  <symbol id="i-role" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2.5 20c0-3.4 3-5.4 6.5-5.4s6.5 2 6.5 5.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M17 5.5l1.6 1.6L22 3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-face" viewBox="0 0 24 24"><circle cx="12" cy="9" r="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="8.5" r="1" fill="currentColor"/><circle cx="14" cy="8.5" r="1" fill="currentColor"/><path d="M4 21c0-4.2 3.6-6.6 8-6.6s8 2.4 8 6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-family" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16.5" cy="9.5" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19.5c0-3 2.8-4.7 6-4.7s6 1.7 6 4.7M15 19.5c0-2.4 1.8-3.7 4-3.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-health" viewBox="0 0 24 24"><path d="M3 12.5h4l2-5.5 3 11 2.5-6.5 1.5 3h5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-privacy" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9.2 12.2l2 2 3.6-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-hangup" viewBox="0 0 24 24"><path d="M12 9.5c-3.6 0-6.9 1-9.2 2.8v3.2c0 .8.7 1.5 1.5 1.5h2.3c.8 0 1.5-.7 1.5-1.5v-1.6c1.2-.4 2.5-.6 3.9-.6s2.7.2 3.9.6v1.6c0 .8.7 1.5 1.5 1.5h2.3c.8 0 1.5-.7 1.5-1.5v-3.2c-2.3-1.8-5.6-2.8-9.2-2.8z" fill="currentColor" transform="rotate(135 12 12)"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M11 5L7 8.5H4v7h3l6 4.5V5z" fill="currentColor"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.4a7.6 7.6 0 0 1 0 11.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-muted" viewBox="0 0 24 24"><path d="M11 5L7 8.5H4v7h3l6 4.5V5z" fill="currentColor"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M4 7h3.6l9 10H20M4 17h3.6l2.6-2.9M17 4l3 3-3 3M17 14l3 3-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 4v5h6V4M9 15h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-empty" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 15a4.5 4.5 0 0 0 7 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/></symbol>
+</svg>
+
+<div class="workbench">
+
+  <div class="toolbar">
+    <span class="toolbar__title">比邻AI 原型</span>
+    <button class="chip is-active" data-jump="splash">① 启动页</button>
+    <button class="chip" data-jump="chats">② 会话列表</button>
+    <button class="chip" data-jump="chat">③ 聊天详情</button>
+    <button class="chip" data-jump="vision">④ 视觉模式</button>
+    <button class="chip" data-jump="plans">⑤ 今日计划</button>
+    <button class="chip" data-jump="calendar">⑥ 日历</button>
+    <button class="chip" data-jump="me">⑦ 我的</button>
+    <button class="chip" data-jump="roles">⑧ 角色选择</button>
+    <button class="chip" data-jump="face">⑨ 3D 捏脸</button>
+    <button class="chip" data-jump="empty">⑩ 空态</button>
+    <button class="chip" data-jump="tokens">⑪ 设计规范</button>
+    <button class="chip chip--toggle" id="largeToggle">大字体模式</button>
+  </div>
+
+  <div class="device" id="device">
+    <div class="notch"></div>
+
+    <!-- ============ ① 启动页 ============ -->
+    <section class="screen is-active" data-screen="splash">
+      <div class="splash">
+        <div class="splash__ring">
+          <div class="splash__glow"></div>
+          <div class="splash__avatar"><svg class="icon"><use href="#i-person"/></svg></div>
+        </div>
+        <div class="splash__title">比邻AI</div>
+        <div class="splash__sub">天涯若比邻</div>
+        <button class="btn splash__cta" data-go="chats">开始使用</button>
+      </div>
+    </section>
+
+    <!-- ============ ② 会话列表页 ============ -->
+    <section class="screen" data-screen="chats">
+      <header class="nav"><h1 class="nav__title">比邻AI</h1></header>
+      <div class="screen-body">
+        <button class="chat-row" data-go="chat">
+          <span class="avatar" style="background:#07C160"><svg class="icon"><use href="#i-person"/></svg></span>
+          <span class="chat-row__main">
+            <span class="chat-row__name">儿子 小明</span>
+            <span class="chat-row__msg">别忘了中午吃药呀</span>
+          </span>
+          <span class="chat-row__side">
+            <span class="chat-row__time">09:12</span>
+            <span class="badge">2</span>
+          </span>
+        </button>
+        <button class="chat-row" data-go="chat">
+          <span class="avatar" style="background:#F5A623"><svg class="icon"><use href="#i-person"/></svg></span>
+          <span class="chat-row__main">
+            <span class="chat-row__name">老伴 老张</span>
+            <span class="chat-row__msg">今天天气真好，出来晒晒太阳</span>
+          </span>
+          <span class="chat-row__side"><span class="chat-row__time">08:40</span></span>
+        </button>
+        <button class="chat-row" data-go="chat">
+          <span class="avatar" style="background:#4C8DFF"><svg class="icon"><use href="#i-person"/></svg></span>
+          <span class="chat-row__main">
+            <span class="chat-row__name">女儿 小红</span>
+            <span class="chat-row__msg">晚上视频哦</span>
+          </span>
+          <span class="chat-row__side"><span class="chat-row__time">昨天</span></span>
+        </button>
+      </div>
+      <nav class="tabbar">
+        <button class="tabbar__item is-active" data-tab="chats"><svg class="icon"><use href="#i-chat"/></svg><span class="tabbar__label">对话</span></button>
+        <button class="tabbar__item" data-tab="plans"><svg class="icon"><use href="#i-cal"/></svg><span class="tabbar__label">日程</span></button>
+        <button class="tabbar__item" data-tab="me"><svg class="icon"><use href="#i-me"/></svg><span class="tabbar__label">我的</span></button>
+      </nav>
+    </section>
+
+    <!-- ============ ③ 聊天详情页 ============ -->
+    <section class="screen" data-screen="chat">
+      <header class="nav">
+        <button class="nav__back" data-go="chats" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
+        <h1 class="nav__title">儿子 小明</h1>
+        <button class="nav__action" data-go="vision" aria-label="视频通话"><svg class="icon" style="color:var(--color-primary)"><use href="#i-video"/></svg></button>
+      </header>
+      <div class="chat-body">
+        <div class="chat-time">今天 09:10</div>
+
+        <div class="msg">
+          <span class="msg__avatar" style="background:#07C160"><svg class="icon"><use href="#i-person"/></svg></span>
+          <div class="bubble bubble--ai">妈，今天感觉怎么样</div>
+        </div>
+
+        <div class="msg msg--me">
+          <span class="msg__avatar" style="background:#8C8C8C"><svg class="icon"><use href="#i-person"/></svg></span>
+          <div class="bubble bubble--me">挺好的，就是有点想你们</div>
+        </div>
+
+        <div class="msg">
+          <span class="msg__avatar" style="background:#07C160"><svg class="icon"><use href="#i-person"/></svg></span>
+          <div class="bubble bubble--ai">那我晚上给你打视频，顺便看看你气色</div>
+        </div>
+
+        <div class="msg">
+          <span class="msg__avatar" style="background:#07C160"><svg class="icon"><use href="#i-person"/></svg></span>
+          <div class="bubble bubble--ai" style="padding:12px 14px">
+            <div class="bubble__voice">
+              <svg class="icon icon--sm" style="color:var(--color-primary)"><use href="#i-speaker"/></svg>
+              <svg width="66" height="18" viewBox="0 0 66 18" style="width:66px;height:18px;flex:1">
+                <g fill="#07C160">
+                  <rect x="0"  y="6" width="3" height="6"  rx="1.5"/>
+                  <rect x="7"  y="3" width="3" height="12" rx="1.5"/>
+                  <rect x="14" y="0" width="3" height="18" rx="1.5"/>
+                  <rect x="21" y="4" width="3" height="10" rx="1.5"/>
+                  <rect x="28" y="1" width="3" height="16" rx="1.5"/>
+                  <rect x="35" y="5" width="3" height="8"  rx="1.5"/>
+                  <rect x="42" y="2" width="3" height="14" rx="1.5"/>
+                  <rect x="49" y="0" width="3" height="18" rx="1.5"/>
+                  <rect x="56" y="4" width="3" height="10" rx="1.5"/>
+                  <rect x="63" y="6" width="3" height="6"  rx="1.5"/>
+                </g>
+              </svg>
+              <span style="font-size:12px;color:var(--color-text-2)">6&#8243;</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg msg--me">
+          <span class="msg__avatar" style="background:#8C8C8C"><svg class="icon"><use href="#i-person"/></svg></span>
+          <div class="bubble bubble--me">好呀，我等着</div>
+        </div>
+      </div>
+
+      <div class="emoji-panel" id="emojiPanel">
+        <div class="emoji-grid">
+          <button class="emoji" data-emoji="❤️"><span>❤️</span><span>爱心</span></button>
+          <button class="emoji" data-emoji="☀️"><span>☀️</span><span>太阳</span></button>
+          <button class="emoji" data-emoji="🤗"><span>🤗</span><span>拥抱</span></button>
+          <button class="emoji" data-emoji="😊"><span>😊</span><span>笑脸</span></button>
+          <button class="emoji" data-emoji="💊"><span>💊</span><span>药丸</span></button>
+          <button class="emoji" data-emoji="🍚"><span>🍚</span><span>饭菜</span></button>
+        </div>
+      </div>
+
+      <div class="composer">
+        <button class="composer__btn" data-toast="长按即可说话（原型演示）" aria-label="语音"><svg class="icon"><use href="#i-mic"/></svg></button>
+        <input class="composer__input" placeholder="说点什么…" aria-label="输入框">
+        <button class="composer__btn" id="emojiBtn" aria-label="表情"><svg class="icon"><use href="#i-emoji"/></svg></button>
+        <button class="composer__btn" data-toast="更多：表情 / 照片 / 日程提醒" aria-label="更多"><svg class="icon"><use href="#i-plus"/></svg></button>
+      </div>
+    </section>
+
+    <!-- ============ ④ 视觉模式页（3D 数字人通话） ============ -->
+    <section class="screen" data-screen="vision">
+      <div class="vision">
+        <div class="vision__room">
+          <div class="vision__lamp"></div>
+          <div class="vision__plant"></div>
+        </div>
+        <div class="vision__topbar">
+          <div>
+            <span class="vision__tag">AI 数字人通话</span>
+            <div class="vision__timer" id="callTimer">通话中 00:42</div>
+          </div>
+          <div class="vision__selfview"><svg class="icon"><use href="#i-person"/></svg></div>
+        </div>
+        <div class="vision__person">
+          <div class="vision__head"></div>
+          <div class="vision__torso"></div>
+        </div>
+        <div class="vision__caption">妈，今天药按时吃了没</div>
+        <div class="vision__controls">
+          <button class="call-btn" id="muteBtn" aria-label="静音"><svg class="icon"><use href="#i-mic"/></svg></button>
+          <button class="call-btn call-btn--hangup" data-go="chat" aria-label="挂断"><svg class="icon"><use href="#i-hangup"/></svg></button>
+          <button class="call-btn" id="spkBtn" aria-label="扬声器"><svg class="icon"><use href="#i-speaker"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ⑤ 今日计划页 ============ -->
+    <section class="screen" data-screen="plans">
+      <header class="nav nav--solid"><h1 class="nav__title">今日计划</h1></header>
+      <div class="screen-body">
+        <div class="plan-head">
+          <div class="plan-head__date">9月23日 周三 · 共 4 项，已完成 2 项</div>
+        </div>
+        <div class="plan-list">
+          <div class="plan-card is-done">
+            <div class="plan-card__time">08:00</div>
+            <div class="plan-card__main">
+              <div class="plan-card__title">用药提醒</div>
+              <div class="plan-card__desc">降压药 1 片，饭后温水送服</div>
+            </div>
+            <div class="plan-card__state state--done"><svg class="icon"><use href="#i-check"/></svg></div>
+          </div>
+          <div class="plan-card is-done">
+            <div class="plan-card__time">12:00</div>
+            <div class="plan-card__main">
+              <div class="plan-card__title">午餐提醒</div>
+              <div class="plan-card__desc">少油少盐，多吃青菜</div>
+            </div>
+            <div class="plan-card__state state--done"><svg class="icon"><use href="#i-check"/></svg></div>
+          </div>
+          <div class="plan-card">
+            <div class="plan-card__time">15:00</div>
+            <div class="plan-card__main">
+              <div class="plan-card__title">散步提醒</div>
+              <div class="plan-card__desc">小区公园 30 分钟</div>
+            </div>
+            <div class="plan-card__state state--todo"><svg class="icon"><use href="#i-clock"/></svg></div>
+          </div>
+          <div class="plan-card">
+            <div class="plan-card__time">19:00</div>
+            <div class="plan-card__main">
+              <div class="plan-card__title">晚间问候</div>
+              <div class="plan-card__desc">儿子会发来消息</div>
+            </div>
+            <div class="plan-card__state state--heart"><svg class="icon"><use href="#i-heart"/></svg></div>
+          </div>
+        </div>
+        <div class="plan-footer">
+          <button class="btn btn--ghost btn--block" data-go="calendar">查看日历</button>
+        </div>
+      </div>
+      <nav class="tabbar">
+        <button class="tabbar__item" data-tab="chats"><svg class="icon"><use href="#i-chat"/></svg><span class="tabbar__label">对话</span></button>
+        <button class="tabbar__item is-active" data-tab="plans"><svg class="icon"><use href="#i-cal"/></svg><span class="tabbar__label">日程</span></button>
+        <button class="tabbar__item" data-tab="me"><svg class="icon"><use href="#i-me"/></svg><span class="tabbar__label">我的</span></button>
+      </nav>
+    </section>
+
+    <!-- ============ ⑥ 日历视图 ============ -->
+    <section class="screen" data-screen="calendar">
+      <header class="nav nav--solid">
+        <button class="nav__back" data-go="plans" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
+        <h1 class="nav__title">日历</h1>
+      </header>
+      <div class="screen-body">
+        <div class="cal">
+          <div class="cal__head">
+            <button class="cal__nav" data-toast="上一月（原型演示）" aria-label="上一月"><svg class="icon"><use href="#i-back"/></svg></button>
+            <span class="cal__month">2026 年 9 月</span>
+            <button class="cal__nav" data-toast="下一月（原型演示）" aria-label="下一月"><svg class="icon"><use href="#i-chev"/></svg></button>
+          </div>
+          <div class="cal__week">
+            <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+          </div>
+          <div class="cal__grid" id="calGrid"></div>
+        </div>
+        <div class="group">
+          <div class="row" style="cursor:default">
+            <span class="row__icon" style="background:#FFF5E5;color:var(--color-warm)"><svg class="icon"><use href="#i-cal"/></svg></span>
+            <span class="row__label">本月计划</span>
+            <span class="row__value">19 项，已打卡 12 项</span>
+          </div>
+        </div>
+        <div class="plan-footer">
+          <button class="btn btn--ghost btn--block" data-go="plans">回到今日计划</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ⑦ 我的页 ============ -->
+    <section class="screen" data-screen="me">
+      <header class="nav nav--solid"><h1 class="nav__title">我的</h1></header>
+      <div class="screen-body">
+        <div class="profile-head">
+          <div class="profile-head__avatar"><svg class="icon"><use href="#i-person"/></svg></div>
+          <div>
+            <div class="profile-head__name">王奶奶</div>
+            <div class="profile-head__desc">有人陪着说说话，日子就有滋味</div>
+          </div>
+        </div>
+
+        <div class="section-title">陪伴设置</div>
+        <div class="group">
+          <button class="row" data-go="roles">
+            <span class="row__icon"><svg class="icon"><use href="#i-role"/></svg></span>
+            <span class="row__label">智能体角色</span>
+            <span class="row__value" id="roleValue">儿子 · 小明</span>
+            <svg class="icon icon--sm row__chev"><use href="#i-chev"/></svg>
+          </button>
+          <button class="row" data-go="face">
+            <span class="row__icon"><svg class="icon"><use href="#i-face"/></svg></span>
+            <span class="row__label">数字人形象</span>
+            <span class="row__value">小明 3D 形象</span>
+            <svg class="icon icon--sm row__chev"><use href="#i-chev"/></svg>
+          </button>
+          <button class="row" data-toast="已绑定：儿子 小明、女儿 小红">
+            <span class="row__icon"><svg class="icon"><use href="#i-family"/></svg></span>
+            <span class="row__label">家人绑定</span>
+            <span class="row__value">儿子 / 女儿 已绑定</span>
+            <svg class="icon icon--sm row__chev"><use href="#i-chev"/></svg>
+          </button>
+        </div>
+
+        <div class="section-title">健康与设置</div>
+        <div class="group">
+          <button class="row" data-toast="用药 · 血压 · 体检（原型演示）">
+            <span class="row__icon"><svg class="icon"><use href="#i-health"/></svg></span>
+            <span class="row__label">健康档案</span>
+            <svg class="icon icon--sm row__chev"><use href="#i-chev"/></svg>
+          </button>
+          <div class="row" style="cursor:default">
+            <span class="row__icon"><svg class="icon"><use href="#i-settings"/></svg></span>
+            <span class="row__label">大字体模式</span>
+            <button class="switch" id="largeSwitch" aria-label="大字体模式"></button>
+          </div>
+          <button class="row" data-toast="AI 记忆可查看与删除（原型演示）">
+            <span class="row__icon"><svg class="icon"><use href="#i-privacy"/></svg></span>
+            <span class="row__label">隐私 · AI 记忆</span>
+            <svg class="icon icon--sm row__chev"><use href="#i-chev"/></svg>
+          </button>
+        </div>
+      </div>
+      <nav class="tabbar">
+        <button class="tabbar__item" data-tab="chats"><svg class="icon"><use href="#i-chat"/></svg><span class="tabbar__label">对话</span></button>
+        <button class="tabbar__item" data-tab="plans"><svg class="icon"><use href="#i-cal"/></svg><span class="tabbar__label">日程</span></button>
+        <button class="tabbar__item is-active" data-tab="me"><svg class="icon"><use href="#i-me"/></svg><span class="tabbar__label">我的</span></button>
+      </nav>
+    </section>
+
+    <!-- ============ ⑧ 智能体角色选择页 ============ -->
+    <section class="screen" data-screen="roles">
+      <header class="nav">
+        <button class="nav__back" data-go="me" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
+        <h1 class="nav__title">选择你的AI亲人</h1>
+      </header>
+      <div class="screen-body">
+        <div class="role-list" id="roleList">
+          <button class="role-card is-selected" data-role="儿子 · 小明">
+            <span class="role-card__avatar" style="background:#07C160"><svg class="icon"><use href="#i-person"/></svg></span>
+            <span class="role-card__main">
+              <span class="role-card__name">AI子女 · 小明</span>
+              <span class="role-card__desc">像儿子一样关心你</span>
+            </span>
+            <span class="role-card__check"><svg class="icon"><use href="#i-check"/></svg></span>
+          </button>
+          <button class="role-card" data-role="老伴儿 · 老张">
+            <span class="role-card__avatar" style="background:#F5A623"><svg class="icon"><use href="#i-person"/></svg></span>
+            <span class="role-card__main">
+              <span class="role-card__name">老伴儿 · 老张</span>
+              <span class="role-card__desc">知冷知热说说话</span>
+            </span>
+            <span class="role-card__check"><svg class="icon"><use href="#i-check"/></svg></span>
+          </button>
+          <button class="role-card" data-role="亲友 · 李姐">
+            <span class="role-card__avatar" style="background:#4C8DFF"><svg class="icon"><use href="#i-person"/></svg></span>
+            <span class="role-card__main">
+              <span class="role-card__name">亲友 · 李姐</span>
+              <span class="role-card__desc">老姐妹唠家常</span>
+            </span>
+            <span class="role-card__check"><svg class="icon"><use href="#i-check"/></svg></span>
+          </button>
+        </div>
+        <div class="plan-footer">
+          <button class="btn btn--primary btn--block" data-go="chats">用这个角色开始聊天</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ⑨ 3D 捏脸页 ============ -->
+    <section class="screen" data-screen="face">
+      <header class="nav nav--solid">
+        <button class="nav__back" data-go="me" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
+        <h1 class="nav__title">数字人形象</h1>
+      </header>
+      <div class="face-page">
+        <div class="face-preview">
+          <span class="face-preview__badge">3D 实时预览 · 可旋转</span>
+          <div class="face-model">
+            <div class="face-model__head"><div class="face-model__hair"></div></div>
+            <div class="face-model__torso"></div>
+          </div>
+          <span class="face-preview__hint">左右拖动可旋转视角</span>
+        </div>
+        <div class="face-controls" id="faceControls"></div>
+        <div class="face-actions">
+          <button class="btn btn--ghost" id="randomBtn"><svg class="icon icon--sm"><use href="#i-shuffle"/></svg>随机生成</button>
+          <button class="btn btn--primary" data-toast="形象已保存" ><svg class="icon icon--sm"><use href="#i-save"/></svg>保存形象</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ⑩ 空态 ============ -->
+    <section class="screen" data-screen="empty">
+      <header class="nav"><h1 class="nav__title">比邻AI</h1></header>
+      <div class="screen-body">
+        <div class="empty">
+          <svg class="icon"><use href="#i-empty"/></svg>
+          <div style="font-size:var(--font-body);color:var(--color-text)">还没有聊天</div>
+          <div>绑定家人或选一位 AI 亲人，就能开始说话了</div>
+          <button class="btn btn--primary" style="margin-top:8px" data-go="roles">去选一位 AI 亲人</button>
+        </div>
+      </div>
+      <nav class="tabbar">
+        <button class="tabbar__item is-active" data-tab="chats"><svg class="icon"><use href="#i-chat"/></svg><span class="tabbar__label">对话</span></button>
+        <button class="tabbar__item" data-tab="plans"><svg class="icon"><use href="#i-cal"/></svg><span class="tabbar__label">日程</span></button>
+        <button class="tabbar__item" data-tab="me"><svg class="icon"><use href="#i-me"/></svg><span class="tabbar__label">我的</span></button>
+      </nav>
+    </section>
+
+    <!-- ============ ⑪ 设计规范速查 ============ -->
+    <section class="screen" data-screen="tokens">
+      <header class="nav nav--solid">
+        <button class="nav__back" data-go="me" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
+        <h1 class="nav__title">设计规范</h1>
+      </header>
+      <div class="screen-body tokens">
+        <h3>色彩</h3>
+        <div class="swatches">
+          <div class="swatch"><i style="background:#07C160"></i><span>品牌主色<br><code>#07C160</code></span></div>
+          <div class="swatch"><i style="background:#06AD56"></i><span>主色深<br><code>#06AD56</code></span></div>
+          <div class="swatch"><i style="background:#EDEDED"></i><span>页面背景<br><code>#EDEDED</code></span></div>
+          <div class="swatch"><i style="background:#FFFFFF"></i><span>卡片/气泡<br><code>#FFFFFF</code></span></div>
+          <div class="swatch"><i style="background:#1A1A1A"></i><span>文字主色<br><code>#1A1A1A</code></span></div>
+          <div class="swatch"><i style="background:#8C8C8C"></i><span>文字辅助<br><code>#8C8C8C</code></span></div>
+          <div class="swatch"><i style="background:#F5A623"></i><span>暖色点缀<br><code>#F5A623</code></span></div>
+          <div class="swatch"><i style="background:#E64340"></i><span>强调/警示<br><code>#E64340</code></span></div>
+        </div>
+
+        <h3>适老化基准</h3>
+        <table class="spec-table">
+          <tr><td>正文字号</td><td>&#8805;16px（大字模式 &#8805;20px）</td></tr>
+          <tr><td>标题字号</td><td>20 – 24px</td></tr>
+          <tr><td>触控目标</td><td>&#8805;44×44pt，适老 48 – 56px</td></tr>
+          <tr><td>对比度</td><td>&#8805;4.5 : 1</td></tr>
+          <tr><td>圆角</td><td>气泡 12px / 卡片 16px / 主按钮全圆</td></tr>
+          <tr><td>间距栅格</td><td>8pt 基准</td></tr>
+          <tr><td>画板</td><td>iOS 375×812 · Android 360×800 · 小程序 375×667</td></tr>
+        </table>
+
+        <h3>评审自查</h3>
+        <table class="spec-table">
+          <tr><td>正文 &#8805;16px / 点击 &#8805;48px / 对比度 &#8805;4.5:1</td><td>&#10003;</td></tr>
+          <tr><td>三个 Tab 图标 + 文字</td><td>&#10003;</td></tr>
+          <tr><td>AI 消息句末不加句号、口语化</td><td>&#10003;</td></tr>
+          <tr><td>视觉模式控件 &#8805;56px</td><td>&#10003;</td></tr>
+          <tr><td>大字体模式变体</td><td>&#10003; 见工具栏开关</td></tr>
+          <tr><td>空态 / 首次使用</td><td>&#10003; 见「⑩ 空态」</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

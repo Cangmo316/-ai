@@ -1,0 +1,34 @@
+/* 比邻AI · SCSS 变量层
+   运行时用的设计 Token 在 App.vue 的 :root / page 上以 CSS 变量暴露，
+   这里保留一份 SCSS 变量，方便在编译期做计算。 */
+
+$bl-primary: #07C160;
+$bl-primary-pressed: #06AD56;
+$bl-bg: #EDEDED;
+$bl-surface: #FFFFFF;
+$bl-text: #1A1A1A;
+$bl-text-2: #8C8C8C;
+$bl-warm: #F5A623;
+$bl-danger: #E64340;
+$bl-divider: #E5E5E5;
+$bl-bubble-me: #95EC69;
+$bl-icon-muted: #C4C4C4;
+
+$bl-font-caption: 28rpx; // 14px
+$bl-font-body: 32rpx;    // 16px
+$bl-font-title: 40rpx;   // 20px
+$bl-font-display: 48rpx; // 24px
+
+$bl-radius-bubble: 24rpx;
+$bl-radius-card: 32rpx;
+$bl-radius-pill: 999rpx;
+
+$bl-touch: 96rpx;        // 48px
+$bl-row: 112rpx;         // 56px
+$bl-tabbar: 112rpx;      // 56px
+$bl-avatar: 104rpx;      // 52px
+
+/* uni-app 内置变量的兜底，避免编译告警 */
+$uni-color-primary: $bl-primary;
+$uni-bg-color: $bl-surface;
+$uni-text-color: $bl-text;

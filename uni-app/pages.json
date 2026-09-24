@@ -1,0 +1,30 @@
+{
+  "pages": [
+    { "path": "pages/splash/splash",           "style": { "navigationStyle": "custom" } },
+    { "path": "pages/chats/chats",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/empty/empty",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/chat-detail/chat-detail", "style": { "navigationStyle": "custom" } },
+    { "path": "pages/vision/vision",           "style": { "navigationStyle": "custom" } },
+    { "path": "pages/plans/plans",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/calendar/calendar",       "style": { "navigationStyle": "custom" } },
+    { "path": "pages/me/me",                   "style": { "navigationStyle": "custom" } },
+    { "path": "pages/roles/roles",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/face/face",               "style": { "navigationStyle": "custom" } },
+    { "path": "pages/tokens/tokens",           "style": { "navigationStyle": "custom" } }
+  ],
+  "easycom": {
+    "autoscan": true,
+    "custom": {
+      "^bl-(.*)": "@/components/bl-$1/bl-$1.vue"
+    }
+  },
+  "globalStyle": {
+    "navigationStyle": "custom",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "比邻AI",
+    "navigationBarBackgroundColor": "#EDEDED",
+    "backgroundColor": "#EDEDED",
+    "backgroundColorTop": "#EDEDED",
+    "backgroundColorBottom": "#EDEDED"
+  }
+}
