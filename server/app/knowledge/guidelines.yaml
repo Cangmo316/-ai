@@ -1,0 +1,343 @@
+# 比邻AI 康养知识条目库（种子文件）
+#
+# ⚠️ 全部条目为「待医学复核草稿」：reviewed_by 为空时不得进入生产环境。
+# ⚠️ 条目仅可用于「生活提醒与依从性管理」，禁止用于诊断、剂量调整、疾病判断。
+# ⚠️ 引用来源见 meta.sources；新增/修改条目必须填 source + version + review_by。
+#
+meta:
+  version: "0.1.0-draft"
+  updated: "2026-09-24"
+  maintainer: "待定（需老年科护士或全科医生签字终审）"
+  sources:
+    - id: nphis3
+      name: "国家基本公共卫生服务规范（第三版）· 老年人健康管理服务规范"
+      publisher: "国家卫生健康委员会"
+      note: "主干来源，政府发布，面向基层非诊疗的健康管理场景"
+    - id: icope
+      name: "ICOPE 老年人整合照护指南（中文版）"
+      publisher: "世界卫生组织 WHO"
+      note: "内在能力六维：认知 / 运动 / 营养 / 感官 / 心理 / 活力"
+    - id: diet2022
+      name: "中国居民膳食指南（2022）"
+      publisher: "中国营养学会"
+      note: "饮食类条目来源，条目可量化"
+  notice: "本文件为草稿，未经医学签字不得上线"
+  status: "结构预留中：医学签字复核暂缓，全部条目 reviewed_by 为空，计划引擎不予加载（功能位置已预留，不对外使用）"
+
+# ── plan_hint 字段说明（供计划引擎直接生成 PlanItem）──
+#   time          建议提醒时间
+#   type          提醒类型：用药 / 午餐 / 活动 / 监测 / 问候
+#   freq          频率：每日 / 每周 / 每月 / 每季度 / 每年
+#   strong_remind 是否强提醒（用药、午餐为强提醒，不受降频影响）
+#   weight        计划引擎权重，越高越优先纳入（0–1）
+
+entries:
+
+  # ═══════════ 国家基本公共卫生服务规范（第三版）· 老年人健康管理服务规范 ═══════════
+  - id: nphis_001
+    source: nphis3
+    version: "第三版"
+    category: 健康管理
+    audience: [全员, 65岁以上]
+    advice: 每年做一次健康管理 让医生看看身体情况
+    detail: 这是国家给老人的免费服务 社区卫生服务中心就能做
+    boundary: 不替代医院就诊与医生诊疗
+    plan_hint: { time: "09:00", type: 问候, freq: 每年, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: nphis_002
+    source: nphis3
+    version: "第三版"
+    category: 监测
+    audience: [全员, 65岁以上]
+    advice: 每年做一次体检 量血压 查血糖 查血脂 做心电图
+    detail: 早点发现小问题 就不用担心变成大问题
+    boundary: 不解读检查结果、不做诊断
+    plan_hint: { time: "09:00", type: 监测, freq: 每年, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: nphis_003
+    source: nphis3
+    version: "第三版"
+    category: 慢病随访
+    audience: [高血压, 糖尿病]
+    advice: 每三个月去社区量一次血压 医生会记下来
+    detail: 有高血压糖尿病的老人 社区每季度会上门或约你随访一次
+    boundary: 不涉及药物调整与剂量，一切用药遵医嘱
+    plan_hint: { time: "10:00", type: 监测, freq: 每季度, strong_remind: false, weight: 0.7 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: nphis_004
+    source: nphis3
+    version: "第三版"
+    category: 中医保健
+    audience: [全员, 65岁以上]
+    advice: 每年做一次中医体质辨识 顺便问问平时该怎么保养
+    detail: 也是社区提供的免费服务 一般和体检一起做
+    boundary: 不提供方剂与用药建议
+    plan_hint: { time: "09:30", type: 问候, freq: 每年, strong_remind: false, weight: 0.4 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: nphis_005
+    source: nphis3
+    version: "第三版"
+    category: 生活方式
+    audience: [全员]
+    advice: 这周吃饭怎么样 有没有出去走走 烟酒还抽吗
+    detail: 饮食、锻炼、吸烟、饮酒是健康评估的四项，每周回顾一次
+    boundary: 不评判、不说教，只做记录与陪伴
+    plan_hint: { time: "19:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: nphis_006
+    source: nphis3
+    version: "第三版"
+    category: 监测
+    audience: [高血压]
+    advice: 量完血压记一下 下次给医生看
+    detail: 家里的血压计比医院的更接近平时状态
+    boundary: 不根据血压值给出用药或剂量建议
+    plan_hint: { time: "08:00", type: 监测, freq: 每日, strong_remind: false, weight: 0.7 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  # ═══════════ ICOPE 老年人整合照护指南 ═══════════
+  - id: icope_001
+    source: icope
+    version: "2019 中文版"
+    category: 认知
+    audience: [全员]
+    advice: 今天动动脑子 想想以前的事 或者学个新东西
+    detail: 认知训练每周三次以上，对保持记忆有帮助
+    boundary: 不做认知障碍筛查结论与诊断
+    plan_hint: { time: "15:00", type: 活动, freq: 每周, strong_remind: false, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_002
+    source: icope
+    version: "2019 中文版"
+    category: 认知
+    audience: [全员]
+    advice: 要是觉得最近老忘事 跟家里人念叨一声
+    detail: 记忆变化值得关注，早说出来比憋着好
+    boundary: 不判断是否患病，只提示告知家属
+    plan_hint: { time: "19:30", type: 问候, freq: 每月, strong_remind: false, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_003
+    source: icope
+    version: "2019 中文版"
+    category: 运动
+    audience: [全员]
+    advice: 一周练上三次 动动胳膊腿 扶着椅子慢慢蹲起也行
+    detail: 力量、平衡、有氧三种一起练效果最好
+    boundary: 不适用于术后或急性期，需遵医嘱
+    plan_hint: { time: "16:00", type: 活动, freq: 每周, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_004
+    source: icope
+    version: "2019 中文版"
+    category: 运动
+    audience: [全员]
+    advice: 出去走走 回来扶着桌子单脚站一会儿
+    detail: 平衡练习能降低跌倒风险，一定要扶着稳的东西
+    boundary: 不替代康复训练处方；跌倒高风险者需康复师指导
+    plan_hint: { time: "15:30", type: 活动, freq: 每日, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_005
+    source: icope
+    version: "2019 中文版"
+    category: 营养
+    audience: [全员]
+    advice: 这个月称过体重没有 裤子松了要跟我说
+    detail: 非刻意的体重下降是营养不良的早期信号
+    boundary: 不做营养不良诊断与营养制剂推荐
+    plan_hint: { time: "10:00", type: 监测, freq: 每月, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_006
+    source: icope
+    version: "2019 中文版"
+    category: 营养
+    audience: [全员]
+    advice: 胃口不好就少吃多餐 别硬撑着吃一大碗
+    detail: 食欲下降时少量多餐比强吃完更容易接受
+    boundary: 不涉及疾病判断与营养补充剂建议
+    plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: true, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_007
+    source: icope
+    version: "2019 中文版"
+    category: 感官
+    audience: [全员]
+    advice: 眼睛要是看不清了 去配副合适的眼镜
+    detail: 视力下降会影响走路安全和生活自理
+    boundary: 不做眼病诊断
+    plan_hint: { time: "10:00", type: 监测, freq: 每年, strong_remind: false, weight: 0.4 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_008
+    source: icope
+    version: "2019 中文版"
+    category: 感官
+    audience: [全员]
+    advice: 要是老听不清别人说话 去查查听力 配个助听器不丢人
+    detail: 听力下降会让人不愿说话、慢慢不愿见人，还会影响记忆
+    boundary: 不做听力损失诊断与助听器验配
+    plan_hint: { time: "10:30", type: 监测, freq: 每年, strong_remind: false, weight: 0.4 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_009
+    source: icope
+    version: "2019 中文版"
+    category: 情绪
+    audience: [全员]
+    advice: 这两天心里闷不闷 有事跟我说说
+    detail: 情绪持续低落两周以上，建议告知家属并就医
+    boundary: 不做抑郁筛查结论与心理治疗建议；须提示家属或就医
+    plan_hint: { time: "20:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.7 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: icope_010
+    source: icope
+    version: "2019 中文版"
+    category: 社交
+    audience: [全员]
+    advice: 给老伙计打个电话聊聊 别一个人闷在家里
+    detail: 保持社交联系是预防认知与情绪下降的重要一环
+    boundary: 不替代专业心理与社会服务
+    plan_hint: { time: "16:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.7 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  # ═══════════ 中国居民膳食指南（2022） ═══════════
+  - id: diet_salt_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [高血压, 全员]
+    advice: 每天吃盐不超过5克 做菜少放酱油和咸菜
+    detail: 盐吃多了血压容易高 血压高对心脏和血管都不好
+    boundary: 不涉及药物与剂量调整
+    plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: true, weight: 0.8 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_oil_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 一天炒菜的油控制在两勺半左右
+    detail: 每天烹调油 25–30 克，油炸的少吃
+    boundary: 不涉及血脂药物建议
+    plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_veg_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 中午晚上都吃个青菜 一天差不多一斤
+    detail: 每天蔬菜 300–500 克，深色蔬菜最好占一半
+    boundary: 无
+    plan_hint: { time: "11:30", type: 午餐, freq: 每日, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_fruit_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 上午加个水果 一个苹果或者一个橘子那么多
+    detail: 每天水果 200–350 克，别用果汁代替
+    boundary: 糖尿病患者需遵医嘱控制种类与量
+    plan_hint: { time: "10:00", type: 午餐, freq: 每日, strong_remind: false, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_water_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 喝口水吧 不渴也得喝 一天七八杯
+    detail: 老人渴觉变迟钝，要主动饮水，每天约 1500–1700 毫升
+    boundary: 心衰、肾病等需限水者遵医嘱
+    plan_hint: { time: "10:00", type: 问候, freq: 每日, strong_remind: false, weight: 0.6 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_milk_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 每天喝杯奶 或者吃块豆腐也行
+    detail: 奶及奶制品 300–500 毫升，帮助补钙
+    boundary: 乳糖不耐受可选酸奶或低乳糖奶
+    plan_hint: { time: "20:30", type: 问候, freq: 每日, strong_remind: false, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_protein_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 每天一个鸡蛋 蛋黄也吃掉 别扔
+    detail: 搭配适量鱼、禽、瘦肉，保证优质蛋白
+    boundary: 特殊疾病遵医嘱
+    plan_hint: { time: "07:30", type: 午餐, freq: 每日, strong_remind: false, weight: 0.5 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_variety_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 别总是那几样 换着花样吃 一周吃够二十多样
+    detail: 食物多样：每天 12 种以上，每周 25 种以上
+    boundary: 无
+    plan_hint: { time: "11:30", type: 午餐, freq: 每周, strong_remind: false, weight: 0.4 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+  - id: diet_sugar_001
+    source: diet2022
+    version: "2022"
+    category: 饮食
+    audience: [全员]
+    advice: 甜饮料和点心少吃点 渴了就喝水
+    detail: 添加糖每天最好不超过 25 克
+    boundary: 糖尿病患者遵医嘱
+    plan_hint: { time: "15:00", type: 问候, freq: 每周, strong_remind: false, weight: 0.4 }
+    reviewed_by: ""
+    review_by: "2026-12-31"
+
+# ── 后续维护 ──
+# 1) 新增条目：复制现有条目结构，必填 source / version / advice / boundary / review_by
+# 2) 复核签字：由老年科护士或全科医生逐条确认后，把 reviewed_by 填上姓名与日期
+# 3) 指南改版：搜索 review_by 字段，把过期条目逐条重新核对
+# 4) 禁止：凭 LLM 记忆新增医学结论；引用订阅制数据库内容

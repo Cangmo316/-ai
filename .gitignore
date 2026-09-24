@@ -17,3 +17,27 @@ Desktop.ini
 .DS_Store
 .idea/
 .vscode/
+
+# ===== 后端服务（server/）：Python 运行时产物 =====
+server/**/__pycache__/
+server/**/*.py[cod]
+server/**/.venv/
+server/**/venv/
+server/**/*.egg-info/
+server/**/.pytest_cache/
+server/**/.mypy_cache/
+server/**/.ruff_cache/
+server/.env
+server/.env.*
+!server/.env.example
+
+# ===== 模型权重与大数据文件（CosyVoice 2 / WhisperX 等，不进仓库）=====
+# 需要提交的少量测试样本请用 git add -f 强制加入
+server/models/
+server/**/weights/
+server/**/*.safetensors
+server/**/*.gguf
+server/**/*.onnx
+server/**/*.ckpt
+server/**/*.pt
+server/**/*.bin
