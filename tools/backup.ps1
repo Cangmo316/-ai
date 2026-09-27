@@ -46,11 +46,13 @@ if (-not (Test-Path (Join-Path $RepoPath '.git'))) { throw "不是 git 仓库：
 function Resolve-GitExe {
     <#
       定位 git.exe：按「PATH -> 常见安装位置 -> Codex 运行时缓存」顺序查找。
-      本机未独立安装 Git for Windows，可用的 git 来自 Codex 运行时自带的副本，
-      且不在系统/用户 PATH 中 —— 计划任务环境下 Get-Command git 会落空，故显式查找。
+      优先使用真正安装的 Git（本机 2026-09 已装 Git for Windows 到用户目录），
+      并跳过 Codex 运行时缓存里的那份。历史上本机只有缓存里的 git 且它不在 PATH 中，
+      导致计划任务里 Get-Command git 落空、备份静默失败，故保留兜底查找。
     #>
     $onPath = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
-    if ($onPath) { return $onPath.Source }
+    # PATH 优先，但跳过 Codex 运行时缓存里的那份 —— 优先用真正安装的 Git
+    if ($onPath -and $onPath.Source -notlike '*\.cache\codex-runtimes\*') { return $onPath.Source }
 
     $candidates = @(
         (Join-Path $env:ProgramFiles 'Git\cmd\git.exe'),
@@ -61,6 +63,7 @@ function Resolve-GitExe {
     foreach ($c in $candidates) {
         if ($c -and (Test-Path -LiteralPath $c)) { return $c }
     }
+    if ($onPath) { return $onPath.Source }
 
     $rtRoot = Join-Path $env:USERPROFILE '.cache\codex-runtimes'
     if (Test-Path -LiteralPath $rtRoot) {
