@@ -1,0 +1,35 @@
+# 行尾策略：仓库内存 LF，检出也保持 LF
+# 说明：本机 core.autocrlf=true（来自 Codex 运行时自带 gitconfig），
+#       不锁死会产生「LF will be replaced by CRLF」警告，且 server/ 将来部署到
+#       Linux 时 CRLF 会直接破坏 shell 脚本，故在仓库层统一为 LF。
+* text=auto eol=lf
+
+# Windows 专用脚本仍用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：禁止行尾转换与文本 diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.bmp  binary
+*.ttf  binary
+*.otf  binary
+*.woff binary
+*.woff2 binary
+*.glb  binary
+*.gltf binary
+*.fbx  binary
+*.zip  binary
+*.mp3  binary
+*.mp4  binary
+*.wav  binary
+# 模型权重（不进仓库，规则见 .gitignore）
+*.safetensors binary
+*.onnx binary
+*.ckpt binary
+*.pt   binary
+*.bin  binary
