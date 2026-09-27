@@ -38,6 +38,24 @@
 
 ## 备份与还原
 
+### 本机环境事实（重要）
+
+- **本机未独立安装 Git**。唯一可用的 git 来自 Codex 运行时缓存：
+  `C:\Users\余云飞\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe`
+  它既不在系统 PATH、也不在用户 PATH —— 普通 cmd / PowerShell / 计划任务里敲 `git` 会
+  「找不到命令」。因此脚本必须自行定位 git（见 `tools/backup.ps1` 的 `Resolve-GitExe`）。
+- 风险：该路径属于 Codex 缓存，清缓存或换机器即失效。**建议安装 Git for Windows**，
+  并把 `Git\cmd` 加入 PATH，让备份不再依赖运行时缓存。
+
+### 自动备份
+
+Windows 计划任务 **`BilinAI-Backup`**，每日 12:30 运行：推 `localmirror` + 生成 bundle 快照，
+日志写在 `D:\backup\backup.log`。查看状态：
+
+    Get-ScheduledTaskInfo -TaskName BilinAI-Backup | Select-Object LastRunTime, LastTaskResult
+
+`LastTaskResult = 0` 为成功。手动触发：`Start-ScheduledTask -TaskName BilinAI-Backup`。
+
 备份落在 **D:\backup**（与项目盘 E: 分离，防单盘故障）：
 
 - `D:\backup\bilin-ai.git` —— 裸镜像，日常增量备份，远端名 `localmirror`。
