@@ -43,6 +43,38 @@ $ErrorActionPreference = 'Stop'
 if (-not $RepoPath) { $RepoPath = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
 if (-not (Test-Path (Join-Path $RepoPath '.git'))) { throw "不是 git 仓库：$RepoPath" }
 
+function Resolve-GitExe {
+    <#
+      定位 git.exe：按「PATH -> 常见安装位置 -> Codex 运行时缓存」顺序查找。
+      本机未独立安装 Git for Windows，可用的 git 来自 Codex 运行时自带的副本，
+      且不在系统/用户 PATH 中 —— 计划任务环境下 Get-Command git 会落空，故显式查找。
+    #>
+    $onPath = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Git\cmd\git.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Git\cmd\git.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd\git.exe'),
+        (Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe')
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path -LiteralPath $c)) { return $c }
+    }
+
+    $rtRoot = Join-Path $env:USERPROFILE '.cache\codex-runtimes'
+    if (Test-Path -LiteralPath $rtRoot) {
+        $hit = Get-ChildItem -LiteralPath $rtRoot -Recurse -Filter 'git.exe' -ErrorAction SilentlyContinue |
+               Where-Object { $_.Directory.Name -eq 'cmd' } |
+               Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
+
+    throw '未找到 git.exe：PATH 与常见安装位置均无。请安装 Git for Windows，或把 git.exe 所在目录加入 PATH。'
+}
+
+$script:GitExe = Resolve-GitExe
+
 function Invoke-Git {
     <#
       跑一条 git 命令，返回 stdout + stderr 的行数组；退出码非 0 时抛出。
@@ -57,7 +89,7 @@ function Invoke-Git {
     param([string]$WorkDir, [string[]]$GitArgs)
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = 'git'
+    $psi.FileName  = $script:GitExe
     $psi.Arguments = ((@('-C', $WorkDir) + $GitArgs) | ForEach-Object {
         if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
     }) -join ' '
@@ -94,6 +126,7 @@ function Invoke-Git {
 
 $head   = ((Invoke-Git -WorkDir $RepoPath -GitArgs @('rev-parse', '--short', 'HEAD')) -join '').Trim()
 $branch = ((Invoke-Git -WorkDir $RepoPath -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')) -join '').Trim()
+Write-Host "git    : $script:GitExe"
 Write-Host "仓库   : $RepoPath"
 Write-Host "分支   : $branch   HEAD $head"
 Write-Host ''
