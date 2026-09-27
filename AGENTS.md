@@ -36,16 +36,24 @@
   PowerShell 格式化后的错误文本（含 `At line` / `CategoryInfo`），不是原始 stderr。
   取外部命令输出请用 `System.Diagnostics.Process`，参考 `tools/backup.ps1`
 
+## 远端仓库
+
+- `origin` —— `git@github.com:Cangmo316/-ai.git`（私有），推送走 SSH over 443
+- `localmirror` —— `D:\backup\bilin-ai.git`，本地备份镜像（见下）
+- 认证依赖 SSH key `~/.ssh/id_ed25519`；公钥需加到 GitHub → Settings → SSH and GPG keys
+- 推送：`git push origin main`
+
 ## 备份与还原
 
 ### 本机环境事实（重要）
 
-- **本机未独立安装 Git**。唯一可用的 git 来自 Codex 运行时缓存：
-  `C:\Users\余云飞\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe`
-  它既不在系统 PATH、也不在用户 PATH —— 普通 cmd / PowerShell / 计划任务里敲 `git` 会
-  「找不到命令」。因此脚本必须自行定位 git（见 `tools/backup.ps1` 的 `Resolve-GitExe`）。
-- 风险：该路径属于 Codex 缓存，清缓存或换机器即失效。**建议安装 Git for Windows**，
-  并把 `Git\cmd` 加入 PATH，让备份不再依赖运行时缓存。
+- **Git**：已装 Git for Windows 2.55.0 到 `%LOCALAPPDATA%\Programs\Git`（用户级安装，无需
+  管理员），用户 PATH 已加入其 `cmd` 目录。此前本机唯一可用的 git 是 Codex 运行时缓存里的
+  副本且不在 PATH 中，导致计划任务里备份静默失败；`Resolve-GitExe` 现在按
+  「PATH（跳过缓存）→ 常见安装位置 → Codex 缓存」兜底查找，保证任何环境都能跑。
+- **网络**：`github.com:443` 被阻断（TCP 不通），HTTPS 推送不可用；`api.github.com`、
+  `codeload.github.com`、`gitee.com` 可达。GitHub 推送**走 SSH over 443**：`~/.ssh/config`
+  已把 `github.com` 指向 `ssh.github.com:443`。
 
 ### 自动备份
 
