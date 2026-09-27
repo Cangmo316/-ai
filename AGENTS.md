@@ -40,7 +40,12 @@
 
 - `origin` —— `git@github.com:Cangmo316/-ai.git`（私有），推送走 SSH over 443
 - `localmirror` —— `D:\backup\bilin-ai.git`，本地备份镜像（见下）
-- 认证依赖 SSH key `~/.ssh/id_ed25519`；公钥需加到 GitHub → Settings → SSH and GPG keys
+- 认证依赖 SSH key `~/.ssh/id_ed25519`（公钥已加到 GitHub，首次推送已完成，远端与本地一致）
+- **ssh 必须用 Windows 自带的 OpenSSH**，不要用 Git 自带的 MSYS ssh：
+  `git config --global core.sshCommand '"C:/Windows/System32/OpenSSH/ssh.exe"'`
+  理由：本机用户目录含中文（`C:\Users\余云飞`），Git 自带的 MSYS ssh 把路径按 GBK 解释，
+  找不到 `~/.ssh/` 下的私钥与 known_hosts，报 `Host key verification failed`（即使公钥已授权）；
+  Windows OpenSSH 用 UTF-8 解析路径，实测正常。
 - 推送：`git push origin main`
 
 ## 备份与还原
