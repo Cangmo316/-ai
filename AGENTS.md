@@ -27,7 +27,31 @@
 - 优先开源免费方案；引入付费或受限许可组件前必须先确认
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
-- 写文件用 UTF-8 无 BOM（`[System.IO.File]::WriteAllText` + `UTF8Encoding($false)`）
+- 写文件默认 UTF-8 无 BOM（`[System.IO.File]::WriteAllText` + `UTF8Encoding($false)`）
+  - **例外：`.ps1` 必须 UTF-8 带 BOM**（`UTF8Encoding($true)`）。Windows PowerShell 5.1
+    会把无 BOM 的 UTF-8 当 ANSI(GBK) 解码，含中文的脚本会直接解析失败
+    （实测：同一个脚本无 BOM 报 7 处语法错误，带 BOM 为 0 处）
+- **原生命令的 stderr 在 PS 5.1 下是个坑**：`$ErrorActionPreference='Stop'` 时命令只要
+  往 stderr 写一行就抛终止性错误；改成 `Continue` 也不行，因为 `2>文件` 写进去的是
+  PowerShell 格式化后的错误文本（含 `At line` / `CategoryInfo`），不是原始 stderr。
+  取外部命令输出请用 `System.Diagnostics.Process`，参考 `tools/backup.ps1`
+
+## 备份与还原
+
+备份落在 **D:\backup**（与项目盘 E: 分离，防单盘故障）：
+
+- `D:\backup\bilin-ai.git` —— 裸镜像，日常增量备份，远端名 `localmirror`。
+  刻意不用 `--mirror` 推送：镜像推送会把本地删除与强推同步过去，备份会跟着源一起坏
+- `D:\backup\bundles\bilin-ai-*.bundle` —— 不可变单文件快照，可直接拷 U 盘 / 网盘
+
+执行备份（保留最近 20 份快照）：
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File tools\backup.ps1
+
+还原（二选一）：
+
+    git clone D:\backup\bilin-ai.git  E:\restore\bilin-ai
+    git clone D:\backup\bundles\bilin-ai-20260927-232459.bundle  E:\restore\bilin-ai
 
 ## 必读文档
 
