@@ -59,10 +59,14 @@ register('./node-alias-hook.mjs', import.meta.url)
 const externalBase = process.env.BILIN_TEST_BASE_URL || ''
 const mock = externalBase ? null : await startMockServer({ port: 0, delayMs: 0 })
 const baseURL = externalBase || 'http://127.0.0.1:' + mock.port
-/** 真实后端 P0 还没发计划卡（那是计划引擎 P1 的活），只有 mock 会发 */
-const EXPECT_CARD = !externalBase
+/**
+ * 是否按「内置假后端」的严格预期断言（固定话术、固定表情、固定卡片、__slow 触发词）。
+ * 打真实模型时这些都不成立——真模型的回复不可预期，所以改成断言**不变量**
+ * （非空、无句号、无网址、表情 token 合法），并把依赖触发词的用例标为跳过。
+ */
+const STRICT = !externalBase
 
-console.log('联调目标: ' + baseURL + (externalBase ? '（外部后端）' : '（内置 mock）'))
+console.log('联调目标: ' + baseURL + (externalBase ? '（外部后端，按不变量断言）' : '（内置 mock，严格断言）'))
 
 const config = await import('../uni-app/api/config.js')
 config.setBaseURL(baseURL)
@@ -130,22 +134,39 @@ await testAsync('乐观发送：老人那句话立刻上屏，随即进入流式
 })
 
 await testAsync('流式回填：文本拼回完整回复，表情与卡片各成一条消息', async () => {
-  await waitUntil(() => !chat.streaming, 6000, '流式结束')
+  await waitUntil(() => !chat.streaming, 20000, '流式结束')
   const fresh = turnSince(turnStart)
   const texts = agentTextsOf(fresh)
-  assert.equal(texts.map((m) => m.text).join(''), '妈 药吃了没\n吃完喝口热水 别空腹')
+  const body = texts.map((m) => m.text).join('')
+
+  if (STRICT) {
+    assert.equal(body, '妈 药吃了没\n吃完喝口热水 别空腹')
+  } else {
+    // 真模型的回复不可预期，只守产品不变量
+    assert.ok(body.length > 0, '真模型应给出非空回复')
+    assert.ok(!body.includes('。'), '回复里不该有全角句号（风格后处理失效？）')
+    assert.ok(!/https?:\/\/|www\./i.test(body), '回复里不该有网址')
+    assert.ok(body === body.trim(), '正文首尾不该有空白')
+  }
   assert.ok(texts.every((m) => m.status === 'sent'), '收完应标记为 sent')
 
   const stickers = fresh.filter((m) => m.type === 'sticker')
-  assert.equal(stickers.length, 1, '表情应独立成一条消息（无气泡大图）')
-  assert.equal(stickers[0].sticker, 'pill')
-  assert.equal(stickers[0].role, 'agent')
+  if (STRICT) {
+    assert.equal(stickers.length, 1, '表情应独立成一条消息（无气泡大图）')
+    assert.equal(stickers[0].sticker, 'pill')
+  } else if (stickers.length) {
+    // 真模型发不发表情不固定；发了就必须是合法 token（受控白名单）
+    stickers.forEach((m) => assert.match(m.sticker, /^[a-z_]+$/, '表情 token 应形如 love/pill'))
+  }
+  stickers.forEach((m) => assert.equal(m.role, 'agent'))
 
   const cards = fresh.filter((m) => m.type === 'card')
-  if (EXPECT_CARD) {
+  if (STRICT) {
     assert.equal(cards.length, 1, '计划卡应独立成一条消息')
     assert.equal(cards[0].card.kind, 'plan_item')
     assert.equal(cards[0].card.plan.time, '08:00')
+  } else {
+    assert.equal(cards.length, 0, 'P0 的真模型服务端还不该发计划卡（那是 P1 计划引擎的活）')
   }
 })
 
@@ -153,65 +174,93 @@ await testAsync('持久化：本轮消息写入本地缓存，且不留中间态
   const raw = storage.get('bl_chat_v1_c_son')
   assert.ok(raw, '应有本地缓存')
   const list = JSON.parse(raw)
-  assert.ok(list.some((m) => m.type === 'sticker' && m.sticker === 'pill'))
-  if (EXPECT_CARD) assert.ok(list.some((m) => m.type === 'card'))
+  if (STRICT) assert.ok(list.some((m) => m.type === 'sticker' && m.sticker === 'pill'))
+  if (STRICT) assert.ok(list.some((m) => m.type === 'card'))
   assert.ok(list.every((m) => m.status !== 'streaming'), '缓存里不能留 streaming')
 })
 
 await testAsync('流式期间重复点击不会并发第二轮', async () => {
-  store.send('__slow 早点睡')
-  await waitUntil(() => chat.streaming, 2000, '进入流式')
+  // __slow 是 mock/假模型的触发词，真模型不认；真模型下随便发一句也行
+  store.send(STRICT ? '__slow 早点睡' : '妈 我一会儿再跟你说')
+  await waitUntil(() => chat.streaming, 4000, '进入流式')
   assert.equal(store.send('再发一条'), false, '流式中应拒绝新的一轮')
   assert.equal(store.stop() === undefined, true)
-  await waitUntil(() => !chat.streaming, 3000, '停止后收尾')
+  await waitUntil(() => !chat.streaming, 4000, '停止后收尾')
 })
 
 group('③ 一键停止')
 
-await testAsync('停止：保留已收到的部分，状态标 stopped', async () => {
-  const from = chat.messages.length
-  store.send('__slow 早点睡')
-  await waitUntil(
-    () => agentTextsOf(turnSince(from)).some((m) => m.text.length >= 2),
-    8000,
-    '收到部分文字'
-  )
-  store.stop()
-  await waitUntil(() => !chat.streaming, 3000, '停止生效')
+/** 跳过只在假后端下成立的用例（真模型不认触发词、回复长度不可预期） */
+function skipAsync(name, reason) {
+  console.log('  - ' + name + '（跳过：' + reason + '）')
+}
 
-  const fresh = turnSince(from)
-  const texts = agentTextsOf(fresh)
-  assert.equal(texts.length, 1)
-  assert.equal(texts[0].status, 'stopped')
-  assert.ok(texts[0].text.length > 0 && texts[0].text.length < 12, '应只保留部分文字：' + texts[0].text)
-  assert.ok(!fresh.some((m) => m.type === 'system'), '已有部分内容时不该再插「已停止」提示')
-})
+if (STRICT) {
+  await testAsync('停止：保留已收到的部分，状态标 stopped', async () => {
+    const from = chat.messages.length
+    store.send('__slow 早点睡')
+    await waitUntil(
+      () => agentTextsOf(turnSince(from)).some((m) => m.text.length >= 2),
+      8000,
+      '收到部分文字'
+    )
+    store.stop()
+    await waitUntil(() => !chat.streaming, 3000, '停止生效')
+
+    const fresh = turnSince(from)
+    const texts = agentTextsOf(fresh)
+    assert.equal(texts.length, 1)
+    assert.equal(texts[0].status, 'stopped')
+    assert.ok(texts[0].text.length > 0 && texts[0].text.length < 12, '应只保留部分文字：' + texts[0].text)
+    assert.ok(!fresh.some((m) => m.type === 'system'), '已有部分内容时不该再插「已停止」提示')
+  })
+} else {
+  skipAsync('停止：保留已收到的部分，状态标 stopped', '需要 __slow 触发词，真模型不认')
+
+  await testAsync('停止：真模型下随时能停，且不产生错误提示', async () => {
+    const from = chat.messages.length
+    store.send('妈 你再说会儿话')
+    await waitUntil(() => chat.streaming, 8000, '进入流式')
+    store.stop()
+    await waitUntil(() => !chat.streaming, 8000, '停止生效')
+    const fresh = turnSince(from)
+    assert.ok(
+      !fresh.some((m) => m.type === 'system' && /连不上|开小差/.test(m.text)),
+      '老人主动停止不该被当成错误'
+    )
+  })
+}
 
 group('④ 失败与重发')
 
-await testAsync('服务端 error：删掉空气泡，给出可重发提示', async () => {
-  const from = chat.messages.length
-  store.send('__error 药')
-  await waitUntil(() => !chat.streaming, 5000, '错误收尾')
+if (STRICT) {
+  await testAsync('服务端 error：删掉空气泡，给出可重发提示', async () => {
+    const from = chat.messages.length
+    store.send('__error 药')
+    await waitUntil(() => !chat.streaming, 5000, '错误收尾')
 
-  const fresh = turnSince(from)
-  assert.ok(
-    fresh.some((m) => m.type === 'system' && /服务器开小差/.test(m.text)),
-    '应给出系统提示'
-  )
-  assert.equal(agentTextsOf(fresh).length, 0, '一个字都没收到就不该留空气泡')
-  assert.equal(chat.canRetry, true)
-  assert.equal(chat.lastError.length > 0, true)
-})
+    const fresh = turnSince(from)
+    assert.ok(
+      fresh.some((m) => m.type === 'system' && /服务器开小差/.test(m.text)),
+      '应给出系统提示'
+    )
+    assert.equal(agentTextsOf(fresh).length, 0, '一个字都没收到就不该留空气泡')
+    assert.equal(chat.canRetry, true)
+    assert.equal(chat.lastError.length > 0, true)
+  })
 
-await testAsync('重发：先清掉失败痕迹再重跑一轮', async () => {
-  const from = chat.messages.length
-  assert.equal(store.retry(), true)
-  await waitUntil(() => !chat.streaming, 5000, '重发结束')
-  const systems = chat.messages.filter((m) => m.type === 'system' && /服务器开小差/.test(m.text))
-  assert.equal(systems.length, 1, '重发前应清掉上一条失败提示，不能越堆越多')
-  assert.ok(chat.messages.length >= from, '消息列表不能被清空')
-})
+  await testAsync('重发：先清掉失败痕迹再重跑一轮', async () => {
+    const from = chat.messages.length
+    assert.equal(store.retry(), true)
+    await waitUntil(() => !chat.streaming, 8000, '重发结束')
+    const systems = chat.messages.filter((m) => m.type === 'system' && /服务器开小差/.test(m.text))
+    assert.equal(systems.length, 1, '重发前应清掉上一条失败提示，不能越堆越多')
+    assert.ok(chat.messages.length >= from, '消息列表不能被清空')
+  })
+} else {
+  skipAsync('服务端 error：删掉空气泡，给出可重发提示', '需要 __error 触发词，真模型不认')
+  skipAsync('重发：先清掉失败痕迹再重跑一轮', '依赖上一条失败用例')
+}
 
 await testAsync('连不上服务器：明确提示 + 可重发 + 不清空历史', async () => {
   config.setBaseURL('http://127.0.0.1:1') // 必然拒绝连接
@@ -238,7 +287,7 @@ await testAsync('缓存恢复：再次进入不再依赖服务端', async () => 
   chat.messages = []
   store.initChat()
   assert.equal(chat.messages.length, cached.length, '应从缓存恢复同样条数')
-  if (EXPECT_CARD) assert.ok(chat.messages.some((m) => m.type === 'card'), '卡片也要能从缓存还原')
+  if (STRICT) assert.ok(chat.messages.some((m) => m.type === 'card'), '卡片也要能从缓存还原')
 })
 
 await testAsync('列表页预览取最后一条可读内容', async () => {

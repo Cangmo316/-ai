@@ -28,7 +28,9 @@
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
 - **改动 `uni-app/api/`、`uni-app/stores/`、`uni-app/pages/chat-detail/` 或 `tools/mock-server.mjs`
-  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 项 + 端侧状态机 13 项）
+  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 项 + 话术规则 6 项 + 端侧状态机 13 项）
+- **改了 system prompt 或 `tools/check-chat-quality.mjs` 的合规正则后**：
+  先 `npm run test:quality`（正反用例锁住误报），再接真模型跑 `npm run quality`（需 `server/.env` 配 key）
 - **前后端接口契约的唯一来源是 `uni-app/api/README.md`**——改契约必须同时改三处：
   端侧实现、`tools/mock-server.mjs`、契约文档本身
 - 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；

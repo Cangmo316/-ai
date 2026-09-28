@@ -5,8 +5,10 @@
   "description": "仓库级 Node 工具与校验脚本。注意：这不是 uni-app 工程的依赖清单——App 端仍为零 npm 依赖，本文件只为 tools/ 下的脚本提供 ESM 运行环境与快捷命令。",
   "scripts": {
     "mock": "node tools/mock-server.mjs",
-    "test": "node tools/test-chat-api.mjs && node tools/test-chat-store.mjs",
+    "quality": "node tools/check-chat-quality.mjs",
+    "test": "node tools/test-chat-api.mjs && node tools/test-quality-patterns.mjs && node tools/test-chat-store.mjs",
     "test:chat-api": "node tools/test-chat-api.mjs",
-    "test:chat-store": "node tools/test-chat-store.mjs"
+    "test:chat-store": "node tools/test-chat-store.mjs",
+    "test:quality": "node tools/test-quality-patterns.mjs"
   }
 }

@@ -183,6 +183,9 @@ class ServiceEventTests(unittest.TestCase):
         self.assertIn("句末不加句号", messages[0]["content"])
         self.assertIn("不做诊断", messages[0]["content"])
         self.assertIn("<sticker:token>", messages[0]["content"])
+        # 用药边界的措辞要求（真模型抽查曾在这里越线：说"这药不能停"）
+        self.assertIn("绝不替医生判断", messages[0]["content"])
+        self.assertIn("这事得问医生", messages[0]["content"])
         contents = [m["content"] for m in messages if m["role"] != "system"]
         self.assertIn("第一句", contents)
         self.assertEqual(contents[-1], "第二句")
