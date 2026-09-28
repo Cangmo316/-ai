@@ -31,6 +31,7 @@
 | SSE 心跳（防端侧 20s 首字节看门狗误杀） | `app/orchestration/service.py` |
 | 错误归一化（老人看得懂的话 + retryable） | `app/llm/openai_compat.py`、`app/main.py` |
 | OpenAI 兼容模型客户端（含推理模型思维链隔离） | `app/llm/openai_compat.py` |
+| **家人端静态托管**（`/family` 计划确认台 + `/uni-app/api` 客户端，公开路径） | `app/main.py` |
 | `GET /healthz` 自检（模型 / 知识库 / 计划 / 调度 / 通道 / 鉴权 / 幂等，密钥脱敏） | `app/main.py` |
 | **统一错误码表**（code → HTTP 状态 + 人话文案 + retryable，跨语言契约） | `app/errors.py` |
 | **接口鉴权**（三档 AUTH_MODE；中间件统一拦，新加路由不会漏） | `app/auth.py`、`app/main.py` |
@@ -47,7 +48,8 @@
 - **`CORS_ORIGINS=*`** 默认全放（HBuilderX 预览跨域方便），上线前要收紧成具体域名
 
 - **数据库**：会话、计划、打卡、提醒任务、cid 全在内存，进程重启即清空（接口按落库形态设计）
-- **家人端**：计划的生成/确认/驳回/汇总接口都已就绪，但没有家属侧页面（二期）
+- **家人端**只有最小版：`family/` 里的计划确认台（生成/确认/驳回/调整/完成率/提醒追溯，见 family/README.md）；
+  绑定管理、形象定制、记忆录入、多子女权限等仍是二期
 - Android 通知渠道（`uni.getChannelManager`）未配：提醒暂用系统默认渠道
 - 三层记忆（L2/L3）、内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
 
@@ -271,10 +273,11 @@ node tools\check-chat-quality.mjs          # 抽查脚本在仓库根目录
 
 ## 九、下一步
 
-1. **P1 剩余：调度器与推送**——按 `active` 计划定时投递提醒（服务端定时 + 端侧本地提醒双保险），
-   到点时往会话里插计划卡；强提醒要送达回执
-2. 鉴权 + `clientMsgId` 幂等 + 稳定错误码表
-3. 家人端页面（计划的生成/确认/驳回/完成率看板；接口已就绪）
+1. ~~P1 剩余：调度器与推送~~ ✅ 已完成（`app/schedule/`，含 uni-push 通道与端侧本地通知）
+2. ~~鉴权 + `clientMsgId` 幂等 + 稳定错误码表~~ ✅ 已完成（`app/auth.py`、`app/errors.py`、`app/orchestration/idempotency.py`）
+3. ~~家人端页面~~ ✅ 最小版已完成（`family/` 计划确认台；绑定管理/形象定制/记忆录入仍是二期）
 4. **P2 三层记忆**：把 `app/models/elder.py` 的模拟档案换成 PostgreSQL，
    接 L2 经历检索与 L3 兴趣权重
-5. 换模型或改 prompt 后重跑 `node tools/check-chat-quality.mjs`（见 §七）
+5. **真正的账号体系**：家人端手机号登录 + 短期 JWT + 老人端 scoped token + 设备级撤销
+   （现在只是共享 token，见 `app/auth.py` 的"能防/不能防"）
+6. 换模型或改 prompt 后重跑 `node tools/check-chat-quality.mjs`（见 §七）

@@ -28,13 +28,17 @@
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
 - **改动 `uni-app/api/`、`uni-app/stores/`、`uni-app/pages/` 或 `tools/mock-server.mjs`
-  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13 + 鉴权与错误码 10，共 87 项）
+  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13 + 鉴权与错误码 10 + 家人端 24，共 111 项）
 - **改了 system prompt 或 `tools/check-chat-quality.mjs` 的合规正则后**：
   先 `npm run test:quality`（正反用例锁住误报），再接真模型跑 `npm run quality`（需 `server/.env` 配 key）
 - **合规正则有两处，必须同步**：`server/app/style/compliance.py` 与 `tools/check-chat-quality.mjs`
 - **计划的家属确认闸门是产品硬约束**：`GET /v1/plans/today` 与任何提醒只能取 `active` 计划；
   改 `server/app/plan/` 后必须确认 `tests/test_plan_engine.py` 里
   「未确认不产生提醒」「过渡期旧计划继续执行」两组用例仍绿
+- **家人端（`family/`）与老人端共用 `uni-app/api/` 那一层客户端**（浏览器侧由 `family/uni-shim.js` 补 `uni.request`）；
+  改接口层要两端一起验：`node tools/test-family-flows.mjs`（业务语义）与 `node tools/test-family-ui.mjs`（渲染与点击）
+- **家人端默认不可见聊天原文**（设计方案 §3.4）：`family/flows.js` 里不许出现会话接口，
+  `tools/test-family-flows.mjs` 有一条扫描源码的回归用例守着；要加"看聊天"必须先做老人授权与 consent
 - **前后端接口契约的唯一来源是 `uni-app/api/README.md`**——改契约必须同时改三处：
   端侧实现、`tools/mock-server.mjs`、契约文档本身
 - 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；
@@ -42,7 +46,7 @@
 - **改动 `server/app/` 或 `server/tests/` 后必须跑**
   `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（202 项，零测试依赖）
 - 跨语言端到端回归：先起 `server/run.py`，再
-  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs; node tools/test-push-store.mjs; node tools/test-auth.mjs`
+  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs; node tools/test-push-store.mjs; node tools/test-auth.mjs; node tools/test-family-flows.mjs`
 - **对外提供服务前必须开鉴权**：`server/.env` 里设 `AUTH_MODE=required` 并配 `API_TOKENS`（端侧用 `setApiToken()`）；
   否则任何能访问到端口的人都能读健康档案、改计划、发提醒
 - **模型 key 只放 `server/.env`**（已 gitignore，含 `server/.env.*`）；

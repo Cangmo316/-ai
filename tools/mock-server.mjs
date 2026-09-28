@@ -17,14 +17,71 @@
  *   node tools/mock-server.mjs --port 9000
  *   node tools/mock-server.mjs --delay 0       # 不等待，便于压测/脚本联调
  *   node tools/mock-server.mjs --host 0.0.0.0  # 真机联调（手机与电脑同一局域网）
+ *   node tools/mock-server.mjs --auth mytoken  # 模拟"服务端开了鉴权"
+ *
+ * 顺带托管两段静态文件（省得为看家人端再起一个 http 服务，也避免跨域）：
+ *   http://127.0.0.1:8787/family/        家人端最小版（计划确认台）
+ *   /uni-app/api/*                       家人端复用的那一层接口客户端
  *
  * 触发词（用来演示边界，不参与真实业务）：
  *   消息里含 __error  → 走到 error 事件分支（验证端侧错误态与重发）
  *   消息里含 __slow   → 每字放大到 10 倍延迟（验证「停止」按钮）
  */
 
+import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/** 静态托管白名单：前缀 → 仓库内目录（只放这两段，别把整个仓库暴露出去） */
+const STATIC_PREFIXES = {
+  '/family/': 'family',
+  '/uni-app/api/': path.join('uni-app', 'api')
+}
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png'
+}
+
+/** 返回 true 表示这个请求已被静态托管处理掉 */
+async function serveStatic(url, res) {
+  for (const [prefix, dir] of Object.entries(STATIC_PREFIXES)) {
+    const bare = prefix.slice(0, -1)
+    if (url.pathname !== bare && !url.pathname.startsWith(prefix)) continue
+
+    const rel = url.pathname === bare ? 'index.html' : url.pathname.slice(prefix.length)
+    const root = path.resolve(REPO_ROOT, dir)
+    const target = path.resolve(root, rel || 'index.html')
+    // 防目录穿越：解析后必须还在白名单目录里
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('forbidden')
+      return true
+    }
+    try {
+      const data = await readFile(target)
+      res.writeHead(200, {
+        'Content-Type': MIME[path.extname(target).toLowerCase()] || 'application/octet-stream',
+        // 开发期改完刷新就能看到，别让浏览器缓存捣乱
+        'Cache-Control': 'no-store'
+      })
+      res.end(data)
+    } catch (error) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('not found: ' + rel)
+    }
+    return true
+  }
+  return false
+}
 
 const DEFAULT_PORT = 8787
 const DEFAULT_HOST = '127.0.0.1'
@@ -247,8 +304,11 @@ function reminderTick(state, plans, at) {
   if (Number.isNaN(moment.getTime())) throw new Error('时间格式不对')
   const stamp = localStamp(moment)
   const summary = { at: stamp, created: 0, sent: 0, skipped: 0, canceled: 0, repeated: 0, missed: 0, failed: 0 }
+  const plan = currentPlan(plans)
+  // 没有生效计划就不该有提醒（"未确认不产生提醒"这条硬规则）
+  if (!plan) return summary
 
-  for (const item of plans.items) {
+  for (const item of plan.items) {
     if (plans.doneIds.has(item.id)) continue
     const sendAt = plans.date + 'T' + item.time + ':00'
     if (sendAt > stamp) continue
@@ -256,7 +316,7 @@ function reminderTick(state, plans, at) {
     const level = levelOf(item)
     state.delivered.push({
       id: 'rt_mock_' + item.id,
-      planId: plans.planId,
+      planId: plan.id,
       planItemId: item.id,
       elderId: plans.elderId,
       title: item.title,
@@ -319,17 +379,72 @@ function schedulerStatus(state) {
 }
 
 function createPlanState() {
+  const first = makePlan({ id: 'plan_mock_1', status: 'active', kind: 'generate', reason: '' })
   return {
     elderId: 'e_1',
-    planId: 'plan_mock_1',
+    /** 全部计划（含历史），与真实服务端的 plans_of 一致 */
+    list: [first],
     date: todayKey(),
     doneIds: new Set(),
-    items: PLAN_ITEMS.map((item) => Object.assign({}, item))
+    seq: 1
   }
 }
 
+/** 真实服务端的状态与中文标签（app/plan/models.py），mock 必须一模一样，否则端侧会被带偏 */
+const PLAN_STATUS_LABEL = {
+  draft: '草稿',
+  pending_confirm: '等家里人确认',
+  active: '正在执行',
+  adjusting: '调整中，等家里人确认',
+  ended: '已结束',
+  rejected: '家里人没同意'
+}
+
+function makePlan(options) {
+  const status = options.status || 'pending_confirm'
+  return {
+    id: options.id,
+    elderId: 'e_1',
+    status,
+    statusLabel: PLAN_STATUS_LABEL[status] || status,
+    kind: options.kind || 'generate',
+    goal: '把每天的监测、饮食、活动和问候安排清楚',
+    reason: options.reason || '',
+    createdAt: options.createdAt || new Date().toISOString(),
+    confirmedAt: '',
+    confirmedBy: '',
+    rejectedReason: '',
+    knowledgeVersion: '2026.09',
+    items: PLAN_ITEMS.map((item) => Object.assign({}, item)),
+    history: []
+  }
+}
+
+/** 当前生效计划：active 或 adjusting（**adjusting 期间旧计划仍在执行**，与真实 store.active() 一致） */
+function currentPlan(state) {
+  return (
+    state.list.find((plan) => plan.status === 'active') ||
+    state.list.find((plan) => plan.status === 'adjusting') ||
+    null
+  )
+}
+
 function todayPayload(state) {
-  const items = state.items.map((item) =>
+  const plan = currentPlan(state)
+  if (!plan) {
+    return {
+      elderId: state.elderId,
+      date: state.date,
+      planId: '',
+      status: '',
+      statusLabel: '',
+      items: [],
+      total: 0,
+      done: 0,
+      rate: 0
+    }
+  }
+  const items = plan.items.map((item) =>
     Object.assign({}, item, {
       done: state.doneIds.has(item.id),
       doneAt: state.doneIds.has(item.id) ? new Date().toISOString() : ''
@@ -339,9 +454,9 @@ function todayPayload(state) {
   return {
     elderId: state.elderId,
     date: state.date,
-    planId: state.planId,
-    status: 'active',
-    statusLabel: '正在执行',
+    planId: plan.id,
+    status: plan.status,
+    statusLabel: plan.statusLabel,
     items,
     total: items.length,
     done,
@@ -350,15 +465,25 @@ function todayPayload(state) {
 }
 
 function planSummary(state) {
+  const plan = currentPlan(state)
   const payload = todayPayload(state)
   const rate = payload.rate
   const shouldAdjust = rate < 0.5
+  if (!plan) {
+    return {
+      elderId: state.elderId,
+      hasPlan: false,
+      status: '',
+      stats: null,
+      suggestion: { shouldAdjust: false, reasons: [], stats: null, advice: '' }
+    }
+  }
   return {
     elderId: state.elderId,
     hasPlan: true,
-    planId: state.planId,
-    status: 'active',
-    statusLabel: '正在执行',
+    planId: plan.id,
+    status: plan.status,
+    statusLabel: plan.statusLabel,
     stats: { days: 7, expected: 28, done: Math.round(rate * 28), rate, strongMissing: {} },
     suggestion: {
       shouldAdjust,
@@ -386,7 +511,7 @@ export function startMockServer(options = {}) {
   const reminders = createReminderState()
   const pushClients = new Map()
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
     state.requests += 1
     state.lastAuth = req.headers.authorization || ''
@@ -396,6 +521,9 @@ export function startMockServer(options = {}) {
       res.end()
       return
     }
+
+    // 静态托管放在最前面，且**不参与鉴权**：HTML/JS 先拿到手才有机会带 token 调接口
+    if (req.method === 'GET' && (await serveStatic(url, res))) return
 
     // 公开路径与真实服务端保持一致：健康检查、错误码表
     const isPublic =
@@ -453,9 +581,14 @@ export function startMockServer(options = {}) {
 
     if (url.pathname === '/v1/plans/checkin' && req.method === 'POST') {
       readBody(req).then((body) => {
+        const plan = currentPlan(plans)
         const itemId = String((body && body.planItemId) || '')
-        if (!plans.items.some((item) => item.id === itemId)) {
-          sendJSON(res, 404, { error: { code: 'plan_item_not_found', message: '没找到这一项' } })
+        if (!plan) {
+          sendJSON(res, 409, { error: { code: 'plan_not_active', message: '还没有生效的计划，先让家里人确认', retryable: false } })
+          return
+        }
+        if (!plan.items.some((item) => item.id === itemId)) {
+          sendJSON(res, 404, { error: { code: 'plan_item_not_found', message: '没找到这一项', retryable: false } })
           return
         }
         // 同一天同一项幂等，与真实服务端一致
@@ -482,9 +615,137 @@ export function startMockServer(options = {}) {
       return
     }
 
+    // ── 康养计划：家属端（生成 → 确认 → 生效 / 驳回 / 调整）──
     if (url.pathname === '/v1/plans/pending' && req.method === 'GET') {
-      // mock 里计划已经是生效态，没有待确认草稿（真实服务端会有）
-      sendJSON(res, 200, { elderId: plans.elderId, plans: [] })
+      sendJSON(res, 200, {
+        elderId: plans.elderId,
+        plans: plans.list.filter((plan) => plan.status === 'pending_confirm')
+      })
+      return
+    }
+
+    if (url.pathname === '/v1/plans/draft' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        plans.seq += 1
+        const draft = makePlan({
+          id: 'plan_mock_draft_' + plans.seq,
+          status: 'pending_confirm',
+          kind: 'generate',
+          reason: (body && body.reason) || ''
+        })
+        draft.history.push({ at: new Date().toISOString(), action: 'draft', detail: '按知识库生成', actor: 'agent' })
+        plans.list.push(draft)
+        sendJSON(res, 200, {
+          plan: draft,
+          reused: false,
+          polish: { used: false, note: 'mock 不做话术润色' }
+        })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/confirm' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const planId = String((body && body.planId) || '')
+        const plan = plans.list.find((item) => item.id === planId)
+        if (!plan) {
+          sendJSON(res, 404, { error: { code: 'plan_not_found', message: '没找到这份计划', retryable: false } })
+          return
+        }
+        if (plan.status !== 'pending_confirm') {
+          sendJSON(res, 409, {
+            error: { code: 'plan_state', message: '这份计划现在不能确认（当前是「' + plan.statusLabel + '」）', retryable: false }
+          })
+          return
+        }
+        // 确认的这一刻才结束旧计划（过渡期旧计划继续执行，避免提醒真空）
+        const previous = currentPlan(plans)
+        const previousPlanId = previous && previous.id !== plan.id ? previous.id : ''
+        if (previousPlanId) {
+          previous.status = 'ended'
+          previous.statusLabel = PLAN_STATUS_LABEL.ended
+          previous.history.push({ at: new Date().toISOString(), action: 'ended', detail: '新计划已确认', actor: 'system' })
+        }
+        plan.status = 'active'
+        plan.statusLabel = PLAN_STATUS_LABEL.active
+        plan.confirmedAt = new Date().toISOString()
+        plan.confirmedBy = (body && body.actor) || '家属'
+        plan.history.push({ at: plan.confirmedAt, action: 'confirm', detail: '家属确认', actor: plan.confirmedBy })
+        sendJSON(res, 200, { plan, previousPlanId, notice: '计划已生效，开始按时间提醒' })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/reject' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const planId = String((body && body.planId) || '')
+        const plan = plans.list.find((item) => item.id === planId)
+        if (!plan) {
+          sendJSON(res, 404, { error: { code: 'plan_not_found', message: '没找到这份计划', retryable: false } })
+          return
+        }
+        if (plan.status !== 'pending_confirm') {
+          sendJSON(res, 409, {
+            error: { code: 'plan_state', message: '这份计划现在不能驳回（当前是「' + plan.statusLabel + '」）', retryable: false }
+          })
+          return
+        }
+        plan.status = 'rejected'
+        plan.statusLabel = PLAN_STATUS_LABEL.rejected
+        plan.rejectedReason = (body && body.reason) || ''
+        plan.history.push({
+          at: new Date().toISOString(),
+          action: 'reject',
+          detail: plan.rejectedReason,
+          actor: (body && body.actor) || '家属'
+        })
+        sendJSON(res, 200, { plan, notice: '已驳回，这份计划不会生效' })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/adjust' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const planId = String((body && body.planId) || '')
+        const plan = plans.list.find((item) => item.id === planId)
+        if (!plan) {
+          sendJSON(res, 404, { error: { code: 'plan_not_found', message: '没找到这份计划', retryable: false } })
+          return
+        }
+        if (plan.status !== 'active') {
+          sendJSON(res, 409, {
+            error: { code: 'plan_state', message: '只有正在执行的计划能转入调整（当前是「' + plan.statusLabel + '」）', retryable: false }
+          })
+          return
+        }
+        // 真实语义：**还是这份计划**，只是进入 adjusting；它仍在执行（store.active 认 active+adjusting）
+        plan.status = 'adjusting'
+        plan.statusLabel = PLAN_STATUS_LABEL.adjusting
+        plan.reason = (body && body.reason) || '家属发起调整'
+        plan.history.push({ at: new Date().toISOString(), action: 'adjusting', detail: plan.reason, actor: (body && body.actor) || '家属' })
+        sendJSON(res, 200, {
+          plan,
+          suggestion: { shouldAdjust: true, reasons: [plan.reason], stats: null, advice: '改完由家属确认后生效' },
+          notice: '已转入调整，等家里人确认'
+        })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/history' && req.method === 'GET') {
+      // 真实服务端返回的是**计划列表摘要**，不是审计流水（审计在每个计划的 history 字段里）
+      sendJSON(res, 200, {
+        elderId: plans.elderId,
+        plans: plans.list.map((plan) => ({
+          id: plan.id,
+          status: plan.status,
+          statusLabel: plan.statusLabel,
+          createdAt: plan.createdAt,
+          confirmedAt: plan.confirmedAt,
+          items: plan.items.length,
+          knowledgeVersion: plan.knowledgeVersion
+        }))
+      })
       return
     }
 

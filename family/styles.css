@@ -1,0 +1,154 @@
+/* 比邻AI · 家人端样式
+ *
+ * 与老人端相反：家人端**不做适老化放大**（用户是子女/康复师，看的是一条条信息与数字），
+ * 但保留同一套主色与卡片语言，保证是同一个产品。
+ * 零依赖手写 CSS——仓库约定零 npm 依赖。
+ */
+
+:root {
+  --primary: #07c160;
+  --primary-dark: #06ad56;
+  --ink: #1f2329;
+  --ink-2: #5b6470;
+  --ink-3: #8b949e;
+  --line: #e6e8eb;
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --warn: #c7362f;
+  --warn-bg: #fdeceb;
+  --ok-bg: #e8f8ef;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 0 40px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+}
+
+.topbar {
+  padding: 22px 24px 18px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.topbar h1 { margin: 0 0 6px; font-size: 20px; }
+.topbar__note { margin: 0; color: var(--ink-2); font-size: 13px; }
+
+.panel {
+  max-width: 1000px;
+  margin: 16px auto 0;
+  padding: 18px 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.panel h2 { margin: 0 0 12px; font-size: 16px; }
+.panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.panel__row label { color: var(--ink-2); font-size: 13px; }
+
+input[type="text"], input[type="password"], select {
+  min-width: 200px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--ink);
+  background: #fff;
+}
+
+.btn {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--primary); color: var(--primary-dark); }
+.btn--primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn--primary:hover { background: var(--primary-dark); color: #fff; }
+
+.hint { margin: 10px 0 0; color: var(--ink-3); font-size: 12.5px; }
+.hint-inline { color: var(--ink-3); font-size: 12px; font-weight: normal; }
+.count {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 7px;
+  margin-left: 4px;
+  border-radius: 10px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12px;
+  text-align: center;
+}
+.empty { margin: 0; color: var(--ink-3); font-size: 14px; }
+.box__lead { margin: 0 0 10px; font-size: 14px; color: var(--ink-2); }
+
+.plan {
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--primary);
+  border-radius: 10px;
+  background: #fcfdfc;
+}
+.plan__head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.plan__time { color: var(--ink-3); font-size: 12.5px; }
+.plan__summary { margin: 8px 0 10px; color: var(--ink-2); font-size: 13.5px; }
+.plan__actions { display: flex; gap: 10px; margin-top: 12px; }
+
+.badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.badge--pending { background: var(--warn-bg); color: var(--warn); }
+.badge--done { background: var(--ok-bg); color: var(--primary-dark); }
+.badge--todo { background: #f1f2f4; color: var(--ink-2); }
+
+.items { margin: 0; padding: 0; list-style: none; }
+.item { padding: 10px 0; border-top: 1px dashed var(--line); }
+.item:first-child { border-top: none; }
+.item__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.item__time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--primary-dark); }
+.item__type {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #f1f2f4;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.item__title { font-size: 14.5px; }
+.item__detail { margin-top: 4px; color: var(--ink-2); font-size: 13px; }
+.item__meta { margin-top: 2px; color: var(--ink-3); font-size: 12.5px; }
+/* 依据必须显眼：家属要看到"这条是照哪份指南来的"才敢点确认 */
+.item__basis {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--primary);
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+.item__boundary { margin-top: 2px; padding-left: 8px; color: var(--warn); font-size: 12.5px; }
+
+.rate { display: flex; align-items: baseline; gap: 12px; }
+.rate__num { font-size: 34px; font-weight: 700; color: var(--primary-dark); font-variant-numeric: tabular-nums; }
+.rate__text { color: var(--ink-2); font-size: 14px; }
+.reasons { margin: 10px 0 0; padding-left: 20px; color: var(--ink-2); font-size: 13.5px; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.table th, .table td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.table th { color: var(--ink-3); font-weight: 500; font-size: 12.5px; }
+
+.footer { max-width: 1000px; margin: 20px auto 0; padding: 0 20px; color: var(--ink-3); font-size: 12.5px; }
+code { padding: 1px 5px; border-radius: 4px; background: #f1f2f4; font-size: 12.5px; }

@@ -42,6 +42,9 @@ MODE_OFF = "off"
 
 # 公开接口：健康检查与错误码表。探针要能用，错误码表本身不含敏感信息
 PUBLIC_PATHS = ("/healthz", "/v1/errors", "/docs", "/openapi.json", "/redoc")
+# 家人端静态页与它依赖的 api 模块也必须公开：HTML/JS 先拿到手，才有机会带着 token 去调接口。
+# 注意只放开 /uni-app/api（那一层客户端），不放开整个 uni-app 目录
+PUBLIC_PREFIXES = ("/docs", "/redoc", "/family", "/uni-app/api")
 
 
 def parse_tokens(raw: str) -> list[str]:
@@ -82,7 +85,7 @@ def check_request(request: Request) -> JSONResponse | None:
     if not auth_required(settings):
         return None
     path = request.url.path
-    if path in PUBLIC_PATHS or path.startswith("/docs") or path.startswith("/redoc"):
+    if path in PUBLIC_PATHS or any(path.startswith(prefix) for prefix in PUBLIC_PREFIXES):
         return None
     if token_valid(settings, extract_token(request)):
         return None

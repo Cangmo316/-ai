@@ -7,13 +7,15 @@
     "mock": "node tools/mock-server.mjs",
     "quality": "node tools/check-chat-quality.mjs",
     "seed": "node tools/seed-plan.mjs",
-    "test": "node tools/test-chat-api.mjs && node tools/test-quality-patterns.mjs && node tools/test-chat-store.mjs && node tools/test-plan-store.mjs && node tools/test-reminder-store.mjs && node tools/test-push-store.mjs && node tools/test-auth.mjs",
+    "test": "node tools/test-chat-api.mjs && node tools/test-quality-patterns.mjs && node tools/test-chat-store.mjs && node tools/test-plan-store.mjs && node tools/test-reminder-store.mjs && node tools/test-push-store.mjs && node tools/test-auth.mjs && node tools/test-family-flows.mjs && node tools/test-family-ui.mjs",
     "test:auth": "node tools/test-auth.mjs",
     "test:chat-api": "node tools/test-chat-api.mjs",
     "test:chat-store": "node tools/test-chat-store.mjs",
     "test:plan-store": "node tools/test-plan-store.mjs",
     "test:reminder": "node tools/test-reminder-store.mjs",
     "test:push": "node tools/test-push-store.mjs",
-    "test:quality": "node tools/test-quality-patterns.mjs"
+    "test:quality": "node tools/test-quality-patterns.mjs",
+    "test:family": "node tools/test-family-flows.mjs",
+    "test:family-ui": "node tools/test-family-ui.mjs"
   }
 }

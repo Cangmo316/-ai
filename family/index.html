@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>比邻AI · 家人端（最小版）</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>比邻AI · 家人端</h1>
+    <p class="topbar__note">
+      这里是给子女/康复师用的确认台：<strong>计划要经你确认才会生效</strong>。
+      按默认授权，这里只显示计划与完成情况，<strong>看不到聊天内容</strong>。
+    </p>
+  </header>
+
+  <section class="panel" id="panel-conn">
+    <div class="panel__row">
+      <label for="base-url">后端地址</label>
+      <input id="base-url" type="text" placeholder="http://127.0.0.1:8000" />
+      <label for="api-token">访问 token</label>
+      <input id="api-token" type="password" placeholder="服务端 API_TOKENS（没开鉴权可留空）" />
+      <button id="btn-connect" class="btn btn--primary">连接</button>
+    </div>
+    <p class="hint" id="conn-hint">点「连接」开始。家里老人的计划、完成率都在下面。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel__row">
+      <label for="elder-select">照看谁</label>
+      <select id="elder-select"></select>
+      <button id="btn-refresh" class="btn">刷新</button>
+      <button id="btn-draft" class="btn">按知识库生成一份计划</button>
+    </div>
+    <p class="hint">
+      生成的计划会先进入「待确认」，你点确认之后才开始执行；在此之前旧的计划照旧提醒。
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>待确认的计划 <span class="count" id="pending-count">0</span></h2>
+    <div id="pending-list" class="list"></div>
+  </section>
+
+  <section class="panel">
+    <h2>当前生效计划</h2>
+    <div id="today-box" class="box"></div>
+  </section>
+
+  <section class="panel">
+    <h2>完成情况</h2>
+    <div id="summary-box" class="box"></div>
+  </section>
+
+  <section class="panel">
+    <h2>计划历史</h2>
+    <div id="history-box" class="box"></div>
+  </section>
+
+  <section class="panel">
+    <h2>提醒有没有送到 <span class="hint-inline">（可追溯，用于排查"提醒发了但他没做"还是"根本没送到"）</span></h2>
+    <div id="reminder-box" class="box"></div>
+    <div class="panel__row">
+      <button id="btn-tick" class="btn">手动推进一次调度（联调）</button>
+      <span class="hint" id="scheduler-hint"></span>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>
+      接口契约见 <code>uni-app/api/README.md</code>；本页与老人端 App 共用
+      <code>uni-app/api/</code> 那一层客户端，所以契约只有一份实现。
+    </p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

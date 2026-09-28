@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
@@ -203,6 +205,17 @@ def create_app(
     app.include_router(plans_router)
     app.include_router(reminders_router)
     app.include_router(push_router)
+
+    # 家人端最小版（静态页）：只用浏览器就能确认计划，不用装 HBuilderX。
+    # 它 import 的是 /uni-app/api 那一层客户端，所以契约只有一份实现。
+    # 只挂 api 目录，不挂整个 uni-app（pages/components/stores 不需要暴露）
+    repo_root = Path(__file__).resolve().parents[2]
+    family_dir = repo_root / "family"
+    api_dir = repo_root / "uni-app" / "api"
+    if family_dir.is_dir():
+        app.mount("/family", StaticFiles(directory=str(family_dir), html=True), name="family")
+    if api_dir.is_dir():
+        app.mount("/uni-app/api", StaticFiles(directory=str(api_dir)), name="uni-app-api")
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
