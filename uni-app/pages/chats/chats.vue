@@ -4,7 +4,7 @@
 
     <scroll-view class="bl-body" scroll-y>
       <view
-        v-for="c in CHATS"
+        v-for="c in rows"
         :key="c.name"
         class="bl-chat-row"
         @click="open"
@@ -30,13 +30,30 @@
 </template>
 
 <script setup>
+import { computed, onMounted } from 'vue'
 import { settings } from '@/common/store.js'
+import { chat, initChat, lastPreview, lastTime } from '@/stores/chat.js'
 
-const CHATS = [
-  { name: '儿子 小明', msg: '别忘了中午吃药呀', time: '09:12', unread: 2, color: '#07C160' },
+/** 其余会话仍是静态占位：一期只有「儿子 小明」这条接了真实 agent */
+const PLACEHOLDER = [
   { name: '老伴 老张', msg: '今天天气真好，出来晒晒太阳', time: '08:40', unread: 0, color: '#F5A623' },
   { name: '女儿 小红', msg: '晚上视频哦', time: '昨天', unread: 0, color: '#4C8DFF' }
 ]
+
+const rows = computed(() => {
+  const first = {
+    name: chat.persona.name,
+    msg: lastPreview(),
+    time: lastTime() || '09:12',
+    unread: 0,
+    color: chat.persona.avatarColor
+  }
+  return [first].concat(PLACEHOLDER)
+})
+
+onMounted(() => {
+  initChat()
+})
 
 function open() {
   uni.navigateTo({ url: '/pages/chat-detail/chat-detail' })

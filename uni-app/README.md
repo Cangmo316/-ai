@@ -42,7 +42,17 @@ uni-app/
 │   ├── tokens.js              # Token 的 JS 镜像（供逻辑层读取）
 │   ├── store.js               # 轻量全局状态（大字体模式 / 当前角色）+ 本地持久化
 │   ├── icons.js               # 26 个 SVG 图标（内联 data URI，零图片资源）
+│   ├── stickers.js            # 表情包受控 token → 素材映射（LLM 不能直接出 URL）
 │   └── base64.js              # data URI 编码工具
+├── api/                       # ★ agent 接口层（流式对话 / 历史 / 跨端传输）
+│   ├── config.js              # baseURL / 端点 / 超时（运行期可改）
+│   ├── sse-parse.js           # SSE 帧解析 + 增量 UTF-8 解码（纯函数，可单测）
+│   ├── transport.js           # 跨端流式 POST（H5 / App / 小程序能力不同）
+│   ├── request.js             # 非流式请求封装（错误提示说人话）
+│   ├── chat.js                # chatStream / chatSendOnce / chatHistory
+│   └── README.md              # ★ 前后端接口契约（后端照着实现即可）
+├── stores/
+│   └── chat.js                # 对话状态机：乐观发送 / 流式回填 / 一键停止 / 失败重发 / 本地缓存
 ├── components/                # 8 个 bl-* 业务组件，经 easycom 自动注册
 │   ├── bl-icon/               # SVG 图标（name + color + size）
 │   ├── bl-navbar/             # 自绘导航栏（返回 / 标题 / 右侧动作）
@@ -153,7 +163,34 @@ Token 以 **4 份镜像**存在，改一处需同步其余，**核对基准是 `
 
 ---
 
-## 七、自检方式（可选）
+## 七、接自建 agent（api 层，P0 已打通）
+
+`chat-detail` 不再是写死数据：它走 `stores/chat.js` → `api/chat.js` → 后端流式接口，
+逐字回填、可一键停止、断网降级、失败重发都已接好。
+
+- **接口契约**（后端按它实现）：[`api/README.md`](api/README.md)
+- **后端未就绪时的假后端**（零依赖，实现同一份契约）：
+
+  ```bash
+  node tools/mock-server.mjs            # 仓库根目录执行，默认 127.0.0.1:8787
+  node tools/mock-server.mjs --host 0.0.0.0   # 真机联调
+  ```
+
+- **自检**（在仓库根目录执行，不装任何 npm 包）：
+
+  ```bash
+  npm test        # 契约与 SSE 解析 25 项 + 端侧状态机 13 项
+  ```
+
+> ⚠️ 各端 baseURL 不同（H5 用 127.0.0.1、Android 模拟器用 10.0.2.2、真机用局域网 IP），
+> 微信开发者工具还需勾选「不校验合法域名」。详见 `api/README.md` §五。
+
+> 仓库根目录的 `package.json` **只为 `tools/` 下的脚本提供 ESM 运行环境与快捷命令**，
+> 不是 App 的依赖清单——`uni-app/` 工程本身依然是零 npm 依赖，HBuilderX 直接打开即可跑。
+
+---
+
+## 八、自检方式（可选）
 
 若要脱离 HBuilderX 校验样式，可用 Vue SFC 编译器做离屏渲染：
 

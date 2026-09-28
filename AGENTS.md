@@ -27,6 +27,12 @@
 - 优先开源免费方案；引入付费或受限许可组件前必须先确认
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
+- **改动 `uni-app/api/`、`uni-app/stores/`、`uni-app/pages/chat-detail/` 或 `tools/mock-server.mjs`
+  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 项 + 端侧状态机 13 项）
+- **前后端接口契约的唯一来源是 `uni-app/api/README.md`**——改契约必须同时改三处：
+  端侧实现、`tools/mock-server.mjs`、契约文档本身
+- 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；
+  仓库根 `package.json` 只为 `tools/` 提供 ESM 运行环境与快捷命令，`uni-app/` 工程仍零 npm 依赖
 - 写文件默认 UTF-8 无 BOM（`[System.IO.File]::WriteAllText` + `UTF8Encoding($false)`）
   - **例外：`.ps1` 必须 UTF-8 带 BOM**（`UTF8Encoding($true)`）。Windows PowerShell 5.1
     会把无 BOM 的 UTF-8 当 ANSI(GBK) 解码，含中文的脚本会直接解析失败
@@ -89,3 +95,4 @@ Windows 计划任务 **`BilinAI-Backup`**，每日 12:30 运行：推 `localmirr
 - `比邻AI_项目设计方案.md`——主方案（产品红线、计划状态机、捏脸/口型架构）
 - `比邻AI_医学条目与语音技术选型.md`——知识来源与语音栈
 - `比邻AI_数字人资产交付规范.md`——Blender 交付契约与验收清单
+- `uni-app/api/README.md`——**前后端接口契约**（SSE 事件表、各端流式能力差异、联调方式）

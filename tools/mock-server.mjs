@@ -1,0 +1,369 @@
+#!/usr/bin/env node
+/**
+ * 比邻AI · mock agent 服务（零依赖）
+ *
+ * 用途：uni-app 端还没等到 FastAPI 后端时的联调靶子。它实现的是
+ * **真实契约**（见 uni-app/api/README.md），所以端侧代码一行都不用改，
+ * 后端就绪后只改 baseURL 即可切换。
+ *
+ * 接口：
+ *   POST /v1/chat/stream    SSE 流式对话（meta / token / sticker / card / done / error）
+ *   POST /v1/chat/send      非流式一次性回复（端侧降级路径）
+ *   GET  /v1/chat/history   历史消息
+ *   GET  /healthz           存活探针
+ *
+ * 用法：
+ *   node tools/mock-server.mjs                 # 默认 127.0.0.1:8787，逐字输出，110ms/字
+ *   node tools/mock-server.mjs --port 9000
+ *   node tools/mock-server.mjs --delay 0       # 不等待，便于压测/脚本联调
+ *   node tools/mock-server.mjs --host 0.0.0.0  # 真机联调（手机与电脑同一局域网）
+ *
+ * 触发词（用来演示边界，不参与真实业务）：
+ *   消息里含 __error  → 走到 error 事件分支（验证端侧错误态与重发）
+ *   消息里含 __slow   → 每字放大到 10 倍延迟（验证「停止」按钮）
+ */
+
+import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
+
+const DEFAULT_PORT = 8787
+const DEFAULT_HOST = '127.0.0.1'
+const DEFAULT_DELAY_MS = 110
+
+/** 人设：儿子 小明（爽朗、爱开玩笑）——文案遵守「句末不加句号、多句换行」的规范 */
+const PERSONA = { id: 'p_son', name: '儿子 小明', relation: '儿子', avatarColor: '#07C160' }
+
+const REPLIES = [
+  {
+    match: /(药|吃药|服药|降压)/,
+    text: '妈 药吃了没\n吃完喝口热水 别空腹',
+    sticker: 'pill',
+    card: {
+      kind: 'plan_item',
+      plan: { time: '08:00', title: '用药提醒', desc: '降压药 1 片，饭后温水送服', state: 'todo' }
+    }
+  },
+  { match: /(睡|困|晚安|夜里)/, text: '早点睡 别熬夜\n我把灯给你留着', sticker: 'night' },
+  { match: /(想|孤单|没人|闷)/, text: '我也想你们\n晚上我打视频回来', sticker: 'hug' },
+  { match: /(吃|饭|菜|盐)/, text: '中午吃点清淡的\n少放盐 多来点青菜', sticker: 'meal' },
+  { match: /(天气|冷|热|下雨|风)/, text: '今天降温了\n出门加件外套', sticker: 'sun' },
+  { match: /(走|散步|锻炼|运动|腿)/, text: '吃完歇半小时再下去走两圈\n别走太快 扶着点栏杆', sticker: 'walk' },
+  { match: /(水|渴)/, text: '喝口水吧\n不渴也得喝 一天七八杯', sticker: 'water' },
+  { match: /(疼|难受|血压|头晕)/, text: '妈 别自己扛着\n我一会儿给社区医生打电话 你先把感觉记一下', sticker: 'cheer' }
+]
+
+const DEFAULT_REPLY = { text: '妈 我在呢\n今天感觉怎么样', sticker: '' }
+
+/** 每个会话一份内存历史：够端侧首启拉一次即可，不做持久化 */
+const histories = new Map()
+
+function conversationOf(id) {
+  const key = id || 'c_son'
+  if (!histories.has(key)) {
+    const now = Date.now()
+    histories.set(key, [
+      {
+        id: key + '_seed_1',
+        role: 'agent',
+        type: 'text',
+        text: '妈 我上班去了\n有事就发消息',
+        createdAt: new Date(now - 3600 * 1000).toISOString()
+      }
+    ])
+  }
+  return histories.get(key)
+}
+
+function replyFor(text) {
+  for (const item of REPLIES) {
+    if (item.match.test(text)) return item
+  }
+  return DEFAULT_REPLY
+}
+
+/* ------------------------------------------------------------------ HTTP */
+
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'content-type, accept',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Max-Age': '86400'
+  }
+}
+
+function sendJSON(res, statusCode, body) {
+  const text = JSON.stringify(body)
+  res.writeHead(statusCode, Object.assign({
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(text)
+  }, corsHeaders()))
+  res.end(text)
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8')
+      if (!raw) { resolve({}); return }
+      try {
+        resolve(JSON.parse(raw))
+      } catch (e) {
+        reject(new Error('请求体不是合法 JSON'))
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * @param {object} [options]
+ * @param {number} [options.port]      0 表示随机端口（测试用）
+ * @param {string} [options.host]
+ * @param {number} [options.delayMs]   每个 token 的间隔
+ * @returns {Promise<{server: import('node:http').Server, port: number, host: string, close: () => Promise<void>}>}
+ */
+export function startMockServer(options = {}) {
+  const host = options.host || DEFAULT_HOST
+  const delayMs = options.delayMs === undefined ? DEFAULT_DELAY_MS : options.delayMs
+
+  const server = createServer((req, res) => {
+    const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders())
+      res.end()
+      return
+    }
+
+    if (url.pathname === '/healthz') {
+      sendJSON(res, 200, { ok: true, service: 'bilin-mock-agent', delayMs })
+      return
+    }
+
+    if (url.pathname === '/v1/chat/history' && req.method === 'GET') {
+      const conversationId = url.searchParams.get('conversationId') || 'c_son'
+      sendJSON(res, 200, { conversationId, messages: conversationOf(conversationId) })
+      return
+    }
+
+    if (url.pathname === '/v1/chat/send' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const echo = buildTurn(body)
+        appendHistory(body, echo)
+        sendJSON(res, 200, echo.full)
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/chat/stream' && req.method === 'POST') {
+      readBody(req).then((body) => streamTurn(req, res, body, delayMs)).catch((err) => {
+        sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } })
+      })
+      return
+    }
+
+    sendJSON(res, 404, { error: { code: 'not_found', message: '没有这个接口：' + url.pathname } })
+  })
+
+  return new Promise((resolve) => {
+    server.listen(options.port === undefined ? DEFAULT_PORT : options.port, host, () => {
+      const address = server.address()
+      resolve({
+        server,
+        host,
+        port: typeof address === 'object' && address ? address.port : 0,
+        close: () => new Promise((done) => {
+          // fetch/undici 会复用 keep-alive 连接，只调 close() 会一直等连接释放；先全部掐掉
+          if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
+          server.close(() => done())
+        })
+      })
+    })
+  })
+}
+
+/* --------------------------------------------------------------- 回复生成 */
+
+/** 把一次回复拆成「事件序列」，流式与非流式共用同一份数据 */
+function buildTurn(body) {
+  const raw = String((body && body.text) || '').trim()
+  const conversationId = (body && body.conversationId) || 'c_son'
+  const wantsError = raw.indexOf('__error') !== -1
+  const wantsSlow = raw.indexOf('__slow') !== -1
+
+  const reply = replyFor(raw.replace(/__\w+/g, ''))
+  const assistantMsgId = conversationId + '_a_' + Date.now().toString(36)
+
+  const base = {
+    conversationId,
+    assistantMsgId,
+    persona: PERSONA,
+    text: reply.text,
+    sticker: reply.sticker || '',
+    card: reply.card || null,
+    slow: wantsSlow,
+    full: {
+      conversationId,
+      assistantMsgId,
+      persona: PERSONA,
+      text: reply.text,
+      sticker: reply.sticker || '',
+      card: reply.card || null,
+      finishReason: 'stop'
+    }
+  }
+
+  if (wantsError) {
+    return Object.assign(base, {
+      text: '',
+      sticker: '',
+      card: null,
+      error: { code: 'server_error', message: '服务器开小差了，一会儿再试', retryable: true }
+    })
+  }
+
+  return Object.assign(base, { error: null })
+}
+
+function appendHistory(body, turn) {
+  const list = conversationOf(turn.conversationId || (body && body.conversationId))
+  if (body && body.text) {
+    list.push({
+      id: turn.assistantMsgId + '_u',
+      role: 'elder',
+      type: 'text',
+      text: String(body.text),
+      createdAt: new Date().toISOString()
+    })
+  }
+  if (turn.text) {
+    list.push({
+      id: turn.assistantMsgId,
+      role: 'agent',
+      type: 'text',
+      text: turn.text,
+      createdAt: new Date().toISOString()
+    })
+  }
+}
+
+/* ------------------------------------------------------------------- SSE */
+
+async function streamTurn(req, res, body, serverDelayMs) {
+  const turn = buildTurn(body)
+  // 逐字吐字的速度：默认按启动参数，__slow 触发词放大到 700ms/字，便于手动验证「停止」
+  const perCharDelay = turn.slow ? Math.max(serverDelayMs, 700) : serverDelayMs
+
+  res.writeHead(200, Object.assign({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // 关掉反向代理的缓冲（真上了 nginx 少这一行会变成「一次性吐完」）
+    'X-Accel-Buffering': 'no'
+  }, corsHeaders()))
+  res.flushHeaders()
+  if (res.socket && res.socket.setNoDelay) res.socket.setNoDelay(true)
+
+  let closed = false
+  // 用 res 的 close 而不是 req 的：req 的 close 在请求体读完时也会触发，
+  // 会把「客户端还在收」误判成断开，结果一个字都发不出去
+  res.on('close', () => { closed = true })
+
+  // 心跳：注释行，端侧解析器会忽略；用来防中间层掐掉空闲连接
+  const heartbeat = setInterval(() => {
+    if (!closed) res.write(': ping\n\n')
+  }, 15000)
+
+  const write = (event, payload) => {
+    if (closed) return
+    res.write('event: ' + event + '\ndata: ' + JSON.stringify(payload) + '\n\n')
+  }
+
+  const wait = (ms) => (closed ? Promise.resolve() : sleep(ms))
+
+  try {
+    write('meta', {
+      conversationId: turn.conversationId,
+      assistantMsgId: turn.assistantMsgId,
+      persona: PERSONA
+    })
+    await wait(perCharDelay)
+
+    if (turn.error) {
+      write('error', turn.error)
+      return
+    }
+
+    const chars = Array.from(turn.text)
+    for (let i = 0; i < chars.length; i += 1) {
+      write('token', { t: chars[i] })
+      await wait(perCharDelay)
+    }
+
+    // 先说完话，再补一个表情/卡片——顺序与真人聊天一致，端上呈现也更自然
+    if (turn.sticker) {
+      write('sticker', { token: turn.sticker })
+      await wait(perCharDelay)
+    }
+
+    if (turn.card) {
+      write('card', { card: turn.card })
+      await wait(perCharDelay)
+    }
+
+    write('done', { assistantMsgId: turn.assistantMsgId, finishReason: 'stop' })
+    appendHistory(body, turn)
+  } catch (e) {
+    write('error', { code: 'internal', message: 'mock 服务出错了', retryable: false })
+  } finally {
+    clearInterval(heartbeat)
+    if (!closed) res.end()
+  }
+}
+
+/* -------------------------------------------------------------------- CLI */
+
+function parseArgs(argv) {
+  const flags = {}
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i]
+    if (!token.startsWith('--')) continue
+    const eq = token.indexOf('=')
+    if (eq !== -1) { flags[token.slice(2, eq)] = token.slice(eq + 1); continue }
+    const key = token.slice(2)
+    const next = argv[i + 1]
+    if (next === undefined || next.startsWith('--')) flags[key] = true
+    else { flags[key] = next; i += 1 }
+  }
+  return flags
+}
+
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (isDirectRun) {
+  const flags = parseArgs(process.argv.slice(2))
+  const host = typeof flags.host === 'string' ? flags.host : DEFAULT_HOST
+  const port = flags.port !== undefined ? Number(flags.port) : DEFAULT_PORT
+  const delayMs = flags.delay !== undefined ? Number(flags.delay) : DEFAULT_DELAY_MS
+
+  startMockServer({ host, port, delayMs }).then((instance) => {
+    console.log('比邻AI mock agent 已启动')
+    console.log('  地址   : http://' + host + ':' + instance.port)
+    console.log('  每字延迟: ' + delayMs + 'ms（--delay 0 可关闭）')
+    console.log('  接口   : POST /v1/chat/stream · POST /v1/chat/send · GET /v1/chat/history')
+    console.log('')
+    console.log('  端侧联调：uni-app/api/config.js 里把 DEFAULT_BASE_URL 指向这个地址')
+    console.log('  真机联调：加 --host 0.0.0.0，并把 baseURL 改成电脑的局域网 IP')
+    console.log('  自检     : node tools/test-chat-api.mjs')
+    console.log('')
+    console.log('  Ctrl+C 退出')
+  }).catch((error) => {
+    console.error('启动失败：' + error.message)
+    process.exit(1)
+  })
+}

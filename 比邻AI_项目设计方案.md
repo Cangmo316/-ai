@@ -520,6 +520,12 @@ server/
 | `/v1/avatar/params` | GET/PUT | 捏脸参数读写 |
 | `/v1/consent` | POST | 授权与告知留痕 |
 
+> **端侧已按此契约落地**（P0）：`uni-app/api/` + `uni-app/stores/chat.js` 已实现流式对话、
+> 历史拉取、一键停止、失败重发与跨端降级；事件级契约（`meta` / `token` / `sticker` / `card` /
+> `done` / `error`）与各端流式能力差异（H5 fetch / 小程序 enableChunked / App plus.net.XHR）
+> 见 **`uni-app/api/README.md`**——后端照它实现即可，端侧代码不需要改。
+> 后端未就绪时可用 `node tools/mock-server.mjs` 当联调靶子。
+
 **调度与推送**
 
 - 调度器（服务端定时）到点 → 生成话术 → 走推送通道 + 写入会话 → 端侧收到后插入消息
@@ -664,5 +670,12 @@ E:\比邻AI\
 2. `uni-app/api/` 封装请求层，`chat-detail` 从写死数据切到流式接口
 3. `server/app/style/` 落地"句末不加句号"规则 + 边界用例单测（这是产品性格第一条，成本极低、收益高）
 4. 同步做技术验证：用一份现成的 `.glb`（带 morph）在 App 端 renderjs 里跑起来，测中低端机帧率 —— 这一步的结果决定 P3 走 A 还是 B 方案
+
+> **P0 进度**（2026-09-24 更新）
+> - 第 2 步**已完成**：`uni-app/api/`（跨端流式传输 + SSE 解析）+ `uni-app/stores/chat.js`
+>   （乐观发送 / 流式回填 / 一键停止 / 失败重发 / 本地缓存降级）已接好 `chat-detail`；
+>   契约见 `uni-app/api/README.md`，自检 `npm test`（SSE 与契约 25 项 + 端侧状态机 13 项全绿）
+> - 第 1、3 步**未开始**：`server/` 仍只有 `app/knowledge/`，等 LLM 接入方式确定后开工
+> - 联调靶子已就位：`node tools/mock-server.mjs`（零依赖，实现完整契约）
 
 > 本方案与《比邻AI_UI设计流程与提示词.md》配合使用：本方案定"做什么、怎么搭"，UI 手册定"长什么样、怎么画"。
