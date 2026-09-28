@@ -23,5 +23,17 @@ export {
   chatHistory
 } from './chat.js'
 
+export {
+  confirmPlan,
+  createPlanDraft,
+  fetchElders,
+  fetchPendingPlans,
+  fetchPlanHistory,
+  fetchPlanSummary,
+  fetchTodayPlan,
+  rejectPlan,
+  submitCheckin
+} from './plans.js'
+
 /** 当前运行端与是否具备真流式能力（设置页/自检页展示用） */
 export { PLATFORM, CAN_STREAM } from './transport.js'

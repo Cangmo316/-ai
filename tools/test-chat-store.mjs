@@ -14,42 +14,12 @@
 import assert from 'node:assert/strict'
 import { register } from 'node:module'
 import { finish, group, sleep, test, testAsync, waitUntil } from './test-util.mjs'
+import { installUniStub } from './uni-stub.mjs'
 import { startMockServer } from './mock-server.mjs'
 
 /* ------------------------------------------------ 内存版 uni 运行时 */
 
-const storage = new Map()
-
-globalThis.uni = {
-  getStorageSync(key) {
-    return storage.has(key) ? storage.get(key) : ''
-  },
-  setStorageSync(key, value) {
-    storage.set(key, value)
-  },
-  removeStorageSync(key) {
-    storage.delete(key)
-  },
-  /** 非流式请求走这里（历史消息、降级接口）；流式走 fetch，见 transport.js 的 H5 分支 */
-  request(options) {
-    const init = { method: options.method || 'GET', headers: options.header || {} }
-    if (options.data !== undefined && init.method !== 'GET') init.body = JSON.stringify(options.data)
-    fetch(options.url, init)
-      .then(async (res) => {
-        const text = await res.text()
-        let data = text
-        try { data = JSON.parse(text) } catch (e) { /* 保留原文 */ }
-        if (options.success) options.success({ statusCode: res.status, data, header: {} })
-        if (options.complete) options.complete()
-      })
-      .catch((error) => {
-        if (options.fail) options.fail({ errMsg: 'request:fail ' + error.message })
-        if (options.complete) options.complete()
-      })
-    return { abort() {} }
-  },
-  showToast() {}
-}
+const storage = installUniStub()
 
 // 必须在 import 业务模块之前注册：业务代码用了 `@/` 别名与 `vue`
 register('./node-alias-hook.mjs', import.meta.url)

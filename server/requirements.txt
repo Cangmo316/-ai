@@ -1,11 +1,16 @@
 # 比邻AI · agent 服务依赖
 #
-# 只装三个包，都是开源免费方案（符合仓库约定「优先开源免费、能不加就不加」）：
+# 只装四个包，都是开源免费方案（符合仓库约定「优先开源免费、能不加就不加」）：
 #   fastapi  —— 路由与 SSE（StreamingResponse）
 #   uvicorn  —— ASGI 服务器，[standard] 带 websockets/httptools
 #   httpx    —— 调模型用的异步 HTTP 客户端（也支撑 TestClient 跑测试）
+#   PyYAML   —— 读康养知识库（app/knowledge/guidelines.yaml）
+#              为什么不自己解析：YAML 子集看着简单，省略号/引号/行内映射的坑不少，
+#              而 server/app/knowledge/validate.mjs 的手写解析器只够做结构校验、不足以取数据。
+#              PyYAML 是 MIT 许可，无成本无限制。
 #
 # 版本为实测通过的组合（Python 3.13）。升级前先跑 `python -m unittest discover -s tests -t .`
 fastapi==0.141.1
 uvicorn[standard]==0.54.0
 httpx==0.28.1
+PyYAML==6.0.3

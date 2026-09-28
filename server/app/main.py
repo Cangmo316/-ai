@@ -2,11 +2,11 @@
 比邻AI · FastAPI 入口
 
     python run.py            # 等价于 uvicorn app.main:app --host <HOST> --port <PORT>
-    GET /healthz             # 自检：当前用的是真模型还是假模型（不回显密钥）
+    GET /healthz             # 自检：模型、知识库版本、计划数量（不回显密钥）
     GET /docs                # 自动生成的接口文档
 
-`create_app()` 支持注入 provider / settings，测试据此换成假模型与临时配置，
-不用改环境变量、也不会打到真实模型上。
+`create_app()` 支持注入 provider / settings / 知识库 / 计划引擎，测试据此换成假模型
+与临时数据，不用改环境变量、也不会打到真实模型上。
 """
 
 from __future__ import annotations
@@ -22,29 +22,79 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .api.chat import router as chat_router
+from .api.plans import router as plans_router
 from .config import Settings, get_settings
+from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
+from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .orchestration.service import ChatService
 from .persona.prompts import PersonaRegistry
+from .plan.engine import PlanEngine
+from .plan.models import STATUS_ACTIVE, STATUS_PENDING
+from .plan.store import PlanStore
 
 logger = logging.getLogger("bilin")
 
 
-def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    provider=None,
+    knowledge: KnowledgeBase | None = None,
+    plan_engine: PlanEngine | None = None,
+) -> FastAPI:
     config = settings or get_settings()
     llm = provider or build_provider(config)
-    store = ConversationStore()
+    conversations = ConversationStore()
     personas = PersonaRegistry(default_id=config.default_persona_id)
-    service = ChatService(llm, store, personas, config)
+    elders = ElderStore()
+
+    if knowledge is None:
+        try:
+            knowledge = load_knowledge()
+        except KnowledgeError as exc:
+            # 计划引擎的每一条依据都来自知识库，读不出来就不该硬撑着启动
+            logger.error("知识库加载失败：%s", exc)
+            raise
+    engine = plan_engine or PlanEngine(knowledge, PlanStore(), elders, config)
+
+    def plan_cards_for(elder_id: str | None):
+        """对话里「今天要做什么」时挂的今日计划卡片（最多 3 条，避免刷屏）"""
+        today = engine.today(elder_id or DEFAULT_ELDER_ID)
+        cards = []
+        for item in (today.get("items") or [])[:3]:
+            cards.append(
+                {
+                    "kind": "plan_item",
+                    "plan": {
+                        "time": item.get("time", ""),
+                        "title": item.get("title", ""),
+                        "desc": item.get("detail", ""),
+                        "state": "done" if item.get("done") else "todo",
+                    },
+                }
+            )
+        return cards
+
+    service = ChatService(
+        llm,
+        conversations,
+        personas,
+        config,
+        # L1 档案注入：人设 prompt 会带上"有高血压、平时吃什么药"这类稳定事实
+        elder_profiles=elders.elders,
+        plan_cards=plan_cards_for,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logger.info(
-            "比邻AI agent 服务启动 | provider=%s model=%s key=%s",
+            "比邻AI agent 服务启动 | provider=%s model=%s key=%s | 知识库 %s（%s 条）",
             llm.name,
             getattr(llm, "model", "-"),
             config.masked_api_key(),
+            knowledge.version,
+            len(knowledge.entries),
         )
         if not config.uses_real_model:
             logger.warning("当前使用假模型（未配置 LLM_API_KEY）—— 端侧能连通，但回复是固定话术")
@@ -52,7 +102,10 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
 
     app = FastAPI(
         title="比邻AI agent 服务",
-        description="面向康复养老场景的对话编排服务。接口契约见 uni-app/api/README.md",
+        description=(
+            "面向康复养老场景的对话编排与康养计划服务。"
+            "接口契约见 uni-app/api/README.md"
+        ),
         version=__version__,
         lifespan=lifespan,
     )
@@ -60,6 +113,9 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     app.state.settings = config
     app.state.provider = llm
     app.state.chat_service = service
+    app.state.knowledge = knowledge
+    app.state.plan_engine = engine
+    app.state.elders = elders
 
     # 开发期允许跨域：HBuilderX 的 H5 预览跑在另一个端口上
     app.add_middleware(
@@ -71,10 +127,17 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
     )
 
     app.include_router(chat_router)
+    app.include_router(plans_router)
 
     @app.get("/healthz", tags=["meta"])
     async def healthz(request: Request):
         current = request.app.state.settings
+        active = pending = total = 0
+        for elder in elders.all():
+            plans = engine.store.plans_of(str(elder.get("id")))
+            total += len(plans)
+            active += sum(1 for plan in plans if plan.status == STATUS_ACTIVE)
+            pending += sum(1 for plan in plans if plan.status == STATUS_PENDING)
         return {
             "ok": True,
             "service": "bilin-agent",
@@ -85,13 +148,24 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
                 "usesRealModel": current.uses_real_model,
                 "apiKey": current.masked_api_key(),
             },
+            "knowledge": knowledge.summary(),
+            "plans": {"total": total, "active": active, "pending": pending},
             "endpoints": [
                 "POST /v1/chat/stream",
                 "POST /v1/chat/send",
-                "GET /v1/chat/history",
-                "GET /v1/personas",
+                "GET  /v1/chat/history",
+                "GET  /v1/personas",
+                "POST /v1/plans/draft",
+                "GET  /v1/plans/pending",
+                "POST /v1/plans/confirm",
+                "POST /v1/plans/reject",
+                "GET  /v1/plans/today",
+                "POST /v1/plans/checkin",
+                "GET  /v1/plans/summary",
+                "POST /v1/plans/adjust",
+                "GET  /v1/plans/history",
+                "GET  /v1/elders",
             ],
-            "knowledge": "app/knowledge/guidelines.yaml（25 条草稿，未接入计划引擎）",
         }
 
     @app.exception_handler(StarletteHTTPException)
@@ -102,7 +176,12 @@ def create_app(settings: Settings | None = None, provider=None) -> FastAPI:
         """
         return JSONResponse(
             status_code=exc.status_code,
-            content={"error": {"code": _code_for_status(exc.status_code), "message": _message_for_status(exc.status_code)}},
+            content={
+                "error": {
+                    "code": _code_for_status(exc.status_code),
+                    "message": _message_for_status(exc.status_code),
+                }
+            },
         )
 
     @app.exception_handler(RequestValidationError)

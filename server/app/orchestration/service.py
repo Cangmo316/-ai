@@ -42,8 +42,10 @@ from ..models.message import (
 )
 from ..persona.prompts import PersonaRegistry, build_system_prompt
 from ..persona.stickers import is_allowed_sticker
+from ..style.compliance import scan
 from ..style.punctuation import StyleStreamer
 from . import events
+from .intents import needs_plan_card
 
 logger = logging.getLogger("bilin.chat")
 
@@ -137,12 +139,15 @@ class ChatService:
         personas: PersonaRegistry,
         settings,
         elder_profiles: dict[str, dict] | None = None,
+        plan_cards=None,
     ) -> None:
         self.provider = provider
         self.store = store
         self.personas = personas
         self.settings = settings
         self.elder_profiles = elder_profiles or {}
+        # 取今日计划卡片的回调（由 main.py 注入，避免编排层直接依赖计划引擎）
+        self.plan_cards = plan_cards
 
     # ------------------------------------------------------------ 事件流
 
@@ -220,6 +225,25 @@ class ChatService:
                 "retryable": True,
             }
             return
+
+        # 越界话术持续监控：不拦回复（拦了老人会觉得莫名其妙），只留痕，
+        # 让"模型偶尔说错话"这件事有人知道，而不是等出事才发现
+        reply_text = "".join(
+            part.get("text", "") for part in parts if part["type"] == TYPE_TEXT
+        )
+        for hint in scan(reply_text):
+            logger.warning("回复命中越界话术检查：%s | 原文：%s", hint, reply_text[:60])
+
+        # 老人问「今天要做什么」这类问题时，顺带把今日计划作为卡片发出去
+        if self.plan_cards and needs_plan_card(text):
+            try:
+                cards = self.plan_cards(elder_id) or []
+            except Exception:  # noqa: BLE001 —— 卡片取不到不影响对话本身
+                logger.exception("取今日计划卡片失败")
+                cards = []
+            for card in cards[:3]:
+                parts.append({"type": TYPE_CARD, "card": card})
+                yield events.EVENT_CARD, {"card": card}
 
         self._persist(conversation_id, parts)
         has_visible = any(

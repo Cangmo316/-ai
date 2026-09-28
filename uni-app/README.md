@@ -44,15 +44,17 @@ uni-app/
 │   ├── icons.js               # 26 个 SVG 图标（内联 data URI，零图片资源）
 │   ├── stickers.js            # 表情包受控 token → 素材映射（LLM 不能直接出 URL）
 │   └── base64.js              # data URI 编码工具
-├── api/                       # ★ agent 接口层（流式对话 / 历史 / 跨端传输）
+├── api/                       # ★ agent 接口层（流式对话 / 计划 / 历史 / 跨端传输）
 │   ├── config.js              # baseURL / 端点 / 超时（运行期可改）
 │   ├── sse-parse.js           # SSE 帧解析 + 增量 UTF-8 解码（纯函数，可单测）
 │   ├── transport.js           # 跨端流式 POST（H5 / App / 小程序能力不同）
 │   ├── request.js             # 非流式请求封装（错误提示说人话）
 │   ├── chat.js                # chatStream / chatSendOnce / chatHistory
+│   ├── plans.js               # 康养计划：today / checkin / 确认 / 汇总
 │   └── README.md              # ★ 前后端接口契约（后端照着实现即可）
 ├── stores/
-│   └── chat.js                # 对话状态机：乐观发送 / 流式回填 / 一键停止 / 失败重发 / 本地缓存
+│   ├── chat.js                # 对话状态机：乐观发送 / 流式回填 / 一键停止 / 失败重发 / 本地缓存
+│   └── plan.js                # 今日计划：乐观打卡 / 三级兜底（接口 → 缓存 → 样例）
 ├── components/                # 8 个 bl-* 业务组件，经 easycom 自动注册
 │   ├── bl-icon/               # SVG 图标（name + color + size）
 │   ├── bl-navbar/             # 自绘导航栏（返回 / 标题 / 右侧动作）
@@ -168,6 +170,11 @@ Token 以 **4 份镜像**存在，改一处需同步其余，**核对基准是 `
 `chat-detail` 不再是写死数据：它走 `stores/chat.js` → `api/chat.js` → 后端流式接口，
 逐字回填、可一键停止、断网降级、失败重发都已接好。
 
+**日程页（Tab 2）也已接真数据（P1）**：`pages/plans/plans.vue` → `stores/plan.js` → `api/plans.js`，
+数据来自 `/v1/plans/today`，**只包含家属已确认的计划**（未确认的草稿不会出现在这里，也不产生提醒）。
+打卡是乐观更新（点一下立刻变绿，失败回滚），并用「接口 → 本地缓存 → 内置样例」三级兜底，
+任何一级断了页面都不会白屏。对话里问「今天要做什么」还会自动挂上今日计划卡。
+
 - **接口契约**（后端按它实现）：[`api/README.md`](api/README.md)
 - **后端未就绪时的假后端**（零依赖，实现同一份契约）：
 
@@ -179,7 +186,7 @@ Token 以 **4 份镜像**存在，改一处需同步其余，**核对基准是 `
 - **自检**（在仓库根目录执行，不装任何 npm 包）：
 
   ```bash
-  npm test        # 契约与 SSE 解析 25 项 + 端侧状态机 13 项
+  npm test        # 契约与 SSE 解析 25 + 话术规则 6 + 对话状态机 13 + 计划与打卡 10
   ```
 
 > ⚠️ 各端 baseURL 不同（H5 用 127.0.0.1、Android 模拟器用 10.0.2.2、真机用局域网 IP），

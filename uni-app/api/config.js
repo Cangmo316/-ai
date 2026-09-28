@@ -26,7 +26,18 @@ export const STORAGE_KEY_BASE_URL = 'bl_api_base'
 export const ENDPOINTS = {
   chatStream: '/v1/chat/stream',
   chatSend: '/v1/chat/send',
-  chatHistory: '/v1/chat/history'
+  chatHistory: '/v1/chat/history',
+  // 康养计划（P1）：生成 → 家属确认 → 今日计划 → 打卡
+  planDraft: '/v1/plans/draft',
+  planPending: '/v1/plans/pending',
+  planConfirm: '/v1/plans/confirm',
+  planReject: '/v1/plans/reject',
+  planToday: '/v1/plans/today',
+  planCheckin: '/v1/plans/checkin',
+  planSummary: '/v1/plans/summary',
+  planAdjust: '/v1/plans/adjust',
+  planHistory: '/v1/plans/history',
+  elders: '/v1/elders'
 }
 
 /** 超时（ms）：首字节超时用看门狗实现，总超时只作用于非流式接口 */

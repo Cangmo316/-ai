@@ -120,6 +120,147 @@ function readBody(req) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/* ------------------------------------------------- 康养计划（P1 联调样本） */
+
+/**
+ * 一份**已生效**的今日计划，用来联调老人端日程页与打卡。
+ *
+ * ⚠️ 与真实后端的两点差异（有意为之，避免在 JS 里重写一遍计划引擎）：
+ *   1. 这里没有"家属确认"这一步，计划直接是生效态；真实服务端要 draft → pending → active
+ *   2. 条目是静态样本，不是按老人档案从知识库匹配出来的
+ * 端侧代码不关心这些差异，所以联调效果一致。
+ */
+const PLAN_ITEMS = [
+  {
+    id: 'pi_mock_1',
+    time: '08:00',
+    type: '监测',
+    title: '量完血压记一下 下次给医生看',
+    detail: '家里的血压计比医院的更接近平时状态',
+    freq: '每日',
+    strongRemind: false,
+    basis: {
+      entryId: 'nphis_006',
+      source: 'nphis3',
+      sourceName: '国家基本公共卫生服务规范（第三版）· 老年人健康管理服务规范',
+      version: '第三版',
+      boundary: '不根据血压值给出用药或剂量建议',
+      text: '国家基本公共卫生服务规范（第三版）· 老年人健康管理服务规范 · 第三版 · §nphis_006'
+    }
+  },
+  {
+    id: 'pi_mock_2',
+    time: '11:30',
+    type: '午餐',
+    title: '每天吃盐不超过5克',
+    detail: '做菜少放酱油和咸菜',
+    freq: '每日',
+    strongRemind: true,
+    basis: {
+      entryId: 'diet_salt_001',
+      source: 'diet2022',
+      sourceName: '中国居民膳食指南（2022）',
+      version: '2022',
+      boundary: '不涉及药物与剂量调整',
+      text: '中国居民膳食指南（2022） · 2022 · §diet_salt_001'
+    }
+  },
+  {
+    id: 'pi_mock_3',
+    time: '15:30',
+    type: '活动',
+    title: '出去走走 回来扶着桌子单脚站一会儿',
+    detail: '平衡练习能降低跌倒风险，一定要扶着稳的东西',
+    freq: '每日',
+    strongRemind: false,
+    basis: {
+      entryId: 'icope_004',
+      source: 'icope',
+      sourceName: 'ICOPE 老年人整合照护指南（中文版）',
+      version: '2019 中文版',
+      boundary: '不替代康复训练处方；跌倒高风险者需康复师指导',
+      text: 'ICOPE 老年人整合照护指南（中文版） · 2019 中文版 · §icope_004'
+    }
+  },
+  {
+    id: 'pi_mock_4',
+    time: '20:00',
+    type: '问候',
+    title: '这两天心里闷不闷 有事跟我说说',
+    detail: '',
+    freq: '每日',
+    strongRemind: false,
+    basis: {
+      entryId: 'icope_009',
+      source: 'icope',
+      sourceName: 'ICOPE 老年人整合照护指南（中文版）',
+      version: '2019 中文版',
+      boundary: '不做抑郁筛查结论与心理治疗建议；须提示家属或就医',
+      text: 'ICOPE 老年人整合照护指南（中文版） · 2019 中文版 · §icope_009'
+    }
+  }
+]
+
+function todayKey() {
+  const now = new Date()
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-')
+}
+
+function createPlanState() {
+  return {
+    elderId: 'e_1',
+    planId: 'plan_mock_1',
+    date: todayKey(),
+    doneIds: new Set(),
+    items: PLAN_ITEMS.map((item) => Object.assign({}, item))
+  }
+}
+
+function todayPayload(state) {
+  const items = state.items.map((item) =>
+    Object.assign({}, item, {
+      done: state.doneIds.has(item.id),
+      doneAt: state.doneIds.has(item.id) ? new Date().toISOString() : ''
+    })
+  )
+  const done = items.filter((item) => item.done).length
+  return {
+    elderId: state.elderId,
+    date: state.date,
+    planId: state.planId,
+    status: 'active',
+    statusLabel: '正在执行',
+    items,
+    total: items.length,
+    done,
+    rate: items.length ? Math.round((done / items.length) * 1000) / 1000 : 0
+  }
+}
+
+function planSummary(state) {
+  const payload = todayPayload(state)
+  const rate = payload.rate
+  const shouldAdjust = rate < 0.5
+  return {
+    elderId: state.elderId,
+    hasPlan: true,
+    planId: state.planId,
+    status: 'active',
+    statusLabel: '正在执行',
+    stats: { days: 7, expected: 28, done: Math.round(rate * 28), rate, strongMissing: {} },
+    suggestion: {
+      shouldAdjust,
+      reasons: shouldAdjust ? ['最近 7 天完成率偏低，提醒安排可能太多或时间不合适'] : [],
+      stats: null,
+      advice: '建议由家属确认后调整；未确认前计划照旧执行'
+    }
+  }
+}
+
 /**
  * @param {object} [options]
  * @param {number} [options.port]      0 表示随机端口（测试用）
@@ -130,6 +271,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 export function startMockServer(options = {}) {
   const host = options.host || DEFAULT_HOST
   const delayMs = options.delayMs === undefined ? DEFAULT_DELAY_MS : options.delayMs
+  const plans = createPlanState()
 
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
@@ -142,6 +284,58 @@ export function startMockServer(options = {}) {
 
     if (url.pathname === '/healthz') {
       sendJSON(res, 200, { ok: true, service: 'bilin-mock-agent', delayMs })
+      return
+    }
+
+    // ── 康养计划 ──────────────────────────────────────────────
+    if (url.pathname === '/v1/plans/today' && req.method === 'GET') {
+      sendJSON(res, 200, todayPayload(plans))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/checkin' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const itemId = String((body && body.planItemId) || '')
+        if (!plans.items.some((item) => item.id === itemId)) {
+          sendJSON(res, 404, { error: { code: 'plan_item_not_found', message: '没找到这一项' } })
+          return
+        }
+        // 同一天同一项幂等，与真实服务端一致
+        const wanted = !(body && body.done === false)
+        if (wanted) plans.doneIds.add(itemId)
+        else plans.doneIds.delete(itemId)
+        const payload = todayPayload(plans)
+        sendJSON(res, 200, {
+          elderId: plans.elderId,
+          date: plans.date,
+          planItemId: itemId,
+          done: wanted,
+          checkin: wanted ? { planItemId: itemId, date: plans.date } : null,
+          total: payload.total,
+          completed: payload.done,
+          rate: payload.rate
+        })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/summary' && req.method === 'GET') {
+      sendJSON(res, 200, planSummary(plans))
+      return
+    }
+
+    if (url.pathname === '/v1/plans/pending' && req.method === 'GET') {
+      // mock 里计划已经是生效态，没有待确认草稿（真实服务端会有）
+      sendJSON(res, 200, { elderId: plans.elderId, plans: [] })
+      return
+    }
+
+    if (url.pathname === '/v1/elders' && req.method === 'GET') {
+      sendJSON(res, 200, {
+        elders: [{ id: 'e_1', name: '张桂兰', address: '妈', age: 71, chronic: ['高血压'], careLevel: '居家' }],
+        demo: true,
+        note: '开发期模拟档案，不是真实病例，也不构成医学建议'
+      })
       return
     }
 

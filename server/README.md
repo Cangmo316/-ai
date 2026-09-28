@@ -5,33 +5,39 @@
 
 ---
 
-## 一、现状（P0）
+## 一、现状（P0 + P1 计划引擎）
 
 **已实现**
 
 | 能力 | 落点 |
 |---|---|
-| `POST /v1/chat/stream` SSE 流式对话（meta / token / sticker / done / error） | `app/api/chat.py` + `app/orchestration/service.py` |
+| `POST /v1/chat/stream` SSE 流式对话（meta / token / sticker / card / done / error） | `app/api/chat.py` + `app/orchestration/service.py` |
 | `POST /v1/chat/send` 非流式回复（端侧降级路径） | 同上 |
 | `GET /v1/chat/history` 历史消息 | `app/models/message.py` |
 | `GET /v1/personas` 人设列表 | `app/persona/prompts.py` |
-| `GET /healthz` 自检（密钥脱敏） | `app/main.py` |
+| **康养计划引擎**：知识库匹配 → 计划项草稿 → 家属确认闸门 → 今日计划 → 打卡回流 → 完成率与调整建议 | `app/plan/engine.py` + `app/api/plans.py` |
+| **康养知识库**：读 + 结构校验（25 条草稿 / 3 个来源，带来源与版本） | `app/knowledge/loader.py` |
+| **老人档案 L1**（3 个模拟档案，注入人设 prompt） | `app/models/elder.py` |
 | 上下文组装（最近 N 轮） | `app/orchestration/service.py` |
 | 人设 system prompt（儿子/女儿/老伴/老友 + 医疗边界 + 伦理红线） | `app/persona/prompts.py` |
 | 受控表情 token（`<sticker:xxx>`，白名单外的丢弃，半个标签也不泄露） | `app/orchestration/service.py` |
 | 语言风格后处理（句末不加句号 / 句号转换行 / 小数与缩写保护） | `app/style/punctuation.py` |
+| **越界话术扫描**（用药/诊断/客服用语；计划话术改写必过此闸门，对话回复命中记 warning） | `app/style/compliance.py` |
+| **对话里的计划卡**（问「今天要做什么」时追加最多 3 个 `card` 事件） | `app/orchestration/intents.py` |
 | SSE 心跳（防端侧 20s 首字节看门狗误杀） | `app/orchestration/service.py` |
 | 错误归一化（老人看得懂的话 + retryable） | `app/llm/openai_compat.py`、`app/main.py` |
 | OpenAI 兼容模型客户端（含推理模型思维链隔离） | `app/llm/openai_compat.py` |
+| `GET /healthz` 自检（模型 / 知识库版本 / 计划数量，密钥脱敏） | `app/main.py` |
 
 **未实现**（不藏着，避免误判进度）
 
+- **调度器与推送**：计划的提醒投递（服务端定时 + 端侧本地提醒双保险）还没做，
+  现在「到点提醒」只能靠 `GET /v1/plans/today` 由端侧打开页面时展示
 - **鉴权**：目前无任何 token 校验，`CORS_ORIGINS=*`，只适合本机/内网联调
 - **`clientMsgId` 幂等**：字段收下了但没用来去重（重发会产生重复消息）
-- **数据库**：会话与消息全在内存，进程重启即清空（`app/models/message.py` 的接口按落库形态设计）
-- **计划卡（`card` 事件）**：端侧与契约都支持，但服务端要等 P1 计划引擎接上
-  `app/knowledge/guidelines.yaml` 之后才会真的发
-- 三层记忆、内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
+- **数据库**：会话、计划、打卡全在内存，进程重启即清空（接口按落库形态设计）
+- **家人端**：计划的生成/确认/驳回/汇总接口都已就绪，但没有家属侧页面（二期）
+- 三层记忆（L2/L3）、内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
 
 **默认假模型**：没配 `LLM_API_KEY` 时走 `FakeProvider`（固定话术、逐字吐字）。
 这是刻意的——端侧联调、CI、演示都不该被额度或网络卡住，且假模型也会走完整条风格后处理链路。
@@ -95,15 +101,26 @@ LLM_MODEL=deepseek-chat
 ```
 server/
 ├── run.py                  启动入口（等价 uvicorn app.main:app）
-├── requirements.txt        fastapi / uvicorn / httpx（仅三个依赖）
+├── requirements.txt        fastapi / uvicorn / httpx / PyYAML（四个依赖）
 ├── .env.example            环境变量样例（不含密钥）
 ├── app/
 │   ├── main.py             FastAPI 装配、CORS、异常归一化、/healthz
 │   ├── config.py           零依赖 .env 解析 + Settings
-│   ├── api/chat.py         路由：stream / send / history / personas
+│   ├── api/
+│   │   ├── chat.py         路由：stream / send / history / personas
+│   │   └── plans.py        路由：draft / pending / confirm / reject / today / checkin / summary / adjust / history
 │   ├── orchestration/
 │   │   ├── service.py      编排：上下文 → 模型 → 表情抽取 → 风格 → 事件 → 落库
-│   │   └── events.py       SSE 帧编码（契约落点）
+│   │   ├── events.py       SSE 帧编码（契约落点）
+│   │   └── intents.py      规则式意图识别（决定何时挂计划卡）
+│   ├── plan/
+│   │   ├── models.py       CarePlan / PlanItem / PlanCheckin + 状态机常量
+│   │   ├── engine.py       条目匹配、生成、确认闸门、频率窗口、完成率、话术改写
+│   │   └── store.py        计划与打卡的内存存储
+│   ├── knowledge/
+│   │   ├── guidelines.yaml 康养条目（25 条草稿 / 3 个来源）
+│   │   ├── loader.py       读取 + 结构校验（缺字段就拒绝加载）
+│   │   └── validate.mjs    Node 侧结构校验器（提交前跑）
 │   ├── llm/
 │   │   ├── base.py         LLMProvider 接口 + LLMError
 │   │   ├── openai_compat.py OpenAI 兼容客户端（httpx 流式）
@@ -111,10 +128,13 @@ server/
 │   ├── persona/
 │   │   ├── prompts.py      人设卡（4 个）+ system prompt
 │   │   └── stickers.py     表情包受控白名单
-│   ├── style/punctuation.py 句末去句号（流式后处理）
-│   ├── models/message.py   消息模型 + 内存会话存储
-│   └── knowledge/          康养条目（已有，25 条草稿，P1 接入）
-└── tests/                  53 项单测（标准库 unittest，零测试依赖）
+│   ├── style/
+│   │   ├── punctuation.py  句末去句号（流式后处理）
+│   │   └── compliance.py   越界话术扫描（用药/诊断/客服用语）
+│   └── models/
+│       ├── message.py      消息模型 + 内存会话存储
+│       └── elder.py        老人档案（L1，开发期 3 个模拟档案）
+└── tests/                  107 项单测（标准库 unittest，零测试依赖）
 ```
 
 ---
@@ -126,7 +146,7 @@ cd server
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```
 
-53 项，四块：
+107 项，六块：
 
 | 文件 | 守什么 |
 |---|---|
@@ -134,6 +154,8 @@ cd server
 | `tests/test_orchestration.py` | 表情标签切分、事件顺序、落库、上下文、错误路径、心跳 |
 | `tests/test_api.py` | HTTP 契约：事件名、字段名、状态码、错误体、密钥脱敏 |
 | `tests/test_llm_openai_compat.py` | 上游脏行容错、思维链隔离、401/429/5xx/超时映射 |
+| `tests/test_plan_engine.py` | 条目匹配、生成、**确认闸门**、过渡期旧计划、频率窗口、完成率、话术改写闸门 |
+| `tests/test_plan_api.py` | 计划接口契约、打卡幂等、错误码、对话里的计划卡 |
 
 **跨语言端到端**（最有价值的一种回归）：让端侧测试直接打这个服务——用同一套端侧断言，
 验证「uni-app api 层 → Python 服务 → SSE → 端侧状态机」整条链。
@@ -141,7 +163,8 @@ cd server
 ```powershell
 # 一个窗口起服务，另一个窗口：
 $env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'
-node tools/test-chat-store.mjs
+node tools/test-chat-store.mjs     # 对话与流式（真模型下自动改用不变量断言）
+node tools/test-plan-store.mjs     # 今日计划与打卡（会自动先走一遍「生成 → 家属确认」）
 ```
 
 ---
@@ -203,9 +226,10 @@ node tools\check-chat-quality.mjs          # 抽查脚本在仓库根目录
 
 ## 九、下一步
 
-1. **真实模型端到端验证**：已完成（见 §七），后续换模型或改 prompt 后重跑
-   `node tools/check-chat-quality.mjs`
+1. **P1 剩余：调度器与推送**——按 `active` 计划定时投递提醒（服务端定时 + 端侧本地提醒双保险），
+   到点时往会话里插计划卡；强提醒要送达回执
 2. 鉴权 + `clientMsgId` 幂等 + 稳定错误码表
-3. **P1 计划引擎**：读 `app/knowledge/guidelines.yaml` → 生成 `PlanItem` 草稿 → 家属确认 → 调度器
-   （同时把 `card` 事件真正用起来）
-4. PostgreSQL + Redis（会话落库、调度队列）
+3. 家人端页面（计划的生成/确认/驳回/完成率看板；接口已就绪）
+4. **P2 三层记忆**：把 `app/models/elder.py` 的模拟档案换成 PostgreSQL，
+   接 L2 经历检索与 L3 兴趣权重
+5. 换模型或改 prompt 后重跑 `node tools/check-chat-quality.mjs`（见 §七）

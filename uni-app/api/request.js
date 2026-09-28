@@ -19,12 +19,21 @@ import { TIMEOUT } from './config.js'
  * @returns {Promise<any>} 解析后的响应体（JSON 优先）
  */
 export function request(options) {
+  const method = options.method || 'GET'
+  const header = Object.assign({ Accept: 'application/json' }, options.header || {})
+  // uni.request 默认就是 application/json，这里显式写出来：小程序端、以及联调用的 Node 桩
+  // 都不会因为"平台默认值不同"而把 JSON 当纯文本发（服务端会直接 422）
+  if (options.data !== undefined && method !== 'GET') {
+    const hasType = header['Content-Type'] || header['content-type']
+    if (!hasType) header['Content-Type'] = 'application/json'
+  }
+
   return new Promise((resolve, reject) => {
     uni.request({
       url: options.url,
-      method: options.method || 'GET',
+      method,
       data: options.data,
-      header: Object.assign({ Accept: 'application/json' }, options.header || {}),
+      header,
       timeout: options.timeout || TIMEOUT.total,
       success(res) {
         const body = parseBody(res.data)
