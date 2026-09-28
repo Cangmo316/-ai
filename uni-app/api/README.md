@@ -347,11 +347,24 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
       "level": "normal", "levelLabel": "普通提醒",
       "sendAt": "2026-09-24T08:00:00", "sentAt": "2026-09-24T08:00:02",
       "readAt": "", "ackAt": "", "repeatCount": 0,
-      "status": "sent", "channel": "inbox"
+      "status": "sent", "statusLabel": "已送出", "channel": "inbox"
     }
   ]
 }
 ```
+
+`status` 的取值与中文（`statusLabel` 直接给家属/老人看，端侧**不要自己映射**）：
+
+| `status` | `statusLabel` | 含义 |
+|---|---|---|
+| `pending` | 还没到点 | 已登记，等时间到 |
+| `sent` | 已送出 | 已投递（`channel` 记录走的哪条通道） |
+| `acked` | 已打卡 | 老人打卡即确认，家属端据此判断"送到且做了" |
+| `read` | 已看过 | 老人看过提醒条但还没打卡 |
+| `missed` | 没见回应 | 投递了但迟迟没响应（默认 60 分钟无响应） |
+| `skipped` | 没发（超出时间窗） | 弱提醒超窗、或已过宽限期不补发 |
+| `canceled` | 已作废（计划换了） | 计划变更后未发的任务作废 |
+| `failed` | 发送失败 | 通道投递失败（`note` 里有原因） |
 
 **提醒分级与四条策略**（设计方案 §3.2）：
 
@@ -514,5 +527,5 @@ mock 里预置了三个触发词方便验边界：消息含 `__error` → 走错
 
 - 鉴权（目前无 header / 无 token，接入时要加 `Authorization` 并处理 401）
 - `clientMsgId` 幂等（端侧已传，服务端应据此去重，避免重试产生重复消息）
-- 限流与错误码表（端侧已按 `code`/`statusCode` 显示人话，但服务端还没有稳定码表）
+- 限流（错误码表已就绪，见 §2.4；限流本身还没做）
 - 会话列表接口（`chats` 页除首个会话外仍是本地占位数据）

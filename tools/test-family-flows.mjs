@@ -177,9 +177,40 @@ await testAsync('计划状态解释覆盖全部六态（避免"调整中还在�
   assert.match(family.describePlanStatus({ status: 'adjusting' }).hint, /仍然在执行/)
 })
 
-await testAsync('提醒任务可追溯（发了/没发/通道）', async () => {
+await testAsync('提醒任务可追溯（发了/没发/通道），且状态是中文', async () => {
   const tasks = await flows.reminders('e_1')
   assert.ok(Array.isArray(tasks))
+  // 推进到下一个提醒时间，逼出一条真实任务
+  const today = await flows.today('e_1')
+  if (today.planId) {
+    await flows.tick(family.nextReminderAt(today))
+    const after = await flows.reminders('e_1')
+    assert.ok(after.length >= 1, '推进后应该有提醒任务了')
+    for (const task of after) {
+      assert.ok(task.statusLabel, '家属端要直接展示中文状态：' + JSON.stringify(task))
+      assert.match(task.statusLabel, /[\u4e00-\u9fff]/)
+      assert.ok(task.sendAt && task.title)
+    }
+    assert.ok(
+      after.some((task) => task.status === 'sent'),
+      '应该有已送出的任务'
+    )
+  }
+})
+
+await testAsync('nextReminderAt：默认推进到下一个提醒时间（演示时不会推成 0 条）', async () => {
+  const today = await flows.today('e_1')
+  assert.ok(today.items.length >= 1)
+  const first = today.items.slice().sort((a, b) => (a.time < b.time ? -1 : 1))[0]
+  // 定在"今天 00:01"，那第一个时间点一定还在未来
+  const earlyMorning = new Date(today.date + 'T00:01:00')
+  const next = family.nextReminderAt(today, earlyMorning)
+  assert.equal(next, today.date + 'T' + first.time + ':00')
+  // 时间点都过完时顺延到明天第一项，而不是回到过去
+  const lateNight = new Date(today.date + 'T23:59:00')
+  const tomorrow = family.nextReminderAt(today, lateNight)
+  assert.ok(tomorrow > lateNight.toISOString().slice(0, 19).replace('T', 'T'), tomorrow)
+  assert.match(tomorrow, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/)
 })
 
 group('④ 两条硬约束')

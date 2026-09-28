@@ -152,4 +152,55 @@ export function describePlanStatus(plan) {
   return { status, label, executing, hint: hints[status] || '' }
 }
 
+/**
+ * 下一个该提醒的时刻（用于"手动推进调度"的默认值）。
+ *
+ * 为什么需要它：演示/验收时直接推"当前时间"往往会得到 0 条提醒
+ * （计划项都在 08:00 之后，而现在可能是凌晨），看起来像坏了。
+ * 这里挑出今天**还没到点**的最早一项；都过完了就顺延到明天第一项。
+ *
+ * @param {object} today  GET /v1/plans/today 的返回
+ * @param {Date} [now]
+ * @returns {string} 本地时间字符串 `YYYY-MM-DDTHH:mm:ss`（调度器接受这个格式）
+ */
+export function nextReminderAt(today, now) {
+  const moment = now || new Date()
+  const items = ((today && today.items) || [])
+    .filter((item) => !item.done && /^\d{2}:\d{2}$/.test(item.time || ''))
+    .sort((a, b) => (a.time < b.time ? -1 : 1))
+  const day = today && today.date ? today.date : localDay(moment)
+  const future = items.find((item) => atLocal(day, item.time).getTime() > moment.getTime())
+  const picked = future || items[0]
+  if (!picked) return localStamp(moment)
+  const target = future ? atLocal(day, picked.time) : atLocal(addDay(day), picked.time)
+  return localStamp(target)
+}
+
+function atLocal(day, hhmm) {
+  const parts = String(day).split('-').map(Number)
+  const hm = String(hhmm).split(':').map(Number)
+  return new Date(parts[0], parts[1] - 1, parts[2], hm[0], hm[1], 0, 0)
+}
+
+function addDay(day) {
+  const parts = String(day).split('-').map(Number)
+  const next = new Date(parts[0], parts[1] - 1, parts[2] + 1)
+  return localDay(next)
+}
+
+function localDay(moment) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return moment.getFullYear() + '-' + pad(moment.getMonth() + 1) + '-' + pad(moment.getDate())
+}
+
+/** 调度器要的是不带时区的本地时间串（和它自己的 clock 语义一致） */
+function localStamp(moment) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return (
+    localDay(moment) +
+    'T' +
+    pad(moment.getHours()) + ':' + pad(moment.getMinutes()) + ':' + pad(moment.getSeconds())
+  )
+}
+
 export default createFamilyFlows

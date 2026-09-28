@@ -10,7 +10,7 @@
  * 想加"看聊天"，得先有老人授权与 consent 记录，不能顺手加。
  */
 
-import { createFamilyFlows, describeItem, describePlanStatus, describeRate } from './flows.js'
+import { createFamilyFlows, describeItem, describePlanStatus, describeRate, nextReminderAt } from './flows.js'
 import { getApiToken, getBaseURL } from '../uni-app/api/config.js'
 
 const el = (id) => document.getElementById(id)
@@ -265,9 +265,17 @@ async function requestAdjust(planId) {
 }
 
 async function tick() {
+  // 默认推进到"下一个提醒时间"：直接推当前时间往往会得到 0 条提醒，看起来像坏了
+  const today = await flows.today(elderId).catch(() => null)
+  const suggestion = nextReminderAt(today)
+  const at = window.prompt(
+    '推进到哪个时间？（计划项都是整天的时间点，推到下一项才能真正看到提醒）\n格式：2026-09-29T08:00:00',
+    suggestion
+  )
+  if (at === null) return
   await act(
-    () => flows.tick(new Date().toISOString().slice(0, 19)),
-    '已手动推进一次调度（仅联调用，生产环境这个接口会被关掉）。'
+    () => flows.tick(at.trim() || suggestion),
+    '已推进到 ' + (at.trim() || suggestion) + '（仅联调用，生产环境这个接口会被关掉）。'
   )
 }
 

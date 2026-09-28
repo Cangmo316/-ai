@@ -41,6 +41,20 @@ STATUS_MISSED = "missed"      # 投递了但迟迟没响应
 STATUS_SKIPPED = "skipped"    # 主动不发（超窗 / 过期 / 计划结束）
 STATUS_CANCELED = "canceled"  # 计划变更导致取消
 
+# 中文状态：家属端的"提醒有没有送到"这一栏要能直接给人看，不能出现英文枚举
+# （与计划状态的 STATUS_LABELS 同一套做法：英文只留在 status 字段里给程序用）
+STATUS_LABELS = {
+    STATUS_PENDING: "还没到点",
+    STATUS_SENT: "已送出",
+    STATUS_ACKED: "已打卡",
+    STATUS_MISSED: "没见回应",
+    STATUS_SKIPPED: "没发（超出时间窗）",
+    STATUS_CANCELED: "已作废（计划换了）",
+    "failed": "发送失败",
+    "read": "已看过",
+    "repeated": "又提醒了一次",
+}
+
 
 @dataclass
 class ReminderTask:
@@ -68,6 +82,10 @@ class ReminderTask:
     def level_label(self) -> str:
         return LEVEL_LABELS.get(self.level, self.level)
 
+    @property
+    def status_label(self) -> str:
+        return STATUS_LABELS.get(self.status, self.status)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -85,6 +103,7 @@ class ReminderTask:
             "ackAt": self.ack_at,
             "repeatCount": self.repeat_count,
             "status": self.status,
+            "statusLabel": self.status_label,
             "channel": self.channel,
             "messageId": self.message_id,
             "note": self.note,

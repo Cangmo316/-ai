@@ -103,6 +103,23 @@ class ReminderApiTestCase(unittest.TestCase):
         self.assertIn("sent", statuses)
         self.assertIn("pending", statuses, "当天后面的提醒应已在队列里")
 
+    def test_tasks_carry_chinese_status_label(self) -> None:
+        """家属端的"提醒有没有送到"直接展示中文：contract 里不能只有英文枚举"""
+        self.draft_and_confirm()
+        self.tick("2026-09-24T08:00:00")
+        tasks = self.client.get(
+            "/v1/reminders/tasks", params={"elderId": "e_1", "date": "2026-09-24"}
+        ).json()["tasks"]
+        for task in tasks:
+            with self.subTest(status=task["status"]):
+                self.assertIn("statusLabel", task)
+                self.assertTrue(task["statusLabel"])
+                # 中文标签，不是把英文原样回一份
+                self.assertNotEqual(task["statusLabel"], task["status"])
+                self.assertRegex(task["statusLabel"], r"[\u4e00-\u9fff]")
+        labels = {task["statusLabel"] for task in tasks}
+        self.assertTrue({"还没到点", "已送出"} & labels, labels)
+
     def test_bad_date_returns_contract_error(self) -> None:
         response = self.client.get("/v1/reminders/tasks", params={"elderId": "e_1", "date": "24/09/2026"})
         self.assertEqual(response.status_code, 400)

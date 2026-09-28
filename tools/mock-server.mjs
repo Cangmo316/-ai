@@ -289,6 +289,18 @@ function levelOf(item) {
 
 const LEVEL_LABELS = { strong: '强提醒', normal: '普通提醒', weak: '弱提醒' }
 
+// 与真实服务端 app/schedule/models.py 的 STATUS_LABELS 保持一致：
+// 家属端的"提醒有没有送到"那一栏直接展示中文，不该出现英文枚举
+const REMINDER_STATUS_LABEL = {
+  pending: '还没到点',
+  sent: '已送出',
+  acked: '已打卡',
+  missed: '没见回应',
+  skipped: '没发（超出时间窗）',
+  canceled: '已作废（计划换了）',
+  failed: '发送失败'
+}
+
 function createReminderState() {
   return { delivered: [], readIds: new Set(), ticks: 0, lastTickAt: '', lastSummary: {} }
 }
@@ -330,6 +342,7 @@ function reminderTick(state, plans, at) {
       ackAt: '',
       repeatCount: 0,
       status: 'sent',
+      statusLabel: REMINDER_STATUS_LABEL.sent,
       channel: 'inbox',
       messageId: '',
       note: ''
@@ -344,10 +357,14 @@ function reminderTick(state, plans, at) {
 }
 
 function reminderPayload(state, plans, task) {
+  const acked = plans.doneIds.has(task.planItemId)
+  const status = acked ? 'acked' : task.status
   return Object.assign({}, task, {
     readAt: state.readIds.has(task.id) ? task.readAt || state.lastTickAt : task.readAt,
-    ackAt: plans.doneIds.has(task.planItemId) ? task.ackAt || state.lastTickAt : task.ackAt,
-    status: plans.doneIds.has(task.planItemId) ? 'acked' : task.status
+    ackAt: acked ? task.ackAt || state.lastTickAt : task.ackAt,
+    status,
+    // 状态跟着变化时标签也要跟着变，否则界面上会出现"已打卡 + 已送出"这种自相矛盾
+    statusLabel: REMINDER_STATUS_LABEL[status] || status
   })
 }
 
@@ -638,7 +655,8 @@ export function startMockServer(options = {}) {
         sendJSON(res, 200, {
           plan: draft,
           reused: false,
-          polish: { used: false, note: 'mock 不做话术润色' }
+          // 形状与真实服务端一致：{asked, polished, fallback, reasons}
+          polish: { asked: draft.items.length, polished: 0, fallback: draft.items.length, reasons: ['mock 不做话术润色'] }
         })
       }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
       return
