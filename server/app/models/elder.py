@@ -19,6 +19,8 @@ DEMO_ELDERS: dict[str, dict] = {
         "id": "e_1",
         "name": "张桂兰",
         "address": "妈",
+        # 提醒最终写进哪个会话（P1 一个老人一个会话；端侧默认会话就是 c_son）
+        "conversation_id": "c_son",
         "birth": "1954-03-02",
         "age": 71,
         "chronic": ["高血压"],
@@ -32,6 +34,7 @@ DEMO_ELDERS: dict[str, dict] = {
         "id": "e_2",
         "name": "李建国",
         "address": "爸",
+        "conversation_id": "c_dad",
         "birth": "1957-08-19",
         "age": 68,
         "chronic": ["糖尿病"],
@@ -45,6 +48,7 @@ DEMO_ELDERS: dict[str, dict] = {
         "id": "e_3",
         "name": "王秀英",
         "address": "奶奶",
+        "conversation_id": "c_grandma",
         "birth": "1947-01-11",
         "age": 79,
         "chronic": [],
@@ -86,3 +90,8 @@ class ElderStore:
         if isinstance(age, int) and age >= 65:
             tags.add("65岁以上")
         return tags
+
+    def conversation_id(self, elder_id: str | None) -> str:
+        """提醒写进哪个会话。缺省按 `c_<elder_id>` 兜底，避免老人在系统里"没有收件人"。"""
+        elder = self.get(elder_id)
+        return str(elder.get("conversation_id") or ("c_" + str(elder.get("id") or DEFAULT_ELDER_ID)))

@@ -210,6 +210,114 @@ function todayKey() {
   ].join('-')
 }
 
+/** 本地时间戳（与真实服务端一致：不带时区的 ISO，秒级） */
+function localStamp(moment) {
+  return [
+    moment.getFullYear(),
+    String(moment.getMonth() + 1).padStart(2, '0'),
+    String(moment.getDate()).padStart(2, '0')
+  ].join('-') + 'T' + [
+    String(moment.getHours()).padStart(2, '0'),
+    String(moment.getMinutes()).padStart(2, '0'),
+    String(moment.getSeconds()).padStart(2, '0')
+  ].join(':')
+}
+
+/** 提醒分级：强提醒来自知识库 strong_remind，问候算弱提醒（与真实服务端同一套规则） */
+function levelOf(item) {
+  if (item.strongRemind) return 'strong'
+  if (item.type === '问候') return 'weak'
+  return 'normal'
+}
+
+const LEVEL_LABELS = { strong: '强提醒', normal: '普通提醒', weak: '弱提醒' }
+
+function createReminderState() {
+  return { delivered: [], readIds: new Set(), ticks: 0, lastTickAt: '', lastSummary: {} }
+}
+
+/**
+ * 手动推进调度：把「已经到点」的提醒登记为已投递。
+ *
+ * ⚠️ 简化实现：只做「到点 → 投递」，不含真实的过期宽限、弱提醒时间窗、强提醒重复、错过判定。
+ * 那些策略由服务端单测守着（server/tests/test_scheduler.py），这里是给端侧联调用的。
+ */
+function reminderTick(state, plans, at) {
+  const moment = at ? new Date(at) : new Date()
+  if (Number.isNaN(moment.getTime())) throw new Error('时间格式不对')
+  const stamp = localStamp(moment)
+  const summary = { at: stamp, created: 0, sent: 0, skipped: 0, canceled: 0, repeated: 0, missed: 0, failed: 0 }
+
+  for (const item of plans.items) {
+    if (plans.doneIds.has(item.id)) continue
+    const sendAt = plans.date + 'T' + item.time + ':00'
+    if (sendAt > stamp) continue
+    if (state.delivered.some((task) => task.planItemId === item.id)) continue
+    const level = levelOf(item)
+    state.delivered.push({
+      id: 'rt_mock_' + item.id,
+      planId: plans.planId,
+      planItemId: item.id,
+      elderId: plans.elderId,
+      title: item.title,
+      label: item.time + ' ' + item.type,
+      detail: item.detail,
+      level,
+      levelLabel: LEVEL_LABELS[level],
+      sendAt,
+      sentAt: stamp,
+      readAt: '',
+      ackAt: '',
+      repeatCount: 0,
+      status: 'sent',
+      channel: 'inbox',
+      messageId: '',
+      note: ''
+    })
+    summary.sent += 1
+  }
+
+  state.ticks += 1
+  state.lastTickAt = stamp
+  state.lastSummary = summary
+  return summary
+}
+
+function reminderPayload(state, plans, task) {
+  return Object.assign({}, task, {
+    readAt: state.readIds.has(task.id) ? task.readAt || state.lastTickAt : task.readAt,
+    ackAt: plans.doneIds.has(task.planItemId) ? task.ackAt || state.lastTickAt : task.ackAt,
+    status: plans.doneIds.has(task.planItemId) ? 'acked' : task.status
+  })
+}
+
+function schedulerStatus(state) {
+  const pending = state.delivered.filter((task) => !state.readIds.has(task.id))
+  return {
+    running: false,
+    ticks: state.ticks,
+    lastTickAt: state.lastTickAt,
+    lastSummary: state.lastSummary,
+    tickSeconds: 30,
+    manualTickAllowed: true,
+    channels: [{ name: 'inbox' }, { name: 'log' }],
+    counts: {
+      pending: 0,
+      sent: state.delivered.length,
+      acked: 0,
+      missed: 0,
+      skipped: 0,
+      canceled: 0
+    },
+    nextSendAt: '',
+    graceMinutes: 30,
+    repeatMinutes: 5,
+    missMinutes: 60,
+    weakWindow: ['09:00', '20:00'],
+    unread: pending.length
+  }
+}
+
 function createPlanState() {
   return {
     elderId: 'e_1',
@@ -272,6 +380,7 @@ export function startMockServer(options = {}) {
   const host = options.host || DEFAULT_HOST
   const delayMs = options.delayMs === undefined ? DEFAULT_DELAY_MS : options.delayMs
   const plans = createPlanState()
+  const reminders = createReminderState()
 
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
@@ -330,8 +439,54 @@ export function startMockServer(options = {}) {
       return
     }
 
-    if (url.pathname === '/v1/elders' && req.method === 'GET') {
-      sendJSON(res, 200, {
+    if (url.pathname === '/v1/reminders/inbox' && req.method === 'GET') {
+      const tasks = reminders.delivered
+        .filter((task) => !reminders.readIds.has(task.id))
+        .sort((a, b) => (a.sendAt < b.sendAt ? -1 : 1))
+        .map((task) => reminderPayload(reminders, plans, task))
+      sendJSON(res, 200, { elderId: plans.elderId, tasks, count: tasks.length })
+      return
+    }
+
+    if (url.pathname === '/v1/reminders/read' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const taskId = body && body.taskId
+        let marked = 0
+        for (const task of reminders.delivered) {
+          if (taskId && task.id !== taskId) continue
+          if (reminders.readIds.has(task.id)) continue
+          task.readAt = reminders.lastTickAt || localStamp(new Date())
+          reminders.readIds.add(task.id)
+          marked += 1
+        }
+        sendJSON(res, 200, { elderId: plans.elderId, marked })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/reminders/tasks' && req.method === 'GET') {
+      const day = url.searchParams.get('date') || plans.date
+      const tasks = reminders.delivered
+        .filter((task) => task.sendAt.startsWith(day))
+        .map((task) => reminderPayload(reminders, plans, task))
+      sendJSON(res, 200, { elderId: plans.elderId, date: day, tasks })
+      return
+    }
+
+    if (url.pathname === '/v1/scheduler/status' && req.method === 'GET') {
+      sendJSON(res, 200, schedulerStatus(reminders))
+      return
+    }
+
+    if (url.pathname === '/v1/scheduler/tick' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const summary = reminderTick(reminders, plans, body && body.at)
+        sendJSON(res, 200, { summary, status: schedulerStatus(reminders) })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/elders' && req.method === 'GET') {      sendJSON(res, 200, {
         elders: [{ id: 'e_1', name: '张桂兰', address: '妈', age: 71, chronic: ['高血压'], careLevel: '居家' }],
         demo: true,
         note: '开发期模拟档案，不是真实病例，也不构成医学建议'

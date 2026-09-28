@@ -14,6 +14,8 @@
 
 export function installUniStub() {
   const storage = new Map()
+  /** 记录端侧调用，便于断言（导航、震动、toast） */
+  const calls = { navigate: [], vibrate: [], toast: [] }
 
   globalThis.uni = {
     getStorageSync(key) {
@@ -24,6 +26,24 @@ export function installUniStub() {
     },
     removeStorageSync(key) {
       storage.delete(key)
+    },
+    navigateTo(options) {
+      calls.navigate.push((options && options.url) || '')
+    },
+    switchTab(options) {
+      calls.navigate.push((options && options.url) || '')
+    },
+    reLaunch(options) {
+      calls.navigate.push((options && options.url) || '')
+    },
+    vibrateLong() {
+      calls.vibrate.push('long')
+    },
+    vibrateShort() {
+      calls.vibrate.push('short')
+    },
+    showToast(options) {
+      calls.toast.push((options && options.title) || '')
     },
     /** 非流式请求走这里（流式走 fetch，见 transport.js 的 H5 分支） */
     request(options) {
@@ -57,11 +77,10 @@ export function installUniStub() {
           if (options.complete) options.complete()
         })
       return { abort() {} }
-    },
-    showToast() {}
+    }
   }
 
-  return storage
+  return { storage, calls }
 }
 
 export default installUniStub

@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import __version__
 from .api.chat import router as chat_router
 from .api.plans import router as plans_router
+from .api.reminders import router as reminders_router
 from .config import Settings, get_settings
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
@@ -33,6 +34,7 @@ from .persona.prompts import PersonaRegistry
 from .plan.engine import PlanEngine
 from .plan.models import STATUS_ACTIVE, STATUS_PENDING
 from .plan.store import PlanStore
+from .schedule import ChannelRegistry, InboxChannel, LogChannel, ReminderStore, Scheduler
 
 logger = logging.getLogger("bilin")
 
@@ -42,6 +44,8 @@ def create_app(
     provider=None,
     knowledge: KnowledgeBase | None = None,
     plan_engine: PlanEngine | None = None,
+    scheduler: Scheduler | None = None,
+    clock=None,
 ) -> FastAPI:
     config = settings or get_settings()
     llm = provider or build_provider(config)
@@ -57,6 +61,19 @@ def create_app(
             logger.error("知识库加载失败：%s", exc)
             raise
     engine = plan_engine or PlanEngine(knowledge, PlanStore(), elders, config)
+
+    if scheduler is None:
+        # 通道顺序有意义：站内消息是当前唯一能真正送达老人的通道，日志通道只做兜底凭据
+        channels = ChannelRegistry([InboxChannel(conversations), LogChannel()])
+        scheduler = Scheduler(
+            engine=engine,
+            plan_store=engine.store,
+            reminders=ReminderStore(),
+            channels=channels,
+            elders=elders,
+            settings=config,
+            clock=clock,
+        )
 
     def plan_cards_for(elder_id: str | None):
         """对话里「今天要做什么」时挂的今日计划卡片（最多 3 条，避免刷屏）"""
@@ -98,7 +115,19 @@ def create_app(
         )
         if not config.uses_real_model:
             logger.warning("当前使用假模型（未配置 LLM_API_KEY）—— 端侧能连通，但回复是固定话术")
+        if config.scheduler_enabled:
+            scheduler.start()
+            logger.info(
+                "提醒调度已启用 | 每 %ss tick | 过期宽限 %s 分钟 | 强提醒重复 %s 次/%s 分钟",
+                config.scheduler_tick_seconds,
+                config.reminder_grace_minutes,
+                config.reminder_max_repeats,
+                config.reminder_repeat_minutes,
+            )
+        else:
+            logger.warning("提醒调度未启用（SCHEDULER_ENABLED=false）—— 不会自动投递提醒")
         yield
+        await scheduler.stop()
 
     app = FastAPI(
         title="比邻AI agent 服务",
@@ -116,6 +145,10 @@ def create_app(
     app.state.knowledge = knowledge
     app.state.plan_engine = engine
     app.state.elders = elders
+    app.state.scheduler = scheduler
+    # 全局时间源：调度器与各路由都用它取"现在"，避免出现"路由按真实时间、调度按注入时间"
+    # 这种只有测试才会暴露的分裂（踩过一次：手动 tick 到 15 点，打卡却按真实日期去找提醒）
+    app.state.clock = scheduler.now
 
     # 开发期允许跨域：HBuilderX 的 H5 预览跑在另一个端口上
     app.add_middleware(
@@ -128,6 +161,7 @@ def create_app(
 
     app.include_router(chat_router)
     app.include_router(plans_router)
+    app.include_router(reminders_router)
 
     @app.get("/healthz", tags=["meta"])
     async def healthz(request: Request):
@@ -150,6 +184,7 @@ def create_app(
             },
             "knowledge": knowledge.summary(),
             "plans": {"total": total, "active": active, "pending": pending},
+            "scheduler": scheduler.status(),
             "endpoints": [
                 "POST /v1/chat/stream",
                 "POST /v1/chat/send",
@@ -165,6 +200,11 @@ def create_app(
                 "POST /v1/plans/adjust",
                 "GET  /v1/plans/history",
                 "GET  /v1/elders",
+                "GET  /v1/reminders/inbox",
+                "POST /v1/reminders/read",
+                "GET  /v1/reminders/tasks",
+                "GET  /v1/scheduler/status",
+                "POST /v1/scheduler/tick",
             ],
         }
 

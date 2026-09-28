@@ -19,7 +19,7 @@ import { startMockServer } from './mock-server.mjs'
 
 /* -------------------------------------------------- 内存版 uni 运行时 */
 
-const storage = installUniStub()
+const { storage } = installUniStub()
 
 register('./node-alias-hook.mjs', import.meta.url)
 

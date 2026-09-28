@@ -19,7 +19,7 @@ import { startMockServer } from './mock-server.mjs'
 
 /* ------------------------------------------------ 内存版 uni 运行时 */
 
-const storage = installUniStub()
+const { storage } = installUniStub()
 
 // 必须在 import 业务模块之前注册：业务代码用了 `@/` 别名与 `vue`
 register('./node-alias-hook.mjs', import.meta.url)

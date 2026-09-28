@@ -24,18 +24,23 @@
 | 语言风格后处理（句末不加句号 / 句号转换行 / 小数与缩写保护） | `app/style/punctuation.py` |
 | **越界话术扫描**（用药/诊断/客服用语；计划话术改写必过此闸门，对话回复命中记 warning） | `app/style/compliance.py` |
 | **对话里的计划卡**（问「今天要做什么」时追加最多 3 个 `card` 事件） | `app/orchestration/intents.py` |
+| **提醒调度器**：按 active 计划登记任务 → 到点投递 → 强提醒重复 → 过期不补发 → 错过留痕 | `app/schedule/scheduler.py` |
+| **提醒通道（可插拔）**：站内消息（写进会话）+ 日志兜底；厂商推送留成插槽 | `app/schedule/channels.py` |
+| **提醒收件箱与回执**：老人端拉取、回执已读、打卡即 ack | `app/api/reminders.py` |
 | SSE 心跳（防端侧 20s 首字节看门狗误杀） | `app/orchestration/service.py` |
 | 错误归一化（老人看得懂的话 + retryable） | `app/llm/openai_compat.py`、`app/main.py` |
 | OpenAI 兼容模型客户端（含推理模型思维链隔离） | `app/llm/openai_compat.py` |
-| `GET /healthz` 自检（模型 / 知识库版本 / 计划数量，密钥脱敏） | `app/main.py` |
+| `GET /healthz` 自检（模型 / 知识库版本 / 计划与调度状态，密钥脱敏） | `app/main.py` |
 
 **未实现**（不藏着，避免误判进度）
 
-- **调度器与推送**：计划的提醒投递（服务端定时 + 端侧本地提醒双保险）还没做，
-  现在「到点提醒」只能靠 `GET /v1/plans/today` 由端侧打开页面时展示
+- **厂商推送通道**（uni-push / 极光 / 个推 / 华为小米通道）：**需要开发者账号与资质，部分功能收费**，
+  按仓库约定「引入付费或受限许可组件前必须先确认」，等确认后再实现。
+  在那之前，老人能在 App 前台收到提醒（提醒条 + 震动），**App 没打开就收不到系统通知**
+- **端侧本地定时通知**：设计里的第二道保险，需要真机验证 `plus.push` 的能力与字段，未做
 - **鉴权**：目前无任何 token 校验，`CORS_ORIGINS=*`，只适合本机/内网联调
 - **`clientMsgId` 幂等**：字段收下了但没用来去重（重发会产生重复消息）
-- **数据库**：会话、计划、打卡全在内存，进程重启即清空（接口按落库形态设计）
+- **数据库**：会话、计划、打卡、提醒任务全在内存，进程重启即清空（接口按落库形态设计）
 - **家人端**：计划的生成/确认/驳回/汇总接口都已就绪，但没有家属侧页面（二期）
 - 三层记忆（L2/L3）、内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
 
@@ -117,11 +122,17 @@ server/
 │   ├── config.py           零依赖 .env 解析 + Settings
 │   ├── api/
 │   │   ├── chat.py         路由：stream / send / history / personas
-│   │   └── plans.py        路由：draft / pending / confirm / reject / today / checkin / summary / adjust / history
+│   │   ├── plans.py        路由：draft / pending / confirm / reject / today / checkin / summary / adjust / history
+│   │   └── reminders.py    路由：inbox / read / tasks / scheduler status / scheduler tick
 │   ├── orchestration/
 │   │   ├── service.py      编排：上下文 → 模型 → 表情抽取 → 风格 → 事件 → 落库
 │   │   ├── events.py       SSE 帧编码（契约落点）
 │   │   └── intents.py      规则式意图识别（决定何时挂计划卡）
+│   ├── schedule/
+│   │   ├── models.py       ReminderTask + 分级/状态常量
+│   │   ├── store.py        任务存储与查询（到点、重复、错过、收件箱）
+│   │   ├── channels.py     投递通道（站内消息 / 日志；厂商推送留插槽）
+│   │   └── scheduler.py    一次 tick 的五件事 + 后台循环
 │   ├── plan/
 │   │   ├── models.py       CarePlan / PlanItem / PlanCheckin + 状态机常量
 │   │   ├── engine.py       条目匹配、生成、确认闸门、频率窗口、完成率、话术改写
@@ -143,7 +154,7 @@ server/
 │   └── models/
 │       ├── message.py      消息模型 + 内存会话存储
 │       └── elder.py        老人档案（L1，开发期 3 个模拟档案）
-└── tests/                  107 项单测（标准库 unittest，零测试依赖）
+└── tests/                  141 项单测（标准库 unittest，零测试依赖）
 ```
 
 ---
@@ -155,7 +166,7 @@ cd server
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```
 
-107 项，六块：
+141 项，按主题分九块：
 
 | 文件 | 守什么 |
 |---|---|
@@ -165,6 +176,10 @@ cd server
 | `tests/test_llm_openai_compat.py` | 上游脏行容错、思维链隔离、401/429/5xx/超时映射 |
 | `tests/test_plan_engine.py` | 条目匹配、生成、**确认闸门**、过渡期旧计划、频率窗口、完成率、话术改写闸门 |
 | `tests/test_plan_api.py` | 计划接口契约、打卡幂等、错误码、对话里的计划卡 |
+| `tests/test_scheduler.py` | 任务生成幂等、**过期不补发**、强提醒重复一次、弱提醒时间窗、错过留痕、计划变更取消 |
+| `tests/test_reminders_api.py` | 提醒接口契约、收件箱回执、**打卡即确认**、调度状态、手动 tick 开关 |
+
+（上表 8 个文件、共 141 项。）
 
 **跨语言端到端**（最有价值的一种回归）：让端侧测试直接打这个服务——用同一套端侧断言，
 验证「uni-app api 层 → Python 服务 → SSE → 端侧状态机」整条链。
@@ -174,6 +189,8 @@ cd server
 $env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'
 node tools/test-chat-store.mjs     # 对话与流式（真模型下自动改用不变量断言）
 node tools/test-plan-store.mjs     # 今日计划与打卡（会自动先走一遍「生成 → 家属确认」）
+node tools/test-reminder-store.mjs # 到点提醒。⚠️ 这一项要配 SCHEDULER_ENABLED=false 起服务：
+                                   #  它靠手动推进时间驱动，后台循环会按真实时间抢先投递
 ```
 
 ---

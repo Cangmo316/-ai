@@ -1,10 +1,20 @@
 <script>
 import { initSettings } from './common/store.js'
+import { startPolling, stopPolling } from './stores/reminder.js'
 
 export default {
   onLaunch() {
     // 把「大字体模式」的本地缓存读回内存
     initSettings()
+    // 提醒只在 App 前台轮询：到点后顶部提醒条 + 震动（系统通知要等厂商推送通道，见 stores/reminder.js）
+    startPolling()
+  },
+  onShow() {
+    startPolling()
+  },
+  onHide() {
+    // 退到后台就停掉，别白耗电
+    stopPolling()
   }
 }
 </script>

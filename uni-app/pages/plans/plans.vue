@@ -2,6 +2,8 @@
   <view class="bl-page" :class="{ 'bl-large': settings.largeFont }">
     <bl-navbar title="今日计划" solid />
 
+    <bl-reminder-bar :item="reminder.banner" @open="onReminderOpen" @dismiss="dismissBanner" />
+
     <scroll-view class="bl-body" scroll-y>
       <view class="bl-plan-head">
         <text class="bl-plan-head__text">{{ headline }}</text>
@@ -52,6 +54,7 @@
 import { computed, onMounted } from 'vue'
 import { settings } from '@/common/store.js'
 import { initPlan, plan, planHeadline, toggleCheckin } from '@/stores/plan.js'
+import { dismissBanner, poll, reminder } from '@/stores/reminder.js'
 
 const headline = computed(() => planHeadline())
 
@@ -73,7 +76,20 @@ const emptyDesc = computed(() => {
 
 onMounted(() => {
   initPlan()
+  // 进日程页顺手拉一次提醒（可能是从提醒条点进来的）
+  poll()
 })
+
+function onReminderOpen(item) {
+  // 老人从提醒条点进来，就是为了打卡：滚到对应那一项，并给一句提示
+  dismissBanner()
+  const target = item && item.planItemId
+  if (target && !plan.items.some((entry) => entry.id === target)) {
+    uni.showToast({ title: '这项不在今天计划里', icon: 'none' })
+    return
+  }
+  uni.showToast({ title: '点一下卡片就打卡', icon: 'none' })
+}
 
 function onToggle(item) {
   toggleCheckin(item).then((ok) => {

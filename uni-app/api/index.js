@@ -35,5 +35,13 @@ export {
   submitCheckin
 } from './plans.js'
 
+export {
+  fetchReminderInbox,
+  fetchReminderTasks,
+  fetchSchedulerStatus,
+  markReminderRead,
+  tickScheduler
+} from './reminders.js'
+
 /** 当前运行端与是否具备真流式能力（设置页/自检页展示用） */
 export { PLATFORM, CAN_STREAM } from './transport.js'

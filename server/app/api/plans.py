@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -65,6 +65,16 @@ def _engine(request: Request) -> PlanEngine:
 
 def _elders(request: Request) -> ElderStore:
     return request.app.state.elders
+
+
+def _now(request: Request):
+    """统一时间源（见 main.py 的 app.state.clock）"""
+    clock = getattr(request.app.state, "clock", None)
+    return clock() if callable(clock) else datetime.now()
+
+
+def _today(request: Request):
+    return _now(request).date()
 
 
 def error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -188,7 +198,7 @@ async def today_plan(
     target = _parse_day(day)
     if day and target is None:
         return error_response(400, "invalid_date", "日期格式不对，应该像 2026-09-24")
-    return JSONResponse(content=_engine(request).today(elder_id, target))
+    return JSONResponse(content=_engine(request).today(elder_id, target or _today(request)))
 
 
 @router.post("/plans/checkin")
@@ -207,16 +217,23 @@ async def checkin(payload: CheckinRequest, request: Request):
     target = _parse_day(payload.date)
     if payload.date and target is None:
         return error_response(400, "invalid_date", "日期格式不对，应该像 2026-09-24")
-    day_key = (target or date.today()).isoformat()
+    day = target or _today(request)
+    day_key = day.isoformat()
 
+    scheduler = getattr(request.app.state, "scheduler", None)
     if payload.done:
         record = store.checkin(plan, item.id, payload.elder_id, day_key, source=payload.source)
         record_payload = record.to_dict()
+        # 打卡即确认：把当天这一项的提醒标成 acked，家属端的"提醒送达 + 完成情况"才对得上
+        if scheduler:
+            scheduler.ack(payload.elder_id, item.id, day_key)
     else:
         store.undo_checkin(item.id, day_key)
         record_payload = None
+        if scheduler:
+            scheduler.unack(payload.elder_id, item.id, day_key)
 
-    today = engine.today(payload.elder_id, target)
+    today = engine.today(payload.elder_id, day)
     return JSONResponse(
         content={
             "elderId": payload.elder_id,

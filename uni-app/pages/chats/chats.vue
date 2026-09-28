@@ -2,6 +2,8 @@
   <view class="bl-page" :class="{ 'bl-large': settings.largeFont }">
     <bl-navbar title="比邻AI" />
 
+    <bl-reminder-bar :item="reminder.banner" @open="onReminderOpen" @dismiss="dismissBanner" />
+
     <scroll-view class="bl-body" scroll-y>
       <view
         v-for="c in rows"
@@ -33,6 +35,7 @@
 import { computed, onMounted } from 'vue'
 import { settings } from '@/common/store.js'
 import { chat, initChat, lastPreview, lastTime } from '@/stores/chat.js'
+import { dismissBanner, poll, reminder } from '@/stores/reminder.js'
 
 /** 其余会话仍是静态占位：一期只有「儿子 小明」这条接了真实 agent */
 const PLACEHOLDER = [
@@ -53,7 +56,14 @@ const rows = computed(() => {
 
 onMounted(() => {
   initChat()
+  poll()
 })
+
+function onReminderOpen() {
+  // 提醒条点进来：直接去日程页打卡
+  dismissBanner()
+  uni.navigateTo({ url: '/pages/plans/plans' })
+}
 
 function open() {
   uni.navigateTo({ url: '/pages/chat-detail/chat-detail' })

@@ -74,6 +74,16 @@ def _env_list(key: str, default: list[str]) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+_TRUE_VALUES = {"1", "true", "yes", "on", "y", "t"}
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.environ.get(key)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in _TRUE_VALUES
+
+
 @dataclass
 class Settings:
     """服务运行期配置。字段名与 .env 变量一一对应。"""
@@ -96,6 +106,24 @@ class Settings:
     # ── 人设 ──────────────────────────────────────────────
     default_persona_id: str = "p_son"
 
+    # ── 提醒调度（P1）─────────────────────────────────────
+    # 调度器开关：关掉后不再自动投递提醒（测试里常关掉，手动 tick）
+    scheduler_enabled: bool = True
+    # 后台 tick 间隔（秒）。30 秒足够精确到"分钟级提醒"，也不至于空转
+    scheduler_tick_seconds: float = 30.0
+    # 是否允许通过 POST /v1/scheduler/tick 手动推进（联调/演示用；**上线前应关掉**）
+    scheduler_manual_tick: bool = True
+    # 过期宽限：服务没运行时错过的提醒，超过这么久就不再补发
+    # （早上 8 点的用药提醒，下午 3 点才开机补发一条"该吃药了"只会添乱）
+    reminder_grace_minutes: int = 30
+    # 强提醒未响应多久后再响一次，以及最多重复几次
+    reminder_repeat_minutes: int = 5
+    reminder_max_repeats: int = 1
+    # 未响应多久判定为错过（写进任务状态，供家属端看完成情况）
+    reminder_miss_minutes: int = 60
+    # 弱提醒的时间窗（超过就不发，不顺延）——设计方案 §3.2「弱提醒超窗不顺延」
+    weak_reminder_window: tuple[str, str] = ("09:00", "20:00")
+
     # ── HTTP ─────────────────────────────────────────────
     host: str = "127.0.0.1"
     port: int = 8000
@@ -116,6 +144,17 @@ class Settings:
             history_turns=_env_int("CHAT_HISTORY_TURNS", 8),
             sse_heartbeat_seconds=_env_float("SSE_HEARTBEAT_SECONDS", 10.0),
             default_persona_id=_env_str("DEFAULT_PERSONA_ID", "p_son"),
+            scheduler_enabled=_env_bool("SCHEDULER_ENABLED", True),
+            scheduler_tick_seconds=_env_float("SCHEDULER_TICK_SECONDS", 30.0),
+            scheduler_manual_tick=_env_bool("SCHEDULER_MANUAL_TICK", True),
+            reminder_grace_minutes=_env_int("REMINDER_GRACE_MINUTES", 30),
+            reminder_repeat_minutes=_env_int("REMINDER_REPEAT_MINUTES", 5),
+            reminder_max_repeats=_env_int("REMINDER_MAX_REPEATS", 1),
+            reminder_miss_minutes=_env_int("REMINDER_MISS_MINUTES", 60),
+            weak_reminder_window=(
+                _env_str("WEAK_REMINDER_START", "09:00"),
+                _env_str("WEAK_REMINDER_END", "20:00"),
+            ),
             host=_env_str("HOST", "127.0.0.1"),
             port=_env_int("PORT", 8000),
             cors_origins=_env_list("CORS_ORIGINS", ["*"]),

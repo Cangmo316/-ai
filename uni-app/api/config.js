@@ -37,7 +37,13 @@ export const ENDPOINTS = {
   planSummary: '/v1/plans/summary',
   planAdjust: '/v1/plans/adjust',
   planHistory: '/v1/plans/history',
-  elders: '/v1/elders'
+  elders: '/v1/elders',
+  // 提醒投递（P1）：调度器到点投递，端侧拉取后展示
+  reminderInbox: '/v1/reminders/inbox',
+  reminderRead: '/v1/reminders/read',
+  reminderTasks: '/v1/reminders/tasks',
+  schedulerStatus: '/v1/scheduler/status',
+  schedulerTick: '/v1/scheduler/tick'
 }
 
 /** 超时（ms）：首字节超时用看门狗实现，总超时只作用于非流式接口 */
