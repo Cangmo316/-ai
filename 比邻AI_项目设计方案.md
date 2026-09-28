@@ -520,10 +520,11 @@ server/
 | `/v1/avatar/params` | GET/PUT | 捏脸参数读写 |
 | `/v1/consent` | POST | 授权与告知留痕 |
 
-> **端侧已按此契约落地**（P0）：`uni-app/api/` + `uni-app/stores/chat.js` 已实现流式对话、
-> 历史拉取、一键停止、失败重发与跨端降级；事件级契约（`meta` / `token` / `sticker` / `card` /
+> **端侧与服务端均已按此契约落地**（P0）：`uni-app/api/` + `uni-app/stores/chat.js`（流式对话、
+> 一键停止、失败重发、跨端降级）与 `server/`（FastAPI：SSE 编排、人设 prompt、受控表情、
+> 句末去句号后处理、心跳、错误归一化）。事件级契约（`meta` / `token` / `sticker` / `card` /
 > `done` / `error`）与各端流式能力差异（H5 fetch / 小程序 enableChunked / App plus.net.XHR）
-> 见 **`uni-app/api/README.md`**——后端照它实现即可，端侧代码不需要改。
+> 见 **`uni-app/api/README.md`**；服务端启动与模型接入见 **`server/README.md`**。
 > 后端未就绪时可用 `node tools/mock-server.mjs` 当联调靶子。
 
 **调度与推送**
@@ -672,10 +673,16 @@ E:\比邻AI\
 4. 同步做技术验证：用一份现成的 `.glb`（带 morph）在 App 端 renderjs 里跑起来，测中低端机帧率 —— 这一步的结果决定 P3 走 A 还是 B 方案
 
 > **P0 进度**（2026-09-24 更新）
+> - 第 1 步**已完成**：`server/` 起了 FastAPI（`/v1/chat/stream` SSE + `/v1/chat/send` +
+>   `/v1/chat/history`），未配 `LLM_API_KEY` 时走假模型，链路照样跑通；
+>   接真实模型只改 `server/.env` 三行（OpenAI 兼容，DeepSeek/通义/Kimi/本地 vLLM 通用）
 > - 第 2 步**已完成**：`uni-app/api/`（跨端流式传输 + SSE 解析）+ `uni-app/stores/chat.js`
->   （乐观发送 / 流式回填 / 一键停止 / 失败重发 / 本地缓存降级）已接好 `chat-detail`；
->   契约见 `uni-app/api/README.md`，自检 `npm test`（SSE 与契约 25 项 + 端侧状态机 13 项全绿）
-> - 第 1、3 步**未开始**：`server/` 仍只有 `app/knowledge/`，等 LLM 接入方式确定后开工
-> - 联调靶子已就位：`node tools/mock-server.mjs`（零依赖，实现完整契约）
+>   （乐观发送 / 流式回填 / 一键停止 / 失败重发 / 本地缓存降级）已接好 `chat-detail`
+> - 第 3 步**已完成**：`server/app/style/punctuation.py` 落地「句末不加句号」
+>   （流式后处理：句号挂起判定、小数与缩写保护、多句转换行）+ 40 条边界单测
+> - 服务端 53 项单测、端侧 38 项测试全绿；跨语言端到端已验（端侧测试直接打 Python 服务）
+> - **待办**：真实模型的 key 还没配，话术与合规表现需用真模型再跑一遍；
+>   鉴权、`clientMsgId` 幂等、PostgreSQL 未做；`card` 事件要等 P1 计划引擎
+> - 联调靶子：`node tools/mock-server.mjs`（零依赖）；服务端启动见 `server/README.md`
 
 > 本方案与《比邻AI_UI设计流程与提示词.md》配合使用：本方案定"做什么、怎么搭"，UI 手册定"长什么样、怎么画"。

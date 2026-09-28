@@ -54,9 +54,17 @@ globalThis.uni = {
 // 必须在 import 业务模块之前注册：业务代码用了 `@/` 别名与 `vue`
 register('./node-alias-hook.mjs', import.meta.url)
 
-const mock = await startMockServer({ port: 0, delayMs: 0 })
+// 默认打自带的 mock；给 BILIN_TEST_BASE_URL 时改打真实后端
+// （用来验证「端 → 服务 → 模型 → 端」这条跨语言链路，见 server/README.md）
+const externalBase = process.env.BILIN_TEST_BASE_URL || ''
+const mock = externalBase ? null : await startMockServer({ port: 0, delayMs: 0 })
+const baseURL = externalBase || 'http://127.0.0.1:' + mock.port
+/** 真实后端 P0 还没发计划卡（那是计划引擎 P1 的活），只有 mock 会发 */
+const EXPECT_CARD = !externalBase
+
+console.log('联调目标: ' + baseURL + (externalBase ? '（外部后端）' : '（内置 mock）'))
+
 const config = await import('../uni-app/api/config.js')
-const baseURL = 'http://127.0.0.1:' + mock.port
 config.setBaseURL(baseURL)
 
 const store = await import('../uni-app/stores/chat.js')
@@ -134,9 +142,11 @@ await testAsync('流式回填：文本拼回完整回复，表情与卡片各成
   assert.equal(stickers[0].role, 'agent')
 
   const cards = fresh.filter((m) => m.type === 'card')
-  assert.equal(cards.length, 1, '计划卡应独立成一条消息')
-  assert.equal(cards[0].card.kind, 'plan_item')
-  assert.equal(cards[0].card.plan.time, '08:00')
+  if (EXPECT_CARD) {
+    assert.equal(cards.length, 1, '计划卡应独立成一条消息')
+    assert.equal(cards[0].card.kind, 'plan_item')
+    assert.equal(cards[0].card.plan.time, '08:00')
+  }
 })
 
 await testAsync('持久化：本轮消息写入本地缓存，且不留中间态', async () => {
@@ -144,7 +154,7 @@ await testAsync('持久化：本轮消息写入本地缓存，且不留中间态
   assert.ok(raw, '应有本地缓存')
   const list = JSON.parse(raw)
   assert.ok(list.some((m) => m.type === 'sticker' && m.sticker === 'pill'))
-  assert.ok(list.some((m) => m.type === 'card'))
+  if (EXPECT_CARD) assert.ok(list.some((m) => m.type === 'card'))
   assert.ok(list.every((m) => m.status !== 'streaming'), '缓存里不能留 streaming')
 })
 
@@ -228,7 +238,7 @@ await testAsync('缓存恢复：再次进入不再依赖服务端', async () => 
   chat.messages = []
   store.initChat()
   assert.equal(chat.messages.length, cached.length, '应从缓存恢复同样条数')
-  assert.ok(chat.messages.some((m) => m.type === 'card'), '卡片也要能从缓存还原')
+  if (EXPECT_CARD) assert.ok(chat.messages.some((m) => m.type === 'card'), '卡片也要能从缓存还原')
 })
 
 await testAsync('列表页预览取最后一条可读内容', async () => {
@@ -247,5 +257,5 @@ await testAsync('resetChat 清空内存与本地缓存', async () => {
 
 /* ------------------------------------------------------------------ 收尾 */
 
-await mock.close()
+if (mock) await mock.close()
 finish()

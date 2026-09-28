@@ -33,6 +33,12 @@
   端侧实现、`tools/mock-server.mjs`、契约文档本身
 - 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；
   仓库根 `package.json` 只为 `tools/` 提供 ESM 运行环境与快捷命令，`uni-app/` 工程仍零 npm 依赖
+- **改动 `server/app/` 或 `server/tests/` 后必须跑**
+  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（53 项，零测试依赖）
+- 跨语言端到端回归：先起 `server/run.py`，再
+  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs`
+- **模型 key 只放 `server/.env`**（已 gitignore，含 `server/.env.*`）；
+  `server/.env.example` 只放变量名，任何提交文件里不得出现密钥
 - 写文件默认 UTF-8 无 BOM（`[System.IO.File]::WriteAllText` + `UTF8Encoding($false)`）
   - **例外：`.ps1` 必须 UTF-8 带 BOM**（`UTF8Encoding($true)`）。Windows PowerShell 5.1
     会把无 BOM 的 UTF-8 当 ANSI(GBK) 解码，含中文的脚本会直接解析失败
@@ -96,3 +102,4 @@ Windows 计划任务 **`BilinAI-Backup`**，每日 12:30 运行：推 `localmirr
 - `比邻AI_医学条目与语音技术选型.md`——知识来源与语音栈
 - `比邻AI_数字人资产交付规范.md`——Blender 交付契约与验收清单
 - `uni-app/api/README.md`——**前后端接口契约**（SSE 事件表、各端流式能力差异、联调方式）
+- `server/README.md`——agent 服务（启动、接模型、测试、已实现/未实现清单）
