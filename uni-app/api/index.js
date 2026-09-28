@@ -6,12 +6,17 @@
  */
 
 export {
+  DEFAULT_API_TOKEN,
   DEFAULT_BASE_URL,
   ENDPOINTS,
+  STORAGE_KEY_API_TOKEN,
   TIMEOUT,
+  authHeaders,
+  getApiToken,
   getBaseURL,
-  setBaseURL,
-  resolveURL
+  resolveURL,
+  setApiToken,
+  setBaseURL
 } from './config.js'
 
 export { request } from './request.js'

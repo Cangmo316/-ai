@@ -117,6 +117,80 @@ X-Accel-Buffering: no          ← 少了这行，上了 nginx 会变成「一�
 - `type`：`text` / `voice`（带 `seconds`）/ `sticker`（`sticker` 字段是 token）/ `card`（`card` 字段同 2.1）
 - **拉历史失败端侧不报错**：本地缓存与内置种子会顶上（老人端不允许白屏）
 
+### 2.4 错误码表（唯一事实来源在服务端）
+
+所有错误统一形状：
+
+```json
+{ "error": { "code": "plan_state", "message": "计划当前是「草稿」，不能确认", "retryable": false } }
+```
+
+- **`message` 会直接展示给老人**：服务端保证是人话（"服务器开小差了，一会儿再试"），
+  端侧不要再自己拼一套文案，也不要把它当调试信息
+- **`retryable` 决定端侧要不要给"重发"入口**：鉴权失败、格式错误、状态冲突都是 `false`
+  （重试一百次也还是失败）；网络类、模型超时是 `true`
+- 端侧 `request.js` 直接采信服务端的 `retryable`，服务端没给才按状态码猜
+- **完整表可运行时拉取**：`GET /v1/errors`（公开，不需要 token）
+
+主要错误码（完整表见服务端 `app/errors.py`）：
+
+| code | HTTP | 端侧该做什么 |
+|---|---|---|
+| `auth_required` | 401 | 提示"让家里人帮你看一下"，**不给重试** |
+| `unauthorized` | 401 | 提示"登录已过期"，**不给重试** |
+| `invalid_date` / `invalid_request` | 400 / 422 | 不该发生（端侧参数 bug），记日志 |
+| `plan_state` | 409 | 状态冲突（如确认一份草稿），刷新后重试 |
+| `plan_not_active` | 409 | 还没有生效计划，引导让家里人确认 |
+| `plan_item_not_found` | 404 | 刷新今日计划 |
+| `duplicate_request` | 409 | 同一句话正在生成中，等一拍再拉 |
+| `empty_text` | 400 | 输入为空，不该发请求 |
+| `llm_timeout` | 504 | 可重试 |
+| `llm_rate_limited` / `llm_unavailable` / `server_error` | 502 | 可重试，提示"服务器开小差了" |
+| `internal` | 500 | 可重试 |
+| `manual_tick_disabled` | 403 | 联调接口被关掉（生产环境正常） |
+
+### 2.5 鉴权
+
+服务端三档（`server/.env` 的 `AUTH_MODE`）：
+
+| 模式 | 行为 | 用在哪 |
+|---|---|---|
+| `off` | 完全不校验 | 本机开发 |
+| `auto`（默认） | **配了 `API_TOKENS` 就强制校验**，没配则放行并在启动日志里大声警告 | 过渡期 |
+| `required` | 强制校验；没配 token **直接启动失败** | **上线用这个** |
+
+端侧带 token 的方式：HTTP 头 `Authorization: Bearer <token>`（也接受 `X-API-Token`）。
+
+```js
+import { setApiToken } from '@/api/index.js'
+setApiToken('服务端 API_TOKENS 里的那一串')   // 写本地缓存，下次启动仍生效
+```
+
+- **非流式与流式都要带**：两条路径共用 `config.js` 的 `authHeaders()`，
+  不会出现"聊天能流式但历史拉不到"这种故障
+- 公开路径（不需要 token）：`/healthz`、`/v1/errors`、`/docs`
+- ⚠️ **这一版能防什么、不能防什么**（别误以为已经有账号体系了）：
+  能防"接口被内网/公网随便扫到就调用"；**不能防**"从 App 里把 token 抠出来的人"
+  （App 里的任何常量都能被逆向）。
+  真正的做法（P2 随家人端一起做）：家人端手机号登录 → 签发短期 JWT + refresh token →
+  老人端用绑定关系换只读自己数据的 scoped token → 支持设备级撤销
+
+### 2.6 幂等（`clientMsgId`）
+
+端侧每次发言都带一个本地消息 id（`clientMsgId`），服务端据此去重：
+
+| 情况 | 服务端行为 | 端侧表现 |
+|---|---|---|
+| 第一次见 | 正常生成 | 逐字回填 |
+| 同一 id 再次请求（已生成完） | **回放缓存**，不再调用模型、不再重复落库 | 事件里 `replayed: true`，内容与首次一致 |
+| 同一 id 正在生成中 | `duplicate_request`（409 / SSE `error` 事件） | 提示"这句话我正在回，等我一下" |
+
+- **重试必须复用同一个 `clientMsgId`**：`stores/chat.js` 的 `retry()` 传的就是上一条本地消息 id，
+  所以"重试不重复"是自动成立的
+- **第一轮失败时不写缓存**：失败（模型鉴权错/超时）与"一个字都没产出"都会放开记录，
+  否则端侧重试永远拿到空回复——这种"越重试越坏"的 bug 最难查
+- 不传 `clientMsgId` 时按老行为处理（不做幂等），便于手工 curl 调试
+
 ---
 
 ---

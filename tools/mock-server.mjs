@@ -379,12 +379,17 @@ function planSummary(state) {
 export function startMockServer(options = {}) {
   const host = options.host || DEFAULT_HOST
   const delayMs = options.delayMs === undefined ? DEFAULT_DELAY_MS : options.delayMs
+  /** 配了就要求 `Authorization: Bearer <authToken>`，用来测端侧有没有带 token */
+  const authToken = String(options.authToken || '')
+  const state = { lastAuth: '', requests: 0 }
   const plans = createPlanState()
   const reminders = createReminderState()
   const pushClients = new Map()
 
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
+    state.requests += 1
+    state.lastAuth = req.headers.authorization || ''
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204, corsHeaders())
@@ -392,8 +397,51 @@ export function startMockServer(options = {}) {
       return
     }
 
+    // 公开路径与真实服务端保持一致：健康检查、错误码表
+    const isPublic =
+      url.pathname === '/healthz' || url.pathname === '/v1/errors' || url.pathname === '/debug/state'
+    if (authToken && !isPublic) {
+      const provided = String(state.lastAuth).replace(/^Bearer\s+/i, '').trim()
+      if (provided !== authToken) {
+        sendJSON(res, 401, {
+          error: {
+            code: provided ? 'unauthorized' : 'auth_required',
+            message: provided ? '登录已过期，让家里人重新登录一下' : '需要先登录，让家里人帮你看一下',
+            retryable: false
+          }
+        })
+        return
+      }
+    }
+
+    if (url.pathname === '/v1/errors' && req.method === 'GET') {
+      // 与真实服务端同构：公开、只暴露 code/status/message/retryable
+      sendJSON(res, 200, {
+        codes: [
+          { code: 'auth_required', status: 401, message: '需要先登录，让家里人帮你看一下', retryable: false },
+          { code: 'unauthorized', status: 401, message: '登录已过期，让家里人重新登录一下', retryable: false },
+          { code: 'not_found', status: 404, message: '没有这个接口', retryable: false },
+          { code: 'plan_state', status: 409, message: '这份计划现在不能这么做', retryable: false },
+          { code: 'llm_timeout', status: 504, message: '等我一下 我这边有点慢', retryable: true },
+          { code: 'internal', status: 500, message: '服务器开小差了，一会儿再试', retryable: true }
+        ],
+        note: 'mock 只列常用码；完整表见 server/app/errors.py 与 uni-app/api/README.md'
+      })
+      return
+    }
+
+    if (url.pathname === '/debug/state' && req.method === 'GET') {
+      sendJSON(res, 200, { lastAuth: state.lastAuth, requests: state.requests })
+      return
+    }
+
     if (url.pathname === '/healthz') {
-      sendJSON(res, 200, { ok: true, service: 'bilin-mock-agent', delayMs })
+      sendJSON(res, 200, {
+        ok: true,
+        service: 'bilin-mock-agent',
+        delayMs,
+        auth: { required: Boolean(authToken) }
+      })
       return
     }
 
@@ -577,7 +625,9 @@ export function startMockServer(options = {}) {
           // fetch/undici 会复用 keep-alive 连接，只调 close() 会一直等连接释放；先全部掐掉
           if (typeof server.closeAllConnections === 'function') server.closeAllConnections()
           server.close(() => done())
-        })
+        }),
+        /** 测试用：最后一次请求的 Authorization 头与请求计数 */
+        state
       })
     })
   })
@@ -746,11 +796,14 @@ if (isDirectRun) {
   const host = typeof flags.host === 'string' ? flags.host : DEFAULT_HOST
   const port = flags.port !== undefined ? Number(flags.port) : DEFAULT_PORT
   const delayMs = flags.delay !== undefined ? Number(flags.delay) : DEFAULT_DELAY_MS
+  // --auth <token>：模拟"服务端开了鉴权"，用来验证端侧有没有带 Authorization
+  const authToken = typeof flags.auth === 'string' ? flags.auth : ''
 
-  startMockServer({ host, port, delayMs }).then((instance) => {
+  startMockServer({ host, port, delayMs, authToken }).then((instance) => {
     console.log('比邻AI mock agent 已启动')
     console.log('  地址   : http://' + host + ':' + instance.port)
     console.log('  每字延迟: ' + delayMs + 'ms（--delay 0 可关闭）')
+    console.log('  鉴权   : ' + (authToken ? '要求 Authorization: Bearer <token>' : '关闭（--auth <token> 可打开）'))
     console.log('  接口   : POST /v1/chat/stream · POST /v1/chat/send · GET /v1/chat/history')
     console.log('')
     console.log('  端侧联调：uni-app/api/config.js 里把 DEFAULT_BASE_URL 指向这个地址')

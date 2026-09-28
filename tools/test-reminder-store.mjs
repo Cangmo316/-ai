@@ -31,6 +31,11 @@ console.log('联调目标: ' + baseURL + (externalBase ? '（外部后端）' : 
 
 const config = await import('../uni-app/api/config.js')
 config.setBaseURL(baseURL)
+const externalToken = process.env.BILIN_TEST_API_TOKEN || ''
+if (externalToken) {
+  // 服务端开了鉴权（AUTH_MODE=required / auto+API_TOKENS）时必须带上，否则一律 401
+  config.setApiToken(externalToken)
+}
 const remindersApi = await import('../uni-app/api/reminders.js')
 const plansApi = await import('../uni-app/api/plans.js')
 

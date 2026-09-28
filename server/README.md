@@ -31,7 +31,10 @@
 | SSE 心跳（防端侧 20s 首字节看门狗误杀） | `app/orchestration/service.py` |
 | 错误归一化（老人看得懂的话 + retryable） | `app/llm/openai_compat.py`、`app/main.py` |
 | OpenAI 兼容模型客户端（含推理模型思维链隔离） | `app/llm/openai_compat.py` |
-| `GET /healthz` 自检（模型 / 知识库 / 计划 / 调度 / 通道，密钥脱敏） | `app/main.py` |
+| `GET /healthz` 自检（模型 / 知识库 / 计划 / 调度 / 通道 / 鉴权 / 幂等，密钥脱敏） | `app/main.py` |
+| **统一错误码表**（code → HTTP 状态 + 人话文案 + retryable，跨语言契约） | `app/errors.py` |
+| **接口鉴权**（三档 AUTH_MODE；中间件统一拦，新加路由不会漏） | `app/auth.py`、`app/main.py` |
+| **幂等**（`clientMsgId`：重试回放缓存、不重复调模型；失败释放记录） | `app/orchestration/idempotency.py` |
 
 **未实现 / 待你操作**（不藏着，避免误判进度）
 
@@ -39,8 +42,10 @@
   uni-push 未开通、云函数未部署。**代码与云函数参考实现都已就绪**，步骤见
   [`deploy/unipush-cloudfunction/README.md`](deploy/unipush-cloudfunction/README.md)。
   在那之前系统通知发不出去，但**站内消息与端侧本地通知照常工作**
-- **鉴权**：目前无任何 token 校验，`CORS_ORIGINS=*`，只适合本机/内网联调
-- **`clientMsgId` 幂等**：字段收下了但没用来去重（重发会产生重复消息）
+- **鉴权只是"把门关上"**：token 在 App 里能被逆向取出，还没有账号体系与设备级撤销；
+  真正的做法（P2 随家人端做）见 `app/auth.py` 的"能防/不能防"表
+- **`CORS_ORIGINS=*`** 默认全放（HBuilderX 预览跨域方便），上线前要收紧成具体域名
+
 - **数据库**：会话、计划、打卡、提醒任务、cid 全在内存，进程重启即清空（接口按落库形态设计）
 - **家人端**：计划的生成/确认/驳回/汇总接口都已就绪，但没有家属侧页面（二期）
 - Android 通知渠道（`uni.getChannelManager`）未配：提醒暂用系统默认渠道
@@ -122,6 +127,8 @@ server/
 ├── app/
 │   ├── main.py             FastAPI 装配、CORS、异常归一化、/healthz
 │   ├── config.py           零依赖 .env 解析 + Settings
+│   ├── errors.py           统一错误码表（code → 状态 + 人话 + retryable）
+│   ├── auth.py             接口鉴权（AUTH_MODE 三档 + 中间件）
 │   ├── api/
 │   │   ├── chat.py         路由：stream / send / history / personas
 │   │   ├── plans.py        路由：draft / pending / confirm / reject / today / checkin / summary / adjust / history
@@ -129,6 +136,7 @@ server/
 │   │   └── push.py         路由：推送标识登记 register / unregister / status
 │   ├── orchestration/
 │   │   ├── service.py      编排：上下文 → 模型 → 表情抽取 → 风格 → 事件 → 落库
+│   │   ├── idempotency.py  clientMsgId 幂等（回放缓存 / 失败释放）
 │   │   ├── events.py       SSE 帧编码（契约落点）
 │   │   └── intents.py      规则式意图识别（决定何时挂计划卡）
 │   ├── schedule/
@@ -160,7 +168,7 @@ server/
 │       └── elder.py        老人档案（L1，开发期 3 个模拟档案）
 ├── deploy/
 │   └── unipush-cloudfunction/  uni-push 2.0 发送云函数（参考实现，需部署到你的 uniCloud）
-└── tests/                  159 项单测（标准库 unittest，零测试依赖）
+└── tests/                  202 项单测（标准库 unittest，零测试依赖）
 ```
 
 ---
@@ -172,7 +180,7 @@ cd server
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```
 
-159 项，按主题分十块：
+202 项，按主题分十一块：
 
 | 文件 | 守什么 |
 |---|---|
@@ -185,6 +193,9 @@ cd server
 | `tests/test_scheduler.py` | 任务生成幂等、**过期不补发**、强提醒重复一次、弱提醒时间窗、错过留痕、计划变更取消 |
 | `tests/test_reminders_api.py` | 提醒接口契约、收件箱回执、**打卡即确认**、调度状态、手动 tick 开关 |
 | `tests/test_push.py` | cid 登记与脱敏、uni-push 通道（成功/云函数失败/HTTP 错误/异常/多设备）、通道降级到站内消息 |
+| `tests/test_errors.py` | 错误码表完整性、文案里不出现英文异常名、未登记码有兜底、各路由错误体形状一致 |
+| `tests/test_auth.py` | 三档鉴权模式、公开路径、Bearer/X-API-Token、required 缺 token 启动失败、健康检查不回显 token |
+| `tests/test_idempotency.py` | 回放不重复调模型、不重复落库、in-flight 冲突、**失败不污染缓存**、记录上限 |
 
 （上表 9 个文件、共 159 项。）
 

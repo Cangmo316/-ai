@@ -15,6 +15,8 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+
+from ..errors import api_error
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.elder import DEFAULT_ELDER_ID, ElderStore
@@ -77,10 +79,6 @@ def _today(request: Request):
     return _now(request).date()
 
 
-def error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
-
-
 def _parse_day(value: str | None) -> date | None:
     if not value:
         return None
@@ -119,7 +117,7 @@ async def create_draft(payload: DraftRequest, request: Request):
     engine = _engine(request)
     start = payload.start
     if start and _parse_day(start) is None:
-        return error_response(400, "invalid_date", "日期格式不对，应该像 2026-09-24")
+        return api_error("invalid_date")
 
     try:
         plan = engine.build_plan(
@@ -137,7 +135,7 @@ async def create_draft(payload: DraftRequest, request: Request):
         if payload.submit:
             engine.submit(plan)
     except PlanStateError as exc:
-        return error_response(409, "plan_state", exc.message)
+        return api_error("plan_state", exc.message)
 
     return JSONResponse(
         content={
@@ -166,11 +164,11 @@ async def confirm_plan(payload: PlanIdRequest, request: Request):
     engine = _engine(request)
     plan = engine.store.get(payload.plan_id)
     if not plan:
-        return error_response(404, "plan_not_found", "没找到这份计划")
+        return api_error("plan_not_found")
     try:
         engine.confirm(plan, actor=payload.actor or "家属")
     except PlanStateError as exc:
-        return error_response(409, "plan_state", exc.message)
+        return api_error("plan_state", exc.message)
     logger.info("计划 %s 已由 %s 确认生效", plan.id, payload.actor)
     return JSONResponse(content={"plan": plan.to_dict(), "notice": "计划已生效，开始按时间提醒"})
 
@@ -180,11 +178,11 @@ async def reject_plan(payload: PlanIdRequest, request: Request):
     engine = _engine(request)
     plan = engine.store.get(payload.plan_id)
     if not plan:
-        return error_response(404, "plan_not_found", "没找到这份计划")
+        return api_error("plan_not_found")
     try:
         engine.reject(plan, reason=payload.reason, actor=payload.actor or "家属")
     except PlanStateError as exc:
-        return error_response(409, "plan_state", exc.message)
+        return api_error("plan_state", exc.message)
     return JSONResponse(content={"plan": plan.to_dict(), "notice": "已驳回，这份计划不会生效"})
 
 
@@ -197,7 +195,7 @@ async def today_plan(
     """今日计划与打卡状态。**只返回已生效计划**——未确认的草稿产生不了提醒。"""
     target = _parse_day(day)
     if day and target is None:
-        return error_response(400, "invalid_date", "日期格式不对，应该像 2026-09-24")
+        return api_error("invalid_date")
     return JSONResponse(content=_engine(request).today(elder_id, target or _today(request)))
 
 
@@ -208,15 +206,15 @@ async def checkin(payload: CheckinRequest, request: Request):
     store = engine.store
     plan = store.active(payload.elder_id)
     if not plan:
-        return error_response(409, "plan_not_active", "还没有生效的计划，先让家里人确认")
+        return api_error("plan_not_active")
 
     item = next((entry for entry in plan.items if entry.id == payload.plan_item_id), None)
     if not item:
-        return error_response(404, "plan_item_not_found", "没找到这一项")
+        return api_error("plan_item_not_found")
 
     target = _parse_day(payload.date)
     if payload.date and target is None:
-        return error_response(400, "invalid_date", "日期格式不对，应该像 2026-09-24")
+        return api_error("invalid_date")
     day = target or _today(request)
     day_key = day.isoformat()
 
@@ -286,13 +284,13 @@ async def request_adjustment(payload: PlanIdRequest, request: Request):
     engine = _engine(request)
     plan = engine.store.get(payload.plan_id)
     if not plan:
-        return error_response(404, "plan_not_found", "没找到这份计划")
+        return api_error("plan_not_found")
     suggestion = engine.adjustment_suggestion(plan)
     reason = payload.reason or "；".join(suggestion["reasons"]) or "家属发起调整"
     try:
         engine.mark_adjusting(plan, reason)
     except PlanStateError as exc:
-        return error_response(409, "plan_state", exc.message)
+        return api_error("plan_state", exc.message)
     return JSONResponse(
         content={"plan": plan.to_dict(), "suggestion": suggestion, "notice": "已转入调整，等家里人确认"}
     )

@@ -25,12 +25,17 @@ from .api.chat import router as chat_router
 from .api.plans import router as plans_router
 from .api.push import router as push_router
 from .api.reminders import router as reminders_router
+from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, warn_if_open
 from .config import Settings, get_settings
+from .errors import api_error
+from .errors import code_for_status
+from .errors import table as error_table
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .models.push_client import PushClientRegistry
+from .orchestration.idempotency import IdempotencyStore
 from .orchestration.service import ChatService
 from .persona.prompts import PersonaRegistry
 from .plan.engine import PlanEngine
@@ -57,10 +62,18 @@ def create_app(
     clock=None,
 ) -> FastAPI:
     config = settings or get_settings()
+    # 上线要的是"配置不全就别启动"，而不是"启动了但门是开的"
+    if str(config.auth_mode).lower() == MODE_REQUIRED and not parse_tokens(config.api_tokens):
+        raise ValueError(
+            "AUTH_MODE=required 但没配 API_TOKENS —— 请先在 server/.env 里配置访问 token，"
+            "或把 AUTH_MODE 改成 auto/off（仅限本机开发）"
+        )
     llm = provider or build_provider(config)
     conversations = ConversationStore()
     personas = PersonaRegistry(default_id=config.default_persona_id)
     elders = ElderStore()
+    # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
+    idempotency = IdempotencyStore()
 
     if knowledge is None:
         try:
@@ -123,6 +136,7 @@ def create_app(
         # L1 档案注入：人设 prompt 会带上"有高血压、平时吃什么药"这类稳定事实
         elder_profiles=elders.elders,
         plan_cards=plan_cards_for,
+        idempotency=idempotency,
     )
 
     @asynccontextmanager
@@ -137,6 +151,8 @@ def create_app(
         )
         if not config.uses_real_model:
             logger.warning("当前使用假模型（未配置 LLM_API_KEY）—— 端侧能连通，但回复是固定话术")
+        # 接口是不是裸的，这件事必须喊出来（见 app/auth.py 的"能防/不能防"表）
+        warn_if_open(config)
         if config.scheduler_enabled:
             scheduler.start()
             logger.info(
@@ -169,6 +185,7 @@ def create_app(
     app.state.elders = elders
     app.state.scheduler = scheduler
     app.state.push_clients = push_clients
+    app.state.idempotency = idempotency
     # 全局时间源：调度器与各路由都用它取"现在"，避免出现"路由按真实时间、调度按注入时间"
     # 这种只有测试才会暴露的分裂（踩过一次：手动 tick 到 15 点，打卡却按真实日期去找提醒）
     app.state.clock = scheduler.now
@@ -186,6 +203,26 @@ def create_app(
     app.include_router(plans_router)
     app.include_router(reminders_router)
     app.include_router(push_router)
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        """统一鉴权闸门。
+
+        放在中间件而不是逐个路由加依赖，是因为**新加路由不可能被漏掉**——
+        "加固"这件事最怕的就是以后新写一个接口忘了加鉴权。
+        """
+        denied = check_request(request)
+        if denied is not None:
+            return denied
+        return await call_next(request)
+
+    @app.get("/v1/errors", tags=["meta"])
+    async def error_codes():
+        """错误码表（公开）：端侧可据此把 code 映射成老人看得懂的提示与重试策略"""
+        return {
+            "codes": error_table(),
+            "note": "error.message 会直接展示给老人；error.retryable 决定端侧要不要给重试入口",
+        }
 
     @app.get("/healthz", tags=["meta"])
     async def healthz(request: Request):
@@ -209,6 +246,13 @@ def create_app(
             "knowledge": knowledge.summary(),
             "plans": {"total": total, "active": active, "pending": pending},
             "scheduler": scheduler.status(),
+            "auth": {
+                "mode": current.auth_mode,
+                "enabled": auth_required(current),
+                "tokens": len(parse_tokens(current.api_tokens)),
+                "note": "auto=配了 API_TOKENS 才校验；上线请用 required",
+            },
+            "idempotency": idempotency.counts(),
             "endpoints": [
                 "POST /v1/chat/stream",
                 "POST /v1/chat/send",
@@ -232,6 +276,7 @@ def create_app(
                 "POST /v1/push/register",
                 "POST /v1/push/unregister",
                 "GET  /v1/push/status",
+                "GET  /v1/errors",
             ],
         }
 
@@ -239,68 +284,21 @@ def create_app(
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         """把框架自带的 {"detail": ...} 也统一成契约里的 {"error": {...}}。
 
-        端侧的 request() 只会读 body.error.message，不统一的话老人会看到英文的 Not Found。
+        端侧的 request() 只读 body.error.message，不统一的话老人会看到英文的 Not Found。
         """
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={
-                "error": {
-                    "code": _code_for_status(exc.status_code),
-                    "message": _message_for_status(exc.status_code),
-                }
-            },
-        )
+        return api_error(code_for_status(exc.status_code), status=exc.status_code)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         logger.warning("请求参数不合法: %s", exc.errors())
-        return JSONResponse(
-            status_code=422,
-            content={"error": {"code": "invalid_request", "message": "请求格式不对"}},
-        )
+        return api_error("invalid_request")
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):  # pragma: no cover
         logger.exception("未捕获异常: %s %s", request.method, request.url.path)
-        return JSONResponse(
-            status_code=500,
-            content={"error": {"code": "internal", "message": "服务器开小差了，一会儿再试"}},
-        )
+        return api_error("internal")
 
     return app
-
-
-_STATUS_CODES = {
-    400: "bad_request",
-    401: "unauthorized",
-    403: "forbidden",
-    404: "not_found",
-    405: "method_not_allowed",
-    422: "invalid_request",
-    429: "rate_limited",
-}
-
-_STATUS_MESSAGES = {
-    400: "请求格式不对",
-    401: "登录已过期，让家里人重新登录一下",
-    403: "没有权限",
-    404: "没有这个接口",
-    405: "请求方式不对",
-    422: "请求格式不对",
-    429: "说得太快了，歇一会儿再说",
-}
-
-
-def _code_for_status(status_code: int) -> str:
-    if status_code in _STATUS_CODES:
-        return _STATUS_CODES[status_code]
-    return "http_error" if status_code < 500 else "internal"
-
-
-def _message_for_status(status_code: int) -> str:
-    if status_code in _STATUS_MESSAGES:
-        return _STATUS_MESSAGES[status_code]
-    return "服务器开小差了，一会儿再试" if status_code >= 500 else "请求失败（" + str(status_code) + "）"
 
 
 app = create_app()

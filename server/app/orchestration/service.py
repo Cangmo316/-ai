@@ -45,6 +45,7 @@ from ..persona.stickers import is_allowed_sticker
 from ..style.compliance import scan
 from ..style.punctuation import StyleStreamer
 from . import events
+from .idempotency import STATE_DONE, STATE_IN_FLIGHT, IdempotencyStore
 from .intents import needs_plan_card
 
 logger = logging.getLogger("bilin.chat")
@@ -140,6 +141,7 @@ class ChatService:
         settings,
         elder_profiles: dict[str, dict] | None = None,
         plan_cards=None,
+        idempotency: IdempotencyStore | None = None,
     ) -> None:
         self.provider = provider
         self.store = store
@@ -148,6 +150,8 @@ class ChatService:
         self.elder_profiles = elder_profiles or {}
         # 取今日计划卡片的回调（由 main.py 注入，避免编排层直接依赖计划引擎）
         self.plan_cards = plan_cards
+        # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
+        self.idempotency = idempotency
 
     # ------------------------------------------------------------ 事件流
 
@@ -157,9 +161,46 @@ class ChatService:
         text: str,
         persona_id: str | None = None,
         elder_id: str | None = None,
+        client_msg_id: str = "",
     ) -> AsyncIterator[tuple[str, dict]]:
         """产出一轮对话的事件序列：meta → (token | sticker)* → done / error。"""
         persona = self.personas.get(persona_id)
+
+        # ── 幂等闸门放在最前面 ──
+        # 端侧网络抖动重试时会复用同一个 clientMsgId：命中缓存就直接回放，
+        # 否则老人会收到两条一模一样的回复（还白花一次模型调用）
+        state = "new"
+        cached = None
+        if self.idempotency is not None:
+            state, cached = self.idempotency.begin(conversation_id, client_msg_id)
+            if state == STATE_IN_FLIGHT:
+                logger.info("同一 clientMsgId 正在生成中，拒绝重复请求：%s", client_msg_id)
+                yield events.EVENT_ERROR, {
+                    "code": "duplicate_request",
+                    "message": "这句话我正在回，等我一下",
+                    "retryable": True,
+                }
+                return
+            if state == STATE_DONE and cached is not None:
+                logger.info("命中幂等缓存，回放上一轮结果：%s", client_msg_id)
+                yield events.EVENT_META, {
+                    "conversationId": conversation_id,
+                    "assistantMsgId": cached.assistant_msg_id or new_id("a"),
+                    "persona": persona.to_public(),
+                    "replayed": True,
+                }
+                if cached.text:
+                    # 回放不逐字下发：这是"补一次刚才没收到的话"，不是重新说话
+                    yield events.EVENT_TOKEN, {"t": cached.text}
+                for token in cached.stickers:
+                    yield events.EVENT_STICKER, {"token": token}
+                yield events.EVENT_DONE, {
+                    "assistantMsgId": cached.assistant_msg_id or "",
+                    "finishReason": "stop",
+                    "replayed": True,
+                }
+                return
+
         self.store.append(
             conversation_id,
             Message(id=new_id("m"), role=ROLE_ELDER, type=TYPE_TEXT, text=text),
@@ -182,6 +223,8 @@ class ChatService:
                 parts.append({"type": TYPE_TEXT, "text": ""})
             return parts[-1]
 
+        # 只有真正产出内容才算"完成"，否则在 finally 里放开幂等记录（见下面的注释）
+        completed = False
         try:
             async for delta in self.provider.stream(messages):
                 plain, sticker_tokens = extractor.feed(delta)
@@ -213,10 +256,52 @@ class ChatService:
                     parts.append({"type": TYPE_STICKER, "sticker": token})
                     yield events.EVENT_STICKER, {"token": token}
 
+            # 越界话术持续监控：不拦回复（拦了老人会觉得莫名其妙），只留痕，
+            # 让"模型偶尔说错话"这件事有人知道，而不是等出事才发现
+            reply_text = "".join(
+                part.get("text", "") for part in parts if part["type"] == TYPE_TEXT
+            )
+            for hint in scan(reply_text):
+                logger.warning("回复命中越界话术检查：%s | 原文：%s", hint, reply_text[:60])
+
+            # 老人问「今天要做什么」这类问题时，顺带把今日计划作为卡片发出去
+            if self.plan_cards and needs_plan_card(text):
+                try:
+                    cards = self.plan_cards(elder_id) or []
+                except Exception:  # noqa: BLE001 —— 卡片取不到不影响对话本身
+                    logger.exception("取今日计划卡片失败")
+                    cards = []
+                for card in cards[:3]:
+                    parts.append({"type": TYPE_CARD, "card": card})
+                    yield events.EVENT_CARD, {"card": card}
+
+            self._persist(conversation_id, parts)
+            has_visible = any(
+                (part["type"] == TYPE_TEXT and part.get("text", "").strip())
+                or part["type"] in (TYPE_STICKER, TYPE_CARD)
+                for part in parts
+            )
+            if not has_visible:
+                # 端侧收到 done 但一个字都没有时会显示「没听清 再说一遍」，这里留痕方便排查
+                logger.info("本轮没有任何内容产出（会话 %s）", conversation_id)
+
+            # 产出成功才写幂等缓存：第一轮就失败（模型鉴权错/超时）时不能写，
+            # 否则端侧重试会拿到空回复，永远修不好
+            if self.idempotency is not None and has_visible:
+                self.idempotency.complete(
+                    conversation_id,
+                    client_msg_id,
+                    text=reply_text,
+                    stickers=[part["sticker"] for part in parts if part["type"] == TYPE_STICKER],
+                    assistant_msg_id=assistant_id,
+                )
+                completed = True
+
+            yield events.EVENT_DONE, {"assistantMsgId": assistant_id, "finishReason": "stop"}
+
         except LLMError as exc:
             logger.warning("模型调用失败: code=%s status=%s", exc.code, exc.status_code)
             yield events.EVENT_ERROR, exc.to_payload()
-            return
         except Exception:  # noqa: BLE001 —— 兜住一切，绝不让老人端看到连接被掐断
             logger.exception("对话生成出现未预期错误")
             yield events.EVENT_ERROR, {
@@ -224,37 +309,12 @@ class ChatService:
                 "message": "我这边出了点小问题，一会儿再试",
                 "retryable": True,
             }
-            return
-
-        # 越界话术持续监控：不拦回复（拦了老人会觉得莫名其妙），只留痕，
-        # 让"模型偶尔说错话"这件事有人知道，而不是等出事才发现
-        reply_text = "".join(
-            part.get("text", "") for part in parts if part["type"] == TYPE_TEXT
-        )
-        for hint in scan(reply_text):
-            logger.warning("回复命中越界话术检查：%s | 原文：%s", hint, reply_text[:60])
-
-        # 老人问「今天要做什么」这类问题时，顺带把今日计划作为卡片发出去
-        if self.plan_cards and needs_plan_card(text):
-            try:
-                cards = self.plan_cards(elder_id) or []
-            except Exception:  # noqa: BLE001 —— 卡片取不到不影响对话本身
-                logger.exception("取今日计划卡片失败")
-                cards = []
-            for card in cards[:3]:
-                parts.append({"type": TYPE_CARD, "card": card})
-                yield events.EVENT_CARD, {"card": card}
-
-        self._persist(conversation_id, parts)
-        has_visible = any(
-            (part["type"] == TYPE_TEXT and part.get("text", "").strip())
-            or part["type"] in (TYPE_STICKER, TYPE_CARD)
-            for part in parts
-        )
-        if not has_visible:
-            # 端侧收到 done 但一个字都没有时会显示「没听清 再说一遍」，这里留痕方便排查
-            logger.info("本轮没有任何内容产出（会话 %s）", conversation_id)
-        yield events.EVENT_DONE, {"assistantMsgId": assistant_id, "finishReason": "stop"}
+        finally:
+            # 失败 / 被端侧中断 / 一个字都没产出：把 in-flight 记录放掉。
+            # 不放的话，端侧拿同一个 clientMsgId 重试会一直收到"这句话我正在回，等我一下"——
+            # 老人点了重试却永远等不到，比重复回复更糟。
+            if not completed and self.idempotency is not None:
+                self.idempotency.release(conversation_id, client_msg_id)
 
     # ---------------------------------------------------------- SSE 封装
 
@@ -264,6 +324,7 @@ class ChatService:
         text: str,
         persona_id: str | None = None,
         elder_id: str | None = None,
+        client_msg_id: str = "",
     ) -> AsyncIterator[str]:
         """把事件序列编码成 SSE 帧，并在等模型时插入心跳注释。
 
@@ -280,7 +341,9 @@ class ChatService:
 
         async def produce() -> None:
             try:
-                async for item in self.generate(conversation_id, text, persona_id, elder_id):
+                async for item in self.generate(
+                    conversation_id, text, persona_id, elder_id, client_msg_id
+                ):
                     await queue.put(item)
             finally:
                 await queue.put(finished)
@@ -309,6 +372,7 @@ class ChatService:
         text: str,
         persona_id: str | None = None,
         elder_id: str | None = None,
+        client_msg_id: str = "",
     ) -> dict:
         """非流式路径（/v1/chat/send）。契约里 text/sticker/card 各最多一个。"""
         body = ""
@@ -318,7 +382,9 @@ class ChatService:
         persona_public: dict = {}
         error: dict | None = None
 
-        async for name, payload in self.generate(conversation_id, text, persona_id, elder_id):
+        async for name, payload in self.generate(
+            conversation_id, text, persona_id, elder_id, client_msg_id
+        ):
             if name == events.EVENT_META:
                 assistant_id = payload["assistantMsgId"]
                 persona_public = payload["persona"]

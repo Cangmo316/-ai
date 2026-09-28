@@ -13,6 +13,8 @@ import logging
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+
+from ..errors import api_error
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.elder import DEFAULT_ELDER_ID

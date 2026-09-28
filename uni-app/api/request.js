@@ -7,7 +7,7 @@
  *   3) 把中文错误提示翻译成老人看得懂的话（不要说「网络异常 -1」这种）
  */
 
-import { TIMEOUT } from './config.js'
+import { TIMEOUT, authHeaders } from './config.js'
 
 /**
  * @param {object} options
@@ -20,7 +20,8 @@ import { TIMEOUT } from './config.js'
  */
 export function request(options) {
   const method = options.method || 'GET'
-  const header = Object.assign({ Accept: 'application/json' }, options.header || {})
+  // 鉴别信息统一在这里补：服务端开了鉴权时缺它一律 401
+  const header = authHeaders(Object.assign({ Accept: 'application/json' }, options.header || {}))
   // uni.request 默认就是 application/json，这里显式写出来：小程序端、以及联调用的 Node 桩
   // 都不会因为"平台默认值不同"而把 JSON 当纯文本发（服务端会直接 422）
   if (options.data !== undefined && method !== 'GET') {
@@ -42,10 +43,14 @@ export function request(options) {
           return
         }
         reject({
-          code: 'http',
+          code: (body && body.error && body.error.code) || 'http',
           statusCode: res.statusCode,
           message: messageOf(res.statusCode, body),
-          retryable: res.statusCode >= 500 || res.statusCode === 429
+          // 服务端的 retryable 优先（错误码表是唯一事实来源）；没给才按状态码猜
+          retryable:
+            body && body.error && typeof body.error.retryable === 'boolean'
+              ? body.error.retryable
+              : res.statusCode >= 500 || res.statusCode === 429
         })
       },
       fail(err) {

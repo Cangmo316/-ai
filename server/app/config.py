@@ -141,6 +141,13 @@ class Settings:
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
     log_level: str = "info"
 
+    # ── 鉴权（P1 最小可用版，见 app/auth.py 的"能防/不能防"表）──
+    # off      明确关闭（本机开发）
+    # auto     配了 API_TOKENS 就强制校验，没配则放行并在启动日志里大声警告（默认）
+    # required 强制校验；没配 token 直接启动失败（**上线用这个**）
+    auth_mode: str = "auto"
+    api_tokens: str = ""
+
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> "Settings":
         load_env_file(env_path)
@@ -174,6 +181,8 @@ class Settings:
             port=_env_int("PORT", 8000),
             cors_origins=_env_list("CORS_ORIGINS", ["*"]),
             log_level=_env_str("LOG_LEVEL", "info"),
+            auth_mode=_env_str("AUTH_MODE", "auto").lower(),
+            api_tokens=_env_str("API_TOKENS", ""),
         )
 
     # ── 派生属性 ──────────────────────────────────────────

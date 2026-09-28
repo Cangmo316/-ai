@@ -12,6 +12,8 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+
+from ..errors import api_error
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..models.elder import DEFAULT_ELDER_ID
@@ -43,10 +45,6 @@ def _today(request: Request):
     """统一时间源（见 main.py 的 app.state.clock）"""
     scheduler = _scheduler(request)
     return scheduler.now().date()
-
-
-def error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
 def _parse_moment(value: str | None) -> datetime | None:
@@ -93,7 +91,7 @@ async def reminder_tasks(
     scheduler = _scheduler(request)
     target = day or _today(request).isoformat()
     if _parse_moment(target) is None:
-        return error_response(400, "invalid_date", "日期格式不对，应该像 2026-09-24")
+        return api_error("invalid_date")
     tasks = scheduler.reminders.tasks_of(elder_id, target)
     return JSONResponse(
         content={
@@ -118,11 +116,11 @@ async def scheduler_tick(payload: TickRequest, request: Request):
     """
     scheduler = _scheduler(request)
     if not scheduler.settings.scheduler_manual_tick:
-        return error_response(403, "manual_tick_disabled", "手动调度已关闭")
+        return api_error("manual_tick_disabled")
     moment = None
     if payload.at:
         moment = _parse_moment(payload.at)
         if moment is None:
-            return error_response(400, "invalid_datetime", "时间格式不对，应该像 2026-09-24T08:00:00")
+            return api_error("invalid_datetime")
     summary = await scheduler.tick(moment)
     return JSONResponse(content={"summary": summary, "status": scheduler.status()})

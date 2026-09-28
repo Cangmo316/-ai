@@ -14,6 +14,7 @@
  * 也不认识业务事件（那是 chat.js 的事）。
  */
 
+import { authHeaders } from './config.js'
 import { createUtf8StreamDecoder } from './sse-parse.js'
 
 let PLATFORM = 'unknown'
@@ -130,10 +131,11 @@ function bodyText(body) {
 }
 
 function headersOf(options) {
-  return Object.assign({
+  // 流式请求也要带鉴别信息：漏了它，服务端开了鉴权时整条对话直接 401
+  return authHeaders(Object.assign({
     'Content-Type': 'application/json',
     Accept: 'text/event-stream'
-  }, options.header || {})
+  }, options.header || {}))
 }
 
 /**

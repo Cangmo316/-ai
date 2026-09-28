@@ -13,6 +13,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..errors import api_error
 from ..llm.base import LLMError
 from ..orchestration.service import ChatService
 
@@ -37,13 +38,8 @@ class ChatRequest(BaseModel):
     conversation_id: str = Field(default="c_son", alias="conversationId")
     elder_id: str | None = Field(default=None, alias="elderId")
     persona_id: str | None = Field(default=None, alias="personaId")
-    # 端侧的本地消息 id：将来服务端要做幂等去重，先收下并透传
+    # 端侧的本地消息 id：重试会复用同一个 id，服务端据此幂等（见 orchestration/idempotency.py）
     client_msg_id: str | None = Field(default=None, alias="clientMsgId")
-
-
-def error_response(status_code: int, code: str, message: str) -> JSONResponse:
-    """统一错误体：{ error: { code, message } }。message 会直接展示给老人。"""
-    return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
 
 
 def _service(request: Request) -> ChatService:
@@ -55,7 +51,7 @@ async def chat_stream(payload: ChatRequest, request: Request):
     """流式对话（SSE）。事件：meta → (token | sticker)* → done / error。"""
     text = (payload.text or "").strip()
     if not text:
-        return error_response(400, "empty_text", "我没听清 再说一遍")
+        return api_error("empty_text")
 
     service = _service(request)
     generator = service.stream_sse(
@@ -63,6 +59,7 @@ async def chat_stream(payload: ChatRequest, request: Request):
         text=text,
         persona_id=payload.persona_id,
         elder_id=payload.elder_id,
+        client_msg_id=payload.client_msg_id or "",
     )
     return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
@@ -72,7 +69,7 @@ async def chat_send(payload: ChatRequest, request: Request):
     """非流式一次性回复：端侧降级路径。"""
     text = (payload.text or "").strip()
     if not text:
-        return error_response(400, "empty_text", "我没听清 再说一遍")
+        return api_error("empty_text")
 
     service = _service(request)
     try:
@@ -81,10 +78,12 @@ async def chat_send(payload: ChatRequest, request: Request):
             text=text,
             persona_id=payload.persona_id,
             elder_id=payload.elder_id,
+            client_msg_id=payload.client_msg_id or "",
         )
     except LLMError as exc:
         logger.warning("一次性回复失败: code=%s", exc.code)
-        return error_response(502, exc.code, exc.message)
+        # code 到 HTTP 状态与文案的映射统一在 app/errors.py 里
+        return api_error(exc.code, exc.message)
     return JSONResponse(content=result)
 
 

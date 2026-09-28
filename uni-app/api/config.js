@@ -22,6 +22,9 @@ export const DEFAULT_BASE_URL = 'http://127.0.0.1:8787'
 /** 本地缓存 key：运行期覆盖 baseURL 用 */
 export const STORAGE_KEY_BASE_URL = 'bl_api_base'
 
+/** 本地缓存 key：访问 token（服务端开了鉴权就必须配上） */
+export const STORAGE_KEY_API_TOKEN = 'bl_api_token'
+
 /** 接口路径（与《比邻AI_项目设计方案.md》§4.3 的契约一致） */
 export const ENDPOINTS = {
   chatStream: '/v1/chat/stream',
@@ -82,4 +85,48 @@ export function setBaseURL(url) {
 /** 拼接完整 URL：path 以 / 开头 */
 export function resolveURL(path) {
   return getBaseURL() + path
+}
+
+/**
+ * 访问 token（服务端开了鉴权就必须带上，否则所有 /v1 接口一律 401）。
+ *
+ * 设置方式，优先级从高到低：
+ *   1. 运行期：`setApiToken('...')`（写本地缓存，下次启动仍生效）
+ *   2. 源码：改下面的 `DEFAULT_API_TOKEN`（本机联调图省事用，**真 token 不要提交进仓库**）
+ *   3. 都不设：服务端没开鉴权时不带这个头
+ */
+export const DEFAULT_API_TOKEN = ''
+
+export function getApiToken() {
+  let token = ''
+  try {
+    token = uni.getStorageSync(STORAGE_KEY_API_TOKEN) || ''
+  } catch (e) {
+    token = ''
+  }
+  return String(token || DEFAULT_API_TOKEN || '').trim()
+}
+
+export function setApiToken(token) {
+  const value = String(token || '').trim()
+  try {
+    if (value) uni.setStorageSync(STORAGE_KEY_API_TOKEN, value)
+    else uni.removeStorageSync(STORAGE_KEY_API_TOKEN)
+  } catch (e) {
+    // 存储失败不影响本次会话
+  }
+  return value
+}
+
+/**
+ * 给请求头补上鉴别信息。
+ * request.js（非流式）与 transport.js（流式）共用，避免两处各写一遍导致"某个接口漏带 token"。
+ */
+export function authHeaders(headers) {
+  const merged = Object.assign({}, headers || {})
+  const token = getApiToken()
+  if (token && !merged.Authorization && !merged.authorization) {
+    merged.Authorization = 'Bearer ' + token
+  }
+  return merged
 }
