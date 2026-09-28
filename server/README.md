@@ -70,6 +70,15 @@ Invoke-RestMethod http://127.0.0.1:8000/healthz        # 自检：当前用真�
 端侧联调时把 `uni-app/api/config.js` 的 `DEFAULT_BASE_URL` 指到这里（H5 用 `127.0.0.1`、
 Android 模拟器用 `10.0.2.2`、真机用局域网 IP，详见 `uni-app/api/README.md` §五）。
 
+**演示前先种一份计划**——计划必须家属确认后才生效，所以刚起的服务里「今日计划」本来就是空的
+（这是闸门在起作用，不是坏了）：
+
+```powershell
+node tools\seed-plan.mjs              # 仓库根目录执行：生成 → 家属确认 → 打印今日计划
+node tools\seed-plan.mjs --elder e_2  # 换一位老人
+node tools\seed-plan.mjs --fresh      # 已有生效计划时重来一份
+```
+
 ---
 
 ## 三、接真实模型：只改 `.env` 三行
