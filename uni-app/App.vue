@@ -1,19 +1,36 @@
 <script>
 import { initSettings } from './common/store.js'
-import { startPolling, stopPolling } from './stores/reminder.js'
+import { poll, startPolling, stopPolling } from './stores/reminder.js'
+import { listenPushMessages, pushAction, registerPush } from './stores/push.js'
 
 export default {
   onLaunch() {
     // 把「大字体模式」的本地缓存读回内存
     initSettings()
-    // 提醒只在 App 前台轮询：到点后顶部提醒条 + 震动（系统通知要等厂商推送通道，见 stores/reminder.js）
+    // 提醒有三条腿：站内消息（前台轮询）、系统推送（uni-push）、端侧本地通知
     startPolling()
+    // 登记推送标识：拿到 cid 才可能收到系统通知（H5/小程序/标准基座会静默跳过）
+    registerPush()
+    // 必须在收到消息之前注册监听：点通知栏消息进来时刷新提醒
+    listenPushMessages({
+      onMessage(info) {
+        poll()
+        if (pushAction(info) === 'open-plans') {
+          // 冷启动时页面栈还没建好，立刻跳页会被首屏覆盖，等一拍再跳
+          setTimeout(() => {
+            uni.navigateTo({ url: '/pages/plans/plans' })
+          }, 300)
+        }
+      }
+    })
   },
   onShow() {
     startPolling()
+    // cid 可能变（重装/清数据），每次回前台补一次登记（服务端按 cid 幂等）
+    registerPush()
   },
   onHide() {
-    // 退到后台就停掉，别白耗电
+    // 退到后台就停掉轮询，别白耗电
     stopPolling()
   }
 }

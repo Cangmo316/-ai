@@ -12,10 +12,20 @@
 
 /* eslint-disable no-undef */
 
-export function installUniStub() {
-  const storage = new Map()
-  /** 记录端侧调用，便于断言（导航、震动、toast） */
-  const calls = { navigate: [], vibrate: [], toast: [] }
+/**
+ * 调用记录与本地存储在整个进程内共享：
+ * 真实设备上 `uni` 只有一个、storage 也只有一份，如果每次 installUniStub() 都换新对象，
+ * 测试里提前解构出来的 `calls` 就会变成"旧对象"，断言永远看不到新调用（踩过这个坑）。
+ * 需要干净起点时用返回的 `reset()`。
+ */
+const calls = { navigate: [], vibrate: [], toast: [], localNotify: [] }
+const storage = new Map()
+
+export function installUniStub(options = {}) {
+  const pushListeners = []
+  const cid = options.cid === undefined ? 'cid_test_000047d1' : options.cid
+  const pushFails = options.pushFails === true
+  const platform = options.platform || 'android'
 
   globalThis.uni = {
     getStorageSync(key) {
@@ -44,6 +54,30 @@ export function installUniStub() {
     },
     showToast(options) {
       calls.toast.push((options && options.title) || '')
+    },
+    getSystemInfoSync() {
+      return { platform, osName: platform, appVersion: '1.0.0-test' }
+    },
+    /** uni-push：拿客户端推送标识（cid）。options.pushFails=true 模拟"没开通/标准基座" */
+    getPushClientId(handlers = {}) {
+      if (pushFails || !cid) {
+        if (handlers.fail) handlers.fail({ errMsg: 'getPushClientId:fail register fail' })
+        return
+      }
+      if (handlers.success) handlers.success({ cid, errMsg: 'getPushClientId:ok' })
+    },
+    /** 创建本地通知栏消息（App 端专属，支持 delay 秒） */
+    createPushMessage(opts = {}) {
+      calls.localNotify.push(Object.assign({}, opts))
+      if (opts.success) opts.success({})
+    },
+    /** 监听推送消息；测试用 stub.emitPush() 模拟收到 */
+    onPushMessage(callback) {
+      pushListeners.push(callback)
+    },
+    offPushMessage(callback) {
+      const at = pushListeners.indexOf(callback)
+      if (at !== -1) pushListeners.splice(at, 1)
     },
     /** 非流式请求走这里（流式走 fetch，见 transport.js 的 H5 分支） */
     request(options) {
@@ -80,7 +114,27 @@ export function installUniStub() {
     }
   }
 
-  return { storage, calls }
+  return {
+    storage,
+    calls,
+    /** 模拟收到一条推送（type: 'receive' 在线收到 / 'click' 点了通知栏） */
+    emitPush(message) {
+      for (const listener of pushListeners.slice()) listener(message)
+    },
+    /** 去掉某个 API，模拟 H5/小程序/标准基座的能力缺失 */
+    removeApi(name) {
+      delete globalThis.uni[name]
+    },
+    /** 清空调用记录与本地存储（需要干净起点的用例自己调） */
+    reset() {
+      calls.navigate.length = 0
+      calls.vibrate.length = 0
+      calls.toast.length = 0
+      calls.localNotify.length = 0
+      storage.clear()
+      pushListeners.length = 0
+    }
+  }
 }
 
 export default installUniStub

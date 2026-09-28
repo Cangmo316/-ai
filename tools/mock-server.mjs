@@ -381,6 +381,7 @@ export function startMockServer(options = {}) {
   const delayMs = options.delayMs === undefined ? DEFAULT_DELAY_MS : options.delayMs
   const plans = createPlanState()
   const reminders = createReminderState()
+  const pushClients = new Map()
 
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
@@ -483,6 +484,52 @@ export function startMockServer(options = {}) {
         const summary = reminderTick(reminders, plans, body && body.at)
         sendJSON(res, 200, { summary, status: schedulerStatus(reminders) })
       }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/push/register' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const cid = String((body && body.cid) || '').trim()
+        if (!cid) {
+          sendJSON(res, 400, { error: { code: 'invalid_cid', message: '推送标识不能为空' } })
+          return
+        }
+        pushClients.set(cid, {
+          cid,
+          elderId: (body && body.elderId) || plans.elderId,
+          platform: (body && body.platform) || '',
+          updatedAt: localStamp(new Date())
+        })
+        sendJSON(res, 200, {
+          ok: true,
+          elderId: (body && body.elderId) || plans.elderId,
+          cidTail: cid.slice(-6),
+          notice: '提醒会同时走站内消息与系统通知'
+        })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/push/unregister' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const removed = pushClients.delete(String((body && body.cid) || '').trim())
+        sendJSON(res, 200, { ok: removed })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/push/status' && req.method === 'GET') {
+      const elderId = url.searchParams.get('elderId') || plans.elderId
+      const clients = Array.from(pushClients.values()).filter((client) => client.elderId === elderId)
+      sendJSON(res, 200, {
+        elderId,
+        channels: [{ name: 'inbox' }, { name: 'unipush', configured: false }, { name: 'log' }],
+        unipushConfigured: false,
+        forceNotification: true,
+        clients: clients.map((client) => Object.assign({}, client, { cidTail: client.cid.slice(-6) })),
+        totals: { clients: pushClients.size, enabled: pushClients.size, elders: clients.length ? 1 : 0 },
+        note: 'mock 只登记 cid，不真的发推送'
+      })
       return
     }
 

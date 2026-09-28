@@ -235,22 +235,13 @@ X-Accel-Buffering: no          ← 少了这行，上了 nginx 会变成「一�
 `state` 取 `todo` / `done`，端侧 `bl-chat-bubble` 收到后渲染成计划卡。
 不含计划意图的对话不挂卡（每句话都甩一张卡会让老人烦）。
 
-### 3.6 端侧文件
-
-| 文件 | 职责 |
-|---|---|
-| `api/plans.js` | 计划接口封装（老人端只用 today / checkin） |
-| `stores/plan.js` | 今日计划状态：乐观打卡、三级兜底（接口 → 缓存 → 内置样例） |
-| `pages/plans/plans.vue` | 日程页（Tab 2） |
-| `components/bl-plan-check/` | 计划项 + 大字打卡（整卡可点，状态三重表达） |
-
-### 3.7 mock 与真实后端的差异
+### 3.6 mock 与真实后端的差异
 
 `tools/mock-server.mjs` 里的计划是**静态样本且直接是生效态**，跳过了「生成 → 家属确认」；
 真实服务端必须走完闸门。端侧代码不感知这个差异，所以联调效果一致——
 但**不要用 mock 验证闸门逻辑**，那部分由服务端单测（`server/tests/test_plan_engine.py`）守。
 
-### 3.8 提醒投递与调度（P1）
+### 3.7 提醒投递与调度（P1）
 
 计划生效之后还要有人"到点喊一声"，这一段是调度器的活：
 
@@ -324,6 +315,67 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
 - 拉取失败静默处理：提醒是锦上添花，网络不好时不弹错误吓老人
 
 ---
+
+### 3.8 推送通道与端侧本地提醒
+
+提醒要送达老人，设计上是**三条腿**：
+
+| 腿 | 现状 | 老人什么时候能收到 |
+|---|---|---|
+| ① 站内消息 | ✅ 已实现 | App 打开着（前台轮询拉到 → 提醒条 + 震动） |
+| ② 系统推送（uni-push 2.0） | ✅ 代码已就绪，**待你开通 DCloud 侧配置** | 老人不开 App 也能在通知栏看到 |
+| ③ 端侧本地通知 | ✅ 已实现（App 端） | 断网、推送挂了也照样响（预排当天的提醒） |
+
+三条腿互相兜底，任何一条挂了提醒都不会消失——这也是为什么调度器把通道做成可插拔的。
+
+**②的接口**（端侧登记 cid，服务端才知道提醒发到哪台设备）：
+
+| 接口 | 方法 | 用途 |
+|---|---|---|
+| `/v1/push/register` | POST | 登记推送标识（同一 cid 幂等） |
+| `/v1/push/unregister` | POST | 注销（关推送 / 换设备） |
+| `/v1/push/status` | GET | 自检：云函数配好没、登记了几台设备 |
+
+```json
+// POST /v1/push/register
+{ "cid": "cid_xxx", "elderId": "e_1", "platform": "android", "appVersion": "1.0.0" }
+// 响应（⚠️ cid 只回显后 6 位，它是设备标识，不该到处传）
+{ "ok": true, "elderId": "e_1", "cidTail": "123456", "updatedAt": "2026-09-24T08:00:00" }
+```
+
+**端侧行为**（`stores/push.js`）：
+
+- App 启动/回前台时登记 cid（`uni.getPushClientId`）；**拿不到就静默跳过**——
+  H5、小程序、标准 HBuilderX 基座都没有这个能力，不能因此让页面报错
+- 登记失败不影响提醒的另外两条腿，cid 本地留一份，下次启动重试
+- `uni.onPushMessage` 监听：在线收到只刷新提醒（不跳页），**点通知栏**才进日程页打卡
+- 本地通知预排：只排**未来 12 小时内且未打卡**的项，按 `${日期}|${计划项 id}` 记账防重复
+  （否则上午开三次 App，下午的提醒会响三次），跨天自动重置
+
+**②要你能先做三件事**（详见 [`server/deploy/unipush-cloudfunction/README.md`](../server/deploy/unipush-cloudfunction/README.md)）：
+
+1. `manifest.json` 的 `appid` 现在是**空的**，先在 HBuilderX 里获取 DCloud appid
+2. 在 DCloud 开发者中心开通 uni-push（App 端离线推送还要配厂商参数/iOS 证书）
+3. 部署我们提供的云函数参考实现（`server/deploy/unipush-cloudfunction/`）并 URL 化，
+   把地址填进 `server/.env` 的 `UNIPUSH_SEND_URL`
+
+> **为什么要经过云函数**（已核实官方文档）：uni-push 2.0 的服务端 SDK 只能跑在 uniCloud 云函数里；
+> 自建服务器想直连个推，官方要求改用老版 uni-push 1.0 的凭证体系。
+> 走云函数还有个好处：**个推的 appkey/mastersecret 留在云函数侧，不进业务服务器**。
+
+### 3.9 端侧文件（计划与提醒）
+
+| 文件 | 职责 |
+|---|---|
+| `api/plans.js` | 计划接口（老人端只用 today / checkin） |
+| `api/reminders.js` | 提醒收件箱与回执 |
+| `api/push.js` | 推送标识登记 |
+| `stores/plan.js` | 今日计划：乐观打卡、三级兜底 |
+| `stores/reminder.js` | 前台轮询、提醒条、震动、去重 |
+| `stores/push.js` | cid 登记、本地通知预排、推送消息监听 |
+| `pages/plans/plans.vue` | 日程页（Tab 2） |
+| `components/bl-plan-check/` | 计划项 + 大字打卡 |
+| `components/bl-reminder-bar/` | 顶部提醒条 |
 
 ## 四、话术与内容约束（服务端责任，端侧只管展示）
 

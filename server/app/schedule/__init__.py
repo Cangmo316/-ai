@@ -1,6 +1,6 @@
 """提醒投递：任务生成、调度、多通道下发（P1）"""
 
-from .channels import ChannelRegistry, InboxChannel, LogChannel, PushChannel
+from .channels import ChannelRegistry, InboxChannel, LogChannel, PushChannel, UniPushChannel
 from .models import (
     LEVEL_LABELS,
     LEVEL_NORMAL,
@@ -22,6 +22,7 @@ __all__ = [
     "InboxChannel",
     "LogChannel",
     "PushChannel",
+    "UniPushChannel",
     "ReminderTask",
     "ReminderStore",
     "Scheduler",

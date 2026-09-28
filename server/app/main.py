@@ -23,18 +23,27 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import __version__
 from .api.chat import router as chat_router
 from .api.plans import router as plans_router
+from .api.push import router as push_router
 from .api.reminders import router as reminders_router
 from .config import Settings, get_settings
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
+from .models.push_client import PushClientRegistry
 from .orchestration.service import ChatService
 from .persona.prompts import PersonaRegistry
 from .plan.engine import PlanEngine
 from .plan.models import STATUS_ACTIVE, STATUS_PENDING
 from .plan.store import PlanStore
-from .schedule import ChannelRegistry, InboxChannel, LogChannel, ReminderStore, Scheduler
+from .schedule import (
+    ChannelRegistry,
+    InboxChannel,
+    LogChannel,
+    ReminderStore,
+    Scheduler,
+    UniPushChannel,
+)
 
 logger = logging.getLogger("bilin")
 
@@ -63,8 +72,19 @@ def create_app(
     engine = plan_engine or PlanEngine(knowledge, PlanStore(), elders, config)
 
     if scheduler is None:
-        # 通道顺序有意义：站内消息是当前唯一能真正送达老人的通道，日志通道只做兜底凭据
-        channels = ChannelRegistry([InboxChannel(conversations), LogChannel()])
+        # 通道顺序有意义：先站内消息（当前一定送得到），再 uni-push（配好了才真的发），最后日志兜底
+        push_clients = PushClientRegistry()
+        channels = ChannelRegistry([
+            InboxChannel(conversations),
+            UniPushChannel(
+                send_url=config.unipush_send_url,
+                token=config.unipush_token,
+                registry=push_clients,
+                timeout=config.unipush_timeout,
+                force_notification=config.unipush_force_notification,
+            ),
+            LogChannel(),
+        ])
         scheduler = Scheduler(
             engine=engine,
             plan_store=engine.store,
@@ -74,6 +94,8 @@ def create_app(
             settings=config,
             clock=clock,
         )
+    else:
+        push_clients = PushClientRegistry()
 
     def plan_cards_for(elder_id: str | None):
         """对话里「今天要做什么」时挂的今日计划卡片（最多 3 条，避免刷屏）"""
@@ -146,6 +168,7 @@ def create_app(
     app.state.plan_engine = engine
     app.state.elders = elders
     app.state.scheduler = scheduler
+    app.state.push_clients = push_clients
     # 全局时间源：调度器与各路由都用它取"现在"，避免出现"路由按真实时间、调度按注入时间"
     # 这种只有测试才会暴露的分裂（踩过一次：手动 tick 到 15 点，打卡却按真实日期去找提醒）
     app.state.clock = scheduler.now
@@ -162,6 +185,7 @@ def create_app(
     app.include_router(chat_router)
     app.include_router(plans_router)
     app.include_router(reminders_router)
+    app.include_router(push_router)
 
     @app.get("/healthz", tags=["meta"])
     async def healthz(request: Request):
@@ -205,6 +229,9 @@ def create_app(
                 "GET  /v1/reminders/tasks",
                 "GET  /v1/scheduler/status",
                 "POST /v1/scheduler/tick",
+                "POST /v1/push/register",
+                "POST /v1/push/unregister",
+                "GET  /v1/push/status",
             ],
         }
 

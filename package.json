@@ -7,11 +7,12 @@
     "mock": "node tools/mock-server.mjs",
     "quality": "node tools/check-chat-quality.mjs",
     "seed": "node tools/seed-plan.mjs",
-    "test": "node tools/test-chat-api.mjs && node tools/test-quality-patterns.mjs && node tools/test-chat-store.mjs && node tools/test-plan-store.mjs && node tools/test-reminder-store.mjs",
+    "test": "node tools/test-chat-api.mjs && node tools/test-quality-patterns.mjs && node tools/test-chat-store.mjs && node tools/test-plan-store.mjs && node tools/test-reminder-store.mjs && node tools/test-push-store.mjs",
     "test:chat-api": "node tools/test-chat-api.mjs",
     "test:chat-store": "node tools/test-chat-store.mjs",
     "test:plan-store": "node tools/test-plan-store.mjs",
     "test:reminder": "node tools/test-reminder-store.mjs",
+    "test:push": "node tools/test-push-store.mjs",
     "test:quality": "node tools/test-quality-patterns.mjs"
   }
 }

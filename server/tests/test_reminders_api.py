@@ -149,7 +149,9 @@ class ReminderApiTestCase(unittest.TestCase):
         for key in ("running", "ticks", "lastTickAt", "tickSeconds", "manualTickAllowed", "channels", "counts", "nextSendAt", "weakWindow"):
             self.assertIn(key, status)
         self.assertFalse(status["running"], "测试里关掉了后台循环，只手动 tick")
-        self.assertEqual([channel["name"] for channel in status["channels"]], ["inbox", "log"])
+        # 通道顺序有意义：站内消息（一定送得到）→ uni-push（配好才发）→ 日志兜底
+        names = [channel["name"] for channel in status["channels"]]
+        self.assertEqual(names, ["inbox", "unipush", "log"])
         self.assertEqual(status["counts"]["pending"] > 0, True)
         self.assertTrue(status["nextSendAt"].startswith("2026-09-24T"))
 

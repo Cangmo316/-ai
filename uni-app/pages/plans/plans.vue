@@ -51,10 +51,11 @@
  * 接口不可用时逐级降级：本地缓存 → 内置样例，页面永远有内容可看。
  */
 
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { settings } from '@/common/store.js'
 import { initPlan, plan, planHeadline, toggleCheckin } from '@/stores/plan.js'
 import { dismissBanner, poll, reminder } from '@/stores/reminder.js'
+import { scheduleLocalNotifications } from '@/stores/push.js'
 
 const headline = computed(() => planHeadline())
 
@@ -79,6 +80,12 @@ onMounted(() => {
   // 进日程页顺手拉一次提醒（可能是从提醒条点进来的）
   poll()
 })
+
+// 计划到位后预排当天的本地通知：断网、推送挂了也照样响（App 端专属，其它端静默跳过）
+watch(
+  () => plan.total + '|' + plan.items.map((item) => (item.done ? 1 : 0)).join(''),
+  () => scheduleLocalNotifications(plan.items)
+)
 
 function onReminderOpen(item) {
   // 老人从提醒条点进来，就是为了打卡：滚到对应那一项，并给一句提示

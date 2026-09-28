@@ -1,0 +1,10 @@
+{
+  "name": "bilin-unipush",
+  "version": "1.0.0",
+  "description": "比邻AI 提醒推送：接收业务服务端的 HTTP 调用，通过 uni-push 2.0 发给老人设备",
+  "main": "index.js",
+  "extensions": {
+    "uni-cloud-push": {}
+  },
+  "author": "比邻AI"
+}

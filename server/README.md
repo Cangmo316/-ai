@@ -25,23 +25,25 @@
 | **越界话术扫描**（用药/诊断/客服用语；计划话术改写必过此闸门，对话回复命中记 warning） | `app/style/compliance.py` |
 | **对话里的计划卡**（问「今天要做什么」时追加最多 3 个 `card` 事件） | `app/orchestration/intents.py` |
 | **提醒调度器**：按 active 计划登记任务 → 到点投递 → 强提醒重复 → 过期不补发 → 错过留痕 | `app/schedule/scheduler.py` |
-| **提醒通道（可插拔）**：站内消息（写进会话）+ 日志兜底；厂商推送留成插槽 | `app/schedule/channels.py` |
+| **提醒通道（可插拔）**：站内消息（写进会话）→ uni-push（配好才发）→ 日志兜底 | `app/schedule/channels.py` |
 | **提醒收件箱与回执**：老人端拉取、回执已读、打卡即 ack | `app/api/reminders.py` |
+| **uni-push 2.0 通道**：转发给 uniCloud 云函数发系统通知；cid 登记与脱敏 | `app/api/push.py`、`app/models/push_client.py` |
 | SSE 心跳（防端侧 20s 首字节看门狗误杀） | `app/orchestration/service.py` |
 | 错误归一化（老人看得懂的话 + retryable） | `app/llm/openai_compat.py`、`app/main.py` |
 | OpenAI 兼容模型客户端（含推理模型思维链隔离） | `app/llm/openai_compat.py` |
-| `GET /healthz` 自检（模型 / 知识库版本 / 计划与调度状态，密钥脱敏） | `app/main.py` |
+| `GET /healthz` 自检（模型 / 知识库 / 计划 / 调度 / 通道，密钥脱敏） | `app/main.py` |
 
-**未实现**（不藏着，避免误判进度）
+**未实现 / 待你操作**（不藏着，避免误判进度）
 
-- **厂商推送通道**（uni-push / 极光 / 个推 / 华为小米通道）：**需要开发者账号与资质，部分功能收费**，
-  按仓库约定「引入付费或受限许可组件前必须先确认」，等确认后再实现。
-  在那之前，老人能在 App 前台收到提醒（提醒条 + 震动），**App 没打开就收不到系统通知**
-- **端侧本地定时通知**：设计里的第二道保险，需要真机验证 `plus.push` 的能力与字段，未做
+- **uni-push 要真的发出去，还差 DCloud 侧三步**：`manifest.json` 的 `appid` 现在是空的、
+  uni-push 未开通、云函数未部署。**代码与云函数参考实现都已就绪**，步骤见
+  [`deploy/unipush-cloudfunction/README.md`](deploy/unipush-cloudfunction/README.md)。
+  在那之前系统通知发不出去，但**站内消息与端侧本地通知照常工作**
 - **鉴权**：目前无任何 token 校验，`CORS_ORIGINS=*`，只适合本机/内网联调
 - **`clientMsgId` 幂等**：字段收下了但没用来去重（重发会产生重复消息）
-- **数据库**：会话、计划、打卡、提醒任务全在内存，进程重启即清空（接口按落库形态设计）
+- **数据库**：会话、计划、打卡、提醒任务、cid 全在内存，进程重启即清空（接口按落库形态设计）
 - **家人端**：计划的生成/确认/驳回/汇总接口都已就绪，但没有家属侧页面（二期）
+- Android 通知渠道（`uni.getChannelManager`）未配：提醒暂用系统默认渠道
 - 三层记忆（L2/L3）、内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
 
 **默认假模型**：没配 `LLM_API_KEY` 时走 `FakeProvider`（固定话术、逐字吐字）。
@@ -123,7 +125,8 @@ server/
 │   ├── api/
 │   │   ├── chat.py         路由：stream / send / history / personas
 │   │   ├── plans.py        路由：draft / pending / confirm / reject / today / checkin / summary / adjust / history
-│   │   └── reminders.py    路由：inbox / read / tasks / scheduler status / scheduler tick
+│   │   ├── reminders.py    路由：inbox / read / tasks / scheduler status / scheduler tick
+│   │   └── push.py         路由：推送标识登记 register / unregister / status
 │   ├── orchestration/
 │   │   ├── service.py      编排：上下文 → 模型 → 表情抽取 → 风格 → 事件 → 落库
 │   │   ├── events.py       SSE 帧编码（契约落点）
@@ -131,7 +134,7 @@ server/
 │   ├── schedule/
 │   │   ├── models.py       ReminderTask + 分级/状态常量
 │   │   ├── store.py        任务存储与查询（到点、重复、错过、收件箱）
-│   │   ├── channels.py     投递通道（站内消息 / 日志；厂商推送留插槽）
+│   │   ├── channels.py     投递通道（站内消息 / uni-push / 日志兜底）
 │   │   └── scheduler.py    一次 tick 的五件事 + 后台循环
 │   ├── plan/
 │   │   ├── models.py       CarePlan / PlanItem / PlanCheckin + 状态机常量
@@ -153,8 +156,11 @@ server/
 │   │   └── compliance.py   越界话术扫描（用药/诊断/客服用语）
 │   └── models/
 │       ├── message.py      消息模型 + 内存会话存储
+│       ├── push_client.py  推送标识（cid）登记表
 │       └── elder.py        老人档案（L1，开发期 3 个模拟档案）
-└── tests/                  141 项单测（标准库 unittest，零测试依赖）
+├── deploy/
+│   └── unipush-cloudfunction/  uni-push 2.0 发送云函数（参考实现，需部署到你的 uniCloud）
+└── tests/                  159 项单测（标准库 unittest，零测试依赖）
 ```
 
 ---
@@ -166,7 +172,7 @@ cd server
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```
 
-141 项，按主题分九块：
+159 项，按主题分十块：
 
 | 文件 | 守什么 |
 |---|---|
@@ -178,8 +184,9 @@ cd server
 | `tests/test_plan_api.py` | 计划接口契约、打卡幂等、错误码、对话里的计划卡 |
 | `tests/test_scheduler.py` | 任务生成幂等、**过期不补发**、强提醒重复一次、弱提醒时间窗、错过留痕、计划变更取消 |
 | `tests/test_reminders_api.py` | 提醒接口契约、收件箱回执、**打卡即确认**、调度状态、手动 tick 开关 |
+| `tests/test_push.py` | cid 登记与脱敏、uni-push 通道（成功/云函数失败/HTTP 错误/异常/多设备）、通道降级到站内消息 |
 
-（上表 8 个文件、共 141 项。）
+（上表 9 个文件、共 159 项。）
 
 **跨语言端到端**（最有价值的一种回归）：让端侧测试直接打这个服务——用同一套端侧断言，
 验证「uni-app api 层 → Python 服务 → SSE → 端侧状态机」整条链。
@@ -191,6 +198,7 @@ node tools/test-chat-store.mjs     # 对话与流式（真模型下自动改用�
 node tools/test-plan-store.mjs     # 今日计划与打卡（会自动先走一遍「生成 → 家属确认」）
 node tools/test-reminder-store.mjs # 到点提醒。⚠️ 这一项要配 SCHEDULER_ENABLED=false 起服务：
                                    #  它靠手动推进时间驱动，后台循环会按真实时间抢先投递
+node tools/test-push-store.mjs     # 推送标识登记与端侧本地提醒
 ```
 
 ---

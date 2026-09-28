@@ -43,7 +43,11 @@ export const ENDPOINTS = {
   reminderRead: '/v1/reminders/read',
   reminderTasks: '/v1/reminders/tasks',
   schedulerStatus: '/v1/scheduler/status',
-  schedulerTick: '/v1/scheduler/tick'
+  schedulerTick: '/v1/scheduler/tick',
+  // 推送标识登记（uni-push 2.0）：端侧把 cid 报给服务端，服务端才知道提醒发到哪台设备
+  pushRegister: '/v1/push/register',
+  pushUnregister: '/v1/push/unregister',
+  pushStatus: '/v1/push/status'
 }
 
 /** 超时（ms）：首字节超时用看门狗实现，总超时只作用于非流式接口 */

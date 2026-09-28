@@ -177,8 +177,17 @@ Token 以 **4 份镜像**存在，改一处需同步其余，**核对基准是 `
 
 **到点提醒（P1）**：`stores/reminder.js` 在 App 前台每 30 秒拉一次未读提醒，
 新提醒 → 顶部提醒条（`bl-reminder-bar`）+ 震动（强提醒长震），点一下跳日程页打卡。
-⚠️ 系统级推送（厂商通道）还没接（需要账号资质与可能费用，待确认），
-所以**App 没打开时收不到系统通知**，详见 `api/README.md` §3.8。
+
+提醒一共**三条腿**，互相兜底：
+
+| 腿 | 现状 |
+|---|---|
+| 站内消息（前台轮询） | ✅ 已实现，App 打开着就能收到 |
+| 系统推送（uni-push 2.0，`stores/push.js`） | ✅ 代码就绪，**待开通 DCloud 侧配置**（appid 现在是空的 + 开通 uni-push + 部署云函数） |
+| 端侧本地通知（`uni.createPushMessage` 预排当天提醒） | ✅ 已实现（App 端），断网、推送挂了也照样响 |
+
+详见 `api/README.md` §3.7 / §3.8，DCloud 侧的三步操作见
+`../server/deploy/unipush-cloudfunction/README.md`。
 
 - **接口契约**（后端按它实现）：[`api/README.md`](api/README.md)
 - **后端未就绪时的假后端**（零依赖，实现同一份契约）：

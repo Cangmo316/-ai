@@ -124,6 +124,17 @@ class Settings:
     # 弱提醒的时间窗（超过就不发，不顺延）——设计方案 §3.2「弱提醒超窗不顺延」
     weak_reminder_window: tuple[str, str] = ("09:00", "20:00")
 
+    # ── uni-push 2.0（可选的第二通道）───────────────────────
+    # uni-push 2.0 的服务端 SDK 只能跑在 uniCloud 云函数里，所以这里配的是"云函数 URL"，
+    # 个推的 appkey/mastersecret 留在云函数那侧，不进本服务。
+    # 参考实现：server/deploy/unipush-cloudfunction/
+    unipush_send_url: str = ""
+    # 自定义校验 token（云函数里比对；两边都不填就等于"谁能访问 URL 谁就能发推送"）
+    unipush_token: str = ""
+    unipush_timeout: float = 10.0
+    # 在线时也创建通知栏消息：提醒类消息要"一定响"，代价是前台可能同时看到提醒条与通知
+    unipush_force_notification: bool = True
+
     # ── HTTP ─────────────────────────────────────────────
     host: str = "127.0.0.1"
     port: int = 8000
@@ -155,6 +166,10 @@ class Settings:
                 _env_str("WEAK_REMINDER_START", "09:00"),
                 _env_str("WEAK_REMINDER_END", "20:00"),
             ),
+            unipush_send_url=_env_str("UNIPUSH_SEND_URL", ""),
+            unipush_token=_env_str("UNIPUSH_TOKEN", ""),
+            unipush_timeout=_env_float("UNIPUSH_TIMEOUT", 10.0),
+            unipush_force_notification=_env_bool("UNIPUSH_FORCE_NOTIFICATION", True),
             host=_env_str("HOST", "127.0.0.1"),
             port=_env_int("PORT", 8000),
             cors_origins=_env_list("CORS_ORIGINS", ["*"]),

@@ -28,7 +28,7 @@
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
 - **改动 `uni-app/api/`、`uni-app/stores/`、`uni-app/pages/` 或 `tools/mock-server.mjs`
-  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划与打卡 10 + 到点提醒 10，共 64 项）
+  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13，共 77 项）
 - **改了 system prompt 或 `tools/check-chat-quality.mjs` 的合规正则后**：
   先 `npm run test:quality`（正反用例锁住误报），再接真模型跑 `npm run quality`（需 `server/.env` 配 key）
 - **合规正则有两处，必须同步**：`server/app/style/compliance.py` 与 `tools/check-chat-quality.mjs`
@@ -40,9 +40,9 @@
 - 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；
   仓库根 `package.json` 只为 `tools/` 提供 ESM 运行环境与快捷命令，`uni-app/` 工程仍零 npm 依赖
 - **改动 `server/app/` 或 `server/tests/` 后必须跑**
-  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（141 项，零测试依赖）
+  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（159 项，零测试依赖）
 - 跨语言端到端回归：先起 `server/run.py`，再
-  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs`
+  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs; node tools/test-push-store.mjs`
 - **模型 key 只放 `server/.env`**（已 gitignore，含 `server/.env.*`）；
   `server/.env.example` 只放变量名，任何提交文件里不得出现密钥
 - 写文件默认 UTF-8 无 BOM（`[System.IO.File]::WriteAllText` + `UTF8Encoding($false)`）
