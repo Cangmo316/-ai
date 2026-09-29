@@ -1,0 +1,339 @@
+比邻AI · 家人端 UI 生成提示词（uni-app / HBuilderX）
+================================================================
+
+【怎么用这份文件】
+1. 用 HBuilderX 打开 uni-app 工程（就是仓库里的 uni-app/ 目录）。
+2. 打开 HBuilderX 的 AI 助手（或任意模型对话窗口），把下面「↓↓↓ 提示词开始 ↓↓↓」
+   到「↑↑↑ 提示词结束 ↑↑↑」之间的全部内容复制粘贴进去，发送。
+3. 它会给出一批文件。按最后一节《验收清单》逐条核对；对不上就把它自己的清单贴回去让它改。
+4. 想分步做：第一次只贴到【第五部分】（先出页面骨架），确认结构没问题后再贴【第四部分】精修样式。
+   别让它省略代码——它一开始想省，就回一句"不要省略，输出完整文件"。
+
+最下面【附录】是给你的 HBuilderX 操作步骤，**不用贴给 AI**。
+
+↓↓↓ 提示词开始 ↓↓↓
+
+你是资深 uni-app + Vue 3 前端工程师，精通微信（WeChat）的视觉与交互规范。
+请为「比邻AI」这个康养数字人 App 写一套**家人端**页面。下面每一条都是硬要求，请严格遵守。
+
+────────────────────────────────
+一、项目背景与产品红线（违反即返工）
+────────────────────────────────
+
+比邻AI 是面向康复养老的数字人智能体 App，核心理念是**决策者与使用者分离**：
+
+- **老人端**：只有三个 Tab（消息 / 日程 / 我的）+ 一个大按钮，所有复杂设置都由子女在家人端完成。
+- **家人端（你要做的）**：给子女/康复师用的「计划确认台」。用户是成年人，所以**不做适老化放大字号**，
+  用微信那种标准字号与信息密度；但触控目标不小于 88rpx。
+
+产品红线，任何页面都不得违反：
+
+1. **康养计划必须家属确认后才生效**：`pending_confirm` 状态绝对不能显示成"已生效/正在执行"。
+2. **`adjusting`（调整中）仍然在执行**：它和 `active` 一样会继续提醒。页面上必须写清
+   "调整期间这份计划仍然在执行，不会出现提醒真空"，否则家属会误以为老人没人提醒了。
+3. **不展示聊天原文**：家人端默认只能看计划与完成情况，不许出现任何会话/聊天内容入口。
+4. **不做医学判断**：任何文案不得出现诊断、剂量调整、疾病判断的内容；只谈"生活提醒与依从性"。
+5. **不许把家人端加进老人端的 TabBar**：老人端只有三个 Tab，这是产品约束。
+   家人端从「我的」页里一个列表项进入即可。
+
+────────────────────────────────
+二、技术与工程约束（必须遵守）
+────────────────────────────────
+
+- uni-app + Vue 3，`<script setup>` 组合式 API，单文件组件（SFC）。
+- **零 npm 依赖**：不许引入 uView / uni-ui / vant / 任何图标库或 UI 库。样式与图标全部手写。
+- **复用现有接口层，不要自己写 `uni.request`**：直接 import
+  `uni-app/api/plans.js`、`uni-app/api/reminders.js`、`uni-app/api/config.js`。
+  可用函数（名字照抄，别改）：
+  - `fetchElders()`
+  - `fetchPendingPlans({ elderId })`
+  - `createPlanDraft({ elderId, polish })`
+  - `confirmPlan({ planId, actor })` / `rejectPlan({ planId, reason, actor })`
+  - `fetchTodayPlan({ elderId })` / `fetchPlanSummary({ elderId, days })`
+  - `fetchPlanHistory({ elderId })`
+  - `fetchReminderTasks({ elderId, date })`
+  - `fetchReminderInbox({ elderId })` / `markReminderRead({ elderId, taskId })`
+  - `fetchSchedulerStatus()` / `tickScheduler(at)`
+  - `setBaseURL(url)` / `getBaseURL()` / `setApiToken(token)`（服务端开了鉴权时需要 token）
+- 目录约定：
+  - 页面放 `uni-app/pages/family/`（例如 `family-review.vue`、`family-summary.vue`、
+    `family-reminders.vue`、`family-helper.vue`）
+  - 新组件放 `uni-app/components/bl-xxx/bl-xxx.vue`（与既有 `bl-navbar`、`bl-icon` 同一命名风格）
+  - **优先复用**既有组件：`components/bl-navbar`（顶部导航）、`components/bl-icon`（图标，
+    图标名先读 `common/icons.js` 确认，不要自己发明名字）、`components/bl-switch`（开关）
+- 每个新页面都要在 `pages.json` 里注册（给出对应的 JSON 片段）。
+- 样式统一用 `rpx`（750 设计宽度），不要用 `px`。
+- 代码注释用中文，只写"为什么"，不写"这是什么"；不要留 TODO 占位。
+- 不要新增构建配置、不要改 `package.json`。
+
+────────────────────────────────
+三、视觉规范：微信风格（这是本次的重点）
+────────────────────────────────
+
+**直接复用工程里已有的设计 Token**（`uni-app/uni.scss` 与 `App.vue` 的 CSS 变量已经是微信配色），
+不要另造一套颜色：
+
+| 用途 | 变量 / 值 |
+|---|---|
+| 主色（微信绿） | `--bl-primary: #07C160`；按下态 `--bl-primary-pressed: #06AD56` |
+| 页面底色 | `--bl-bg: #EDEDED` |
+| 卡片/列表底 | `--bl-surface: #FFFFFF` |
+| 主文字 | `--bl-text: #1A1A1A` |
+| 次要文字 | `--bl-text-2: #8C8C8C` |
+| 分割线（发丝线） | `--bl-divider: #E5E5E5` |
+| 警示/危险 | `--bl-danger: #E64340` |
+| 提醒/待办强调 | `--bl-warm: #F5A623` |
+| 图标占位灰 | `--bl-icon-muted: #C4C4C4` |
+
+字号（家人端用**标准**字号，不要用老人端的放大档）：
+
+- 大数字（完成率）：`72rpx`，`font-weight: 600`，主色
+- 页面/区块标题：`34rpx`，`font-weight: 600`
+- 列表主文字、正文：`32rpx`
+- 次要说明：`28rpx`，`#8C8C8C`
+- 极小注脚/依据：`26rpx`，`#8C8C8C`
+
+间距与圆角（8pt 栅格）：
+
+- 间距：`16rpx / 24rpx / 32rpx / 48rpx`（`--bl-space-*`）
+- 列表行高 `112rpx`（`--bl-row`）；行内左右内边距 `32rpx`
+- 卡片圆角 `32rpx`（`--bl-radius-card`）；按钮圆角 `12rpx`；标签圆角 `8rpx`
+- 卡片**不用阴影**（最多 `0 2rpx 4rpx rgba(0,0,0,.05)`）：微信靠"灰底 + 白卡 + 发丝线"分层，
+  不是靠投影。这一条最容易做错，请务必遵守。
+
+微信式组件规范：
+
+1. **顶部导航**：白底，标题居中 `34rpx/600`，返回箭头深色，右侧文字按钮用主色，
+   底部一条 `1rpx` 的 `#E5E5E5` 发丝线。用 `bl-navbar` 组件实现，不要自己造。
+2. **分组列表**（微信设置页那种）：
+   - 分组标题 `28rpx #8C8C8C`，左右 `32rpx`，上间距 `32rpx`、下间距 `16rpx`
+   - 白底区块整体圆角 `16rpx`，行间用 `1rpx #E5E5E5` 发丝线，**左缩进 32rpx**，最后一行不画线
+   - 行结构：左标题（`32rpx`）+ 可选右副标题（`28rpx #8C8C8C`）+ 右侧箭头 `#C4C4C4`
+3. **按钮**：
+   - 主按钮：`#07C160` 底 + 白字，高 `88rpx`，字号 `34rpx`，圆角 `12rpx`，
+     按下变 `#06AD56`，禁用态 `opacity: .4`
+   - 次按钮：白底 + `1rpx #E5E5E5` 边框 + 深色字
+   - 危险/驳回按钮：白底 + `1rpx #E5E5E5` 边框 + `#E64340` 文字（微信不用大红块）
+   - 同一屏最多一个主按钮；两个操作并排时"确认"在左、"驳回"在右
+4. **底部固定操作条**：白底 + 顶部发丝线 + `padding-bottom: env(safe-area-inset-bottom)`
+   （同时写 `constant()` 兜底），按钮撑满可用宽度。
+5. **标签/徽标**：浅底深字小标签（例：主色文字 `#07C160` + 底色 `rgba(7,193,96,.10)`）；
+   待办数量用红色圆角数字徽标 `#E64340`。
+6. **空状态**：垂直居中，灰色图标 `120rpx` + 一句 `28rpx #8C8C8C` 的说明 + 可选一个次按钮。
+   不许出现空白页面。
+7. **加载态**：首屏用居中转圈或 3 条灰块骨架屏（`#F7F7F7`），**不要全屏遮罩**；
+   刷新用 `onPullDownRefresh`（`pages.json` 里 `enablePullDownRefresh: true`）。
+8. **点击反馈**：可点区域必须有 `:active` 态（背景 `#ECECEC` 或 `opacity: .7`）。
+9. **文案语气**：动词开头、不超过 14 字、**不用感叹号**、用"你"不用"您"。
+   错误提示直接用服务端返回的 `error.message`（已是中文人话），不要自己另拼一套英文/技术文案。
+
+────────────────────────────────
+四、要做的四屏（按此顺序实现，做不完优先保第 1 屏）
+────────────────────────────────
+
+**第 1 屏｜待确认的计划（最重要，家属确认闸门就在这一屏）**
+
+- 顶部导航标题：`待确认计划`
+- 数据：`fetchPendingPlans({ elderId })`
+- 每条计划一张白卡：
+  - 卡头：老人名字 + 状态标签（用返回的 `statusLabel`，例："等家里人确认"）+ 生成时间
+    （`createdAt` 取到分钟，形如 `2026-09-24 09:30`）
+  - `goal` 计划目标：`32rpx #1A1A1A`
+  - 计划项列表，每项显示：时间（`time`，加粗、主色）、类型标签（`type`）、标题（`title`）、
+    补充说明（`detail`，`28rpx #8C8C8C`）、频率（`freq`）
+  - **依据必须显示且要显眼**：用 `item.basis.text`（形如"国家基本公共卫生服务规范（第三版） · §nphis_006"），
+    左侧加一条主色竖线（`2rpx #07C160`）做成引用块；若有 `item.basis.boundary`
+    （"不根据血压值给出用药或剂量建议"）用 `26rpx #E64340` 另起一行显示。
+    理由：家属要看到"这条是照哪份指南来的"才敢点确认。
+  - 卡片底部两个操作：主按钮「确认并开始执行」、次按钮「先不执行」
+  - 卡片底部一行 `26rpx #8C8C8C` 说明："确认后这份计划立即生效，上一份计划同时结束"
+- 二次确认：点「确认」用 `uni.showModal` 问一句"确认这份计划开始执行？老人会按上面的时间收到提醒"；
+  点「先不执行」用 `uni.showModal` 的 `editable: true` 让家属填驳回原因（可留空）
+- 空状态：没有待确认计划时显示"没有待确认的计划" + 说明"当前生效的计划会继续执行，不会因为这里空着就停掉"
+  + 一个次按钮「按知识库生成一份计划」→ `createPlanDraft({ elderId, polish: true })`
+- 生成中要有 loading（模型润色标题约需 1-2 秒），按钮置灰防重复点击
+
+**第 2 屏｜当前计划与打卡**
+
+- 顶部导航标题：`当前计划`
+- 数据：`fetchTodayPlan({ elderId })`
+- 顶部一条：`statusLabel`（例："正在执行"）+ 日期 + "今天 2/3 项已完成"
+- **若 `status === 'adjusting'`，必须在这条下面加一行提示**：
+  "调整期间这份计划仍然在执行，确认新计划后才替换"（`28rpx`，主色）
+- 计划项列表：时间 + 类型 + 标题 + 右侧状态标签（`done` 为 true 显示"已打卡"用主色浅底，
+  否则"待完成"用灰色浅底）
+- 只有 `status === 'active'` 时底部显示次按钮「这份计划需要调整」→
+  `uni.showModal` 让家属填原因后调用调整接口（`POST /v1/plans/adjust`，body `{ planId, actor, reason }`）。
+  **注意**：`uni-app/api/plans.js` 目前还没有这个函数，请在那里补一个
+  `export function adjustPlan({ planId, actor, reason })`（照该文件里 `confirmPlan` 的写法，
+  用 `resolveURL(ENDPOINTS.planAdjust)` + `request()`），**不要在页面里直接写请求**——
+  接口调用必须留在 `uni-app/api/` 这一层。
+- 若 `planId` 为空（没有生效计划）：空状态 + 文案"这位老人目前没有生效的计划" +
+  按钮「去生成一份计划」（跳到第 1 屏）
+
+**第 3 屏｜完成情况与计划历史**
+
+- 顶部导航标题：`完成情况`
+- 数据：`fetchPlanSummary({ elderId, days: 7 })` + `fetchPlanHistory({ elderId })`
+- 完成率区（一张白卡，居中）：大数字 `72rpx/600 #07C160`（`stats.rate` × 100 取整 + `%`）
+  + 下方一行 `28rpx #8C8C8C`："最近 7 天完成了 X/Y 次"
+  + 分档说明（按 `rate`：≥80% "做得挺好"；50%~80% "还行，有空可以提醒两句"；<50% "漏得比较多，建议看看是不是提醒时间不合适"）
+- 建议区：`suggestion.advice` + `suggestion.reasons`（数组，逐条列出，前缀用"·"）；
+  若 `suggestion.shouldAdjust` 为 true，给一个次按钮「按建议调整」（跳第 2 屏的调整入口）
+- 计划历史：分组列表，每行显示 `statusLabel` + 生成时间（`createdAt`）+ 确认时间（`confirmedAt`，
+  空则显示"—"）+ 项数（`items`）
+- **注意**：`/v1/plans/history` 返回的是"计划列表摘要"（`items` 是数字，不是数组），别当计划详情渲染。
+
+**第 4 屏｜提醒记录（排查"提醒发了但他没做"还是"根本没送到"）**
+
+- 顶部导航标题：`提醒记录`
+- 数据：`fetchReminderTasks({ elderId, date })`
+- 表格/列表每行：时间（`sendAt` 取 `HH:mm`）+ 内容（`title`）+ 级别标签（`levelLabel`）+
+  状态（**必须用 `statusLabel`，不要用英文 `status`**）+ 通道（`channel`，为空显示"-"）
+- 状态用颜色区分：已送出/已打卡用主色，还没到点用 `#8C8C8C`，没见回应用 `#F5A623`，
+  已作废/没发用灰色删除线文字
+- 底部一个次按钮「手动推进一次调度（联调）」：用 `uni.showModal` 的 `editable: true`，
+  预填"下一个提醒时间"（取 `fetchTodayPlan` 里还没打卡的最早一项的时间，拼成
+  `YYYY-MM-DDTHH:mm:ss`；都过完了就顺延到明天第一项），然后调 `tickScheduler(at)`。
+  这按钮只为联调，生产环境接口会被关掉——文案里不要承诺它能用。
+
+────────────────────────────────
+五、接口返回的真实字段（照抄，不要自己造字段名）
+────────────────────────────────
+
+家人端**只读这些接口**，字段名必须与下面一致：
+
+`GET /v1/elders` → `{ elders: [{ id, name, address, age, chronic: [], careLevel }], demo, note }`
+
+`GET /v1/plans/pending?elderId=` → `{ elderId, plans: [Plan] }`
+
+`GET /v1/plans/today?elderId=` →
+`{ elderId, date, planId, status, statusLabel, items: [Item & { done, doneAt }], total, done, rate }`
+
+`GET /v1/plans/summary?elderId=&days=7` →
+`{ elderId, hasPlan, planId, status, statusLabel,
+   stats: { days, start, end, expected, done, rate, strongMissing: {} },
+   suggestion: { shouldAdjust, reasons: [], stats, advice } }`
+（没有生效计划时 `hasPlan: false`、`stats: null`）
+
+`GET /v1/plans/history?elderId=` →
+`{ elderId, plans: [{ id, status, statusLabel, createdAt, confirmedAt, items: 数字, knowledgeVersion }] }`
+
+`GET /v1/reminders/tasks?elderId=&date=` →
+`{ elderId, date, tasks: [{ id, planId, planItemId, elderId, title, label, detail,
+   level, levelLabel, sendAt, sentAt, readAt, ackAt, repeatCount, status, statusLabel,
+   channel, messageId, note }] }`
+
+`POST /v1/plans/draft` body `{ elderId, polish }` →
+`{ plan: Plan, polish: { asked, polished, fallback, reasons: [] }, notice }`
+
+`POST /v1/plans/confirm` body `{ planId, actor }` → `{ plan: Plan, notice }`
+`POST /v1/plans/reject`  body `{ planId, reason, actor }` → `{ plan: Plan, notice }`
+`POST /v1/plans/adjust`  body `{ planId, actor, reason }` → `{ plan: Plan, suggestion, notice }`
+`POST /v1/scheduler/tick` body `{ at }` → `{ summary: { at, created, sent, skipped, canceled, repeated, missed, failed } }`
+
+其中：
+
+```
+Plan = {
+  id, elderId, status, statusLabel, goal, startDate, endDate,
+  createdAt, createdBy, confirmedAt, confirmedBy, rejectedReason,
+  knowledgeVersion, sources: [], note, items: [Item],
+  history: [{ at, action, detail, actor }]
+}
+
+Item = {
+  id, time: "08:00", type: "监测", title: "量完血压记一下 下次给医生看",
+  detail: "...", freq: "每日", strongRemind: false,
+  basis: { entryId, source, sourceName, version, boundary, text }
+}
+```
+
+状态枚举与中文（`statusLabel` 服务端已给，**不要自己在前端映射**）：
+
+- 计划：`draft` 草稿 / `pending_confirm` 等家里人确认 / `active` 正在执行 /
+  `adjusting` 调整中，等家里人确认 / `ended` 已结束 / `rejected` 家里人没同意
+- 提醒：`pending` 还没到点 / `sent` 已送出 / `acked` 已打卡 / `read` 已看过 /
+  `missed` 没见回应 / `skipped` 没发（超出时间窗）/ `canceled` 已作废（计划换了）/ `failed` 发送失败
+
+错误处理：接口抛出的对象形如
+`{ code: 'plan_not_found', statusCode: 404, message: '没找到这份计划', retryable: false }`。
+**直接展示 `message`**（已是中文人话），`retryable` 为 true 时才给"重试"按钮。
+401 表示没登录/没带 token，提示"让家里人重新登录一下"，**不要**给重试按钮。
+
+────────────────────────────────
+六、三态与边界（每屏都要有）
+────────────────────────────────
+
+每屏都必须处理三种状态，且都要有中文文案：
+
+1. **加载中**：骨架屏或转圈，不要空白页
+2. **空**：一句灰字解释 + 可选的下一步按钮（不要只说"暂无数据"）
+3. **出错**：红色/灰色提示条显示服务端 `message` + 重试按钮（仅 `retryable` 时）
+
+另外：`elderId` 从 `fetchElders()` 拿第一个老人的 id 即可（开发期只有一个）；
+不要硬编码 `"e_1"` 到多处以外的逻辑里——如果只有一个老人，就在页面顶部显示他的名字。
+
+────────────────────────────────
+七、交付前自检清单（逐条核对，并把结果写在回复末尾）
+────────────────────────────────
+
+1. 没有引入任何 npm 依赖 / UI 库 / 图标字体。
+2. 没有自己写 `uni.request`，全部走 `uni-app/api/` 里的函数。
+3. 字段名与第五节完全一致，没有自造字段（尤其 `items` 在 history 里是数字）。
+4. 三态（加载/空/错）齐全，且都是中文文案。
+5. 每屏都有 `:active` 点击反馈；主按钮一屏最多一个。
+6. 底部固定操作条处理了安全区。
+7. 卡片没有投影（最多极淡的那一档），靠灰底与发丝线分层。
+8. `pending_confirm` 没有被渲染成"已生效"；`adjusting` 有"仍在执行"的说明。
+9. 页面里没有任何聊天/会话内容或入口。
+10. 所有新页面都给了 `pages.json` 片段；没有改老人端（chats / chat-detail / plans / me 等）已有逻辑。
+11. 颜色/字号/间距用的都是第三节里的 Token 值，没有散落的魔法数字。
+
+────────────────────────────────
+八、交付格式
+────────────────────────────────
+
+1. 先列「改动清单」：新增哪些文件、每个文件干什么（一行一个）。
+2. 再按文件逐个给出**完整代码**（不要用 `...` 省略），Vue 文件请带上 `<template>`/`<script setup>`/`<style>` 三段。
+3. 给出 `pages.json` 需要新增的片段。
+4. 给出「我的」页（`pages/me/me.vue`）里新增入口那一行的改法（只加一个列表项，
+   文案"家人端（给子女用）"，跳转到第 1 屏）。
+5. 最后附上第七节的自检清单结果（逐条 ✓ / ✗ 并说明）。
+
+↑↑↑ 提示词结束 ↑↑↑
+
+
+================================================================
+【附录】HBuilderX 里的操作步骤（这段不用贴给 AI）
+================================================================
+
+1) 打开工程
+   HBuilderX → 文件 → 打开目录 → 选择 E:\比邻AI\uni-app
+
+2) 后端要先跑起来（家人端所有数据都来自它）
+   - 真实服务端：终端里执行
+       cd E:\比邻AI\server
+       .\.venv\Scripts\python.exe run.py
+     （地址 http://127.0.0.1:8000）
+   - 或者用零依赖的 mock：node tools\mock-server.mjs（地址 http://127.0.0.1:8787）
+
+3) 让 App 连到后端
+   改 uni-app/api/config.js 里的 DEFAULT_BASE_URL，或在代码里调 setBaseURL()。
+   如果服务端开了鉴权（.env 里 AUTH_MODE=required），还要调 setApiToken('你的 token')。
+
+4) 新建页面（也可以让 AI 直接给文件，你手动建同名文件即可）
+   HBuilderX → 右键 uni-app/pages 目录 → 新建 → 目录（family）
+   → 右键 family 目录 → 新建 → vue 文件（family-review.vue）
+   注意：新建后必须在 pages.json 的 "pages" 数组里注册，否则无法跳转。
+
+5) 运行
+   - 浏览器预览（最快，适合调样式）：运行 → 运行到浏览器 → Chrome
+   - 手机真机（看真实手感）：运行 → 运行到手机或模拟器
+   - 微信小程序：运行 → 运行到小程序模拟器（家人端主要给子女用，浏览器/App 即可）
+
+6) 调试小贴士
+   - 页面白屏先看控制台报错；90% 是接口没起、字段名写错、或 pages.json 没注册
+   - 想看接口原始返回：浏览器 F12 → Network，或直接访问
+       http://127.0.0.1:8000/v1/plans/pending?elderId=e_1
+   - 家人端页面独立于老人端三个 Tab：入口放「我的」页，**不要加进 TabBar**
