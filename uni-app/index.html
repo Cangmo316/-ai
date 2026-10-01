@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      // uni-app vue3（vite）H5 模板入口：缺这个文件 HBuilderX 会报「根目录缺少 index.html」并拒绝运行 H5。
+      var coverSupport = 'CSS' in window && typeof CSS.supports === 'function' &&
+        (CSS.supports('top: env(a)') || CSS.supports('top: constant(a)'))
+      document.write(
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0,minimum-scale=1.0,maximum-scale=1.0,user-scalable=no' +
+        (coverSupport ? ',viewport-fit=cover' : '') + '" />')
+    </script>
+    <title>比邻AI</title>
+    <!--preload-links-->
+    <!--app-context-->
+  </head>
+  <body>
+    <div id="app"><!--app-html--></div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

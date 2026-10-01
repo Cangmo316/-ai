@@ -41,3 +41,10 @@ server/**/*.onnx
 server/**/*.ckpt
 server/**/*.pt
 server/**/*.bin
+
+# ===== 3D 资产（R45）：只入库精简 .glb + 1K 贴图；忽略 .blend 与全尺寸纹理 =====
+# 3D建模/ 全量约 212 MB（.blend ≈ 80 MB + 全尺寸贴图 ≈ 25 MB），SSH over 443 推不动。
+# 入库：7 件 .glb（合计 54.1 MB，内嵌 1K）+ textures/1k/ + 文档 / 预览。若仍嫌大，可改走 Git LFS：
+#   git lfs track "*.glb"  （需先 git lfs install）
+3D建模/**/*.blend
+3D建模/**/textures/*.png
