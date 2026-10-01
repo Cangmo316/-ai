@@ -1,0 +1,1482 @@
+{
+    "schema":  "bilinai.digital-human.validation-report/v1",
+    "asset_id":  "male_60s_v1",
+    "base_asset_id":  "female_60s_v3",
+    "generated_at":  "2026-10-02T01:51:20+08:00",
+    "stage":  "男生资产（常服男）：M1 减面 → M2b 眼裂开洞 + 口内几何 → M3 20 骨 + 权重 → M4/M5 vis_*/expr_* 形态键（女生交付期名单，骨骼局部空间 + 最近邻迁移）→ M6 交付期减骨 20→8（含耳骨增益至女生峰值）→ M7 平滑着色 + 贴图 4096→2048 + 1e-5 吸附（R45：交付 .glb 内嵌图再降至 1024） + 导出 → M8 编辑期 111 条 shape_* 捏脸形态键迁移（女生 shape-namespace-map 峰值逐条归一，131/131 对齐）→ M9 默认档位烘焙交付件 → M10 材质/着色对齐女生（Specular 1.0→0.5，去除 KHR_materials_specular 扩展差异）→ M11 交付前复核与修复：形态键默认权重复位（shape_key_add 默认 1.0 → 全 0，teeth / tongue 仅 vis_silence = 1）并按原参数重导 2 个 .glb → R40 交付收口：源贴图缺陷归美术、默认档位按双性别同源定论、康养裁剪表封版（care-trim.js stats().open true→false）并重出报告 → R41 补导男生编辑期 .glb（BilinAI_MaleFaceRig_60k_edit.glb，20 骨 / 131 键 / 逐网格默认权重全 0 / node_0_bak 命中 0），与女生 BilinAI_FaceRig_60k.glb 对称",
+    "model_version":  "face-rig-0.6.0",
+    "params_table_version":  "params-table-1.0.0",
+    "params_table_note":  "§3 参数总表已定稿：102 条（A17/B8/C18/D10/E12/F5/G12/H10/I7/J3，全部≥规格书下限）；通道 morph 63 / bone 6 / material 27 / asset 6。文件：parameters-table.json / parameters-table.md",
+    "blender_version":  "5.1.2",
+    "source_report":  "@{meshes=; weights=; textures=; bones=8; bone_names=System.Object[]; arm_matrix=System.Object[]; constraints=0; materials=System.Object[]; objects=System.Object[]; groups=System.Object[]; head_tri=23107; bbox_max=System.Object[]; bbox_min=System.Object[]; total_tri=55742}\\validation-report.json",
+    "source_report_note":  "参数表 / 客户端（client/*）/ uni-app 接入包三部分与女生资产**同一份**，本次未改动，其结论沿用女生报告（参数表 / 客户端 client/* / uni-app 接入包三部分，逐项结果与 PASS-WARN-FAIL 计数以该报告现算为准）；本报告只重算男生资产自身的 mesh / 骨骼 / 权重 / 形态键 / 贴图 / glTF 读回",
+    "source_blend":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_delivery_baked.blend",
+    "source_blend_bytes":  12326773,
+    "source_blend_editing":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_edit.blend",
+    "source_blend_editing_bytes":  9130221,
+    "doc":  "E:\\blender demo\\面部骨骼绑定交付说明.md",
+    "deliverables":  {
+                         "blend":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_delivery_baked.blend",
+                         "glb":  {
+                                     "bytes":  6727452,
+                                     "nodes":  15,
+                                     "meshes":  6,
+                                     "primitives":  6,
+                                     "materials":  [
+                                                       "M_Eyeball",
+                                                       "M_MouthCavity",
+                                                       "Material.001",
+                                                       "M_Teeth",
+                                                       "M_Tongue"
+                                                   ],
+                                     "textures":  4,
+                                     "images":  [
+                                                    {
+                                                        "i":  0,
+                                                        "name":  "eye_iris",
+                                                        "mime":  "image/png",
+                                                        "bytes":  32070,
+                                                        "w":  256,
+                                                        "h":  256
+                                                    },
+                                                    {
+                                                        "i":  1,
+                                                        "name":  "texture_pbr_20250901_normal",
+                                                        "mime":  "image/png",
+                                                        "bytes":  675397,
+                                                        "w":  1024,
+                                                        "h":  1024
+                                                    },
+                                                    {
+                                                        "i":  2,
+                                                        "name":  "texture_pbr_20250901",
+                                                        "mime":  "image/png",
+                                                        "bytes":  1251588,
+                                                        "w":  1024,
+                                                        "h":  1024
+                                                    },
+                                                    {
+                                                        "i":  3,
+                                                        "name":  "texture_pbr_20250901_metallic-texture_pbr_20250901_roughness",
+                                                        "mime":  "image/png",
+                                                        "bytes":  909643,
+                                                        "w":  1024,
+                                                        "h":  1024
+                                                    }
+                                                ],
+                                     "imageBytes":  2868698,
+                                     "skins":  1,
+                                     "joints":  8,
+                                     "skinName":  "FaceRig",
+                                     "animations":  0,
+                                     "extensionsUsed":  [
+
+                                                        ],
+                                     "extensionsRequired":  [
+
+                                                            ],
+                                     "morphTargets":  71,
+                                     "sparseTargets":  42,
+                                     "denseTargets":  29,
+                                     "morphBytes":  887972,
+                                     "meshesDetail":  [
+                                                          {
+                                                              "name":  "eyeball_L",
+                                                              "verts":  134,
+                                                              "tris":  264,
+                                                              "targets":  0,
+                                                              "targetNames":  null,
+                                                              "morphWeights":  null,
+                                                              "nonzeroWeights":  null
+                                                          },
+                                                          {
+                                                              "name":  "eyeball_R",
+                                                              "verts":  134,
+                                                              "tris":  264,
+                                                              "targets":  0,
+                                                              "targetNames":  null,
+                                                              "morphWeights":  null,
+                                                              "nonzeroWeights":  null
+                                                          },
+                                                          {
+                                                              "name":  "mouth_cavity",
+                                                              "verts":  2093,
+                                                              "tris":  1001,
+                                                              "targets":  16,
+                                                              "targetNames":  [
+                                                                                  "vis_silence",
+                                                                                  "vis_AA",
+                                                                                  "vis_E",
+                                                                                  "vis_I",
+                                                                                  "vis_O",
+                                                                                  "vis_U",
+                                                                                  "vis_MBP",
+                                                                                  "vis_FV",
+                                                                                  "vis_L",
+                                                                                  "vis_TH",
+                                                                                  "vis_WQ",
+                                                                                  "vis_RR",
+                                                                                  "vis_SS",
+                                                                                  "vis_KK",
+                                                                                  "vis_NN",
+                                                                                  "expr_surprise"
+                                                                              ],
+                                                              "morphWeights":  [
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0
+                                                                               ],
+                                                              "nonzeroWeights":  [
+
+                                                                                 ]
+                                                          },
+                                                          {
+                                                              "name":  "node_0",
+                                                              "verts":  38996,
+                                                              "tris":  53893,
+                                                              "targets":  23,
+                                                              "targetNames":  [
+                                                                                  "vis_silence",
+                                                                                  "vis_AA",
+                                                                                  "vis_E",
+                                                                                  "vis_I",
+                                                                                  "vis_O",
+                                                                                  "vis_U",
+                                                                                  "vis_MBP",
+                                                                                  "vis_FV",
+                                                                                  "vis_L",
+                                                                                  "vis_TH",
+                                                                                  "vis_WQ",
+                                                                                  "vis_RR",
+                                                                                  "vis_SS",
+                                                                                  "vis_KK",
+                                                                                  "vis_NN",
+                                                                                  "expr_blink_L",
+                                                                                  "expr_blink_R",
+                                                                                  "expr_smile",
+                                                                                  "expr_frown",
+                                                                                  "expr_surprise",
+                                                                                  "expr_squint",
+                                                                                  "expr_brow_up",
+                                                                                  "expr_brow_down"
+                                                                              ],
+                                                              "morphWeights":  [
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0
+                                                                               ],
+                                                              "nonzeroWeights":  [
+
+                                                                                 ]
+                                                          },
+                                                          {
+                                                              "name":  "teeth",
+                                                              "verts":  312,
+                                                              "tris":  200,
+                                                              "targets":  16,
+                                                              "targetNames":  [
+                                                                                  "vis_silence",
+                                                                                  "vis_AA",
+                                                                                  "vis_E",
+                                                                                  "vis_I",
+                                                                                  "vis_O",
+                                                                                  "vis_U",
+                                                                                  "vis_MBP",
+                                                                                  "vis_FV",
+                                                                                  "vis_L",
+                                                                                  "vis_TH",
+                                                                                  "vis_WQ",
+                                                                                  "vis_RR",
+                                                                                  "vis_SS",
+                                                                                  "vis_KK",
+                                                                                  "vis_NN",
+                                                                                  "expr_surprise"
+                                                                              ],
+                                                              "morphWeights":  [
+                                                                                   1,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0
+                                                                               ],
+                                                              "nonzeroWeights":  [
+                                                                                     [
+                                                                                         "vis_silence",
+                                                                                         1
+                                                                                     ]
+                                                                                 ]
+                                                          },
+                                                          {
+                                                              "name":  "tongue",
+                                                              "verts":  264,
+                                                              "tris":  120,
+                                                              "targets":  16,
+                                                              "targetNames":  [
+                                                                                  "vis_silence",
+                                                                                  "vis_AA",
+                                                                                  "vis_E",
+                                                                                  "vis_I",
+                                                                                  "vis_O",
+                                                                                  "vis_U",
+                                                                                  "vis_MBP",
+                                                                                  "vis_FV",
+                                                                                  "vis_L",
+                                                                                  "vis_TH",
+                                                                                  "vis_WQ",
+                                                                                  "vis_RR",
+                                                                                  "vis_SS",
+                                                                                  "vis_KK",
+                                                                                  "vis_NN",
+                                                                                  "expr_surprise"
+                                                                              ],
+                                                              "morphWeights":  [
+                                                                                   1,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0
+                                                                               ],
+                                                              "nonzeroWeights":  [
+                                                                                     [
+                                                                                         "vis_silence",
+                                                                                         1
+                                                                                     ]
+                                                                                 ]
+                                                          }
+                                                      ],
+                                     "generator":  "Khronos glTF Blender I/O v5.1.20"
+                                 },
+                         "glb_bytes":  6727452,
+                         "editing_blend":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_edit.blend",
+                         "editing_glb":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_edit.glb",
+                         "editing_glb_bytes":  9265136,
+                         "delivery_blend_unbaked":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_delivery.blend",
+                         "delivery_glb_unbaked":  {
+                                                      "bytes":  6727416,
+                                                      "nodes":  15,
+                                                      "meshes":  6,
+                                                      "primitives":  6,
+                                                      "materials":  [
+                                                                        "M_Eyeball",
+                                                                        "M_MouthCavity",
+                                                                        "Material.001",
+                                                                        "M_Teeth",
+                                                                        "M_Tongue"
+                                                                    ],
+                                                      "textures":  4,
+                                                      "images":  [
+                                                                     {
+                                                                         "i":  0,
+                                                                         "name":  "eye_iris",
+                                                                         "mime":  "image/png",
+                                                                         "bytes":  32070,
+                                                                         "w":  256,
+                                                                         "h":  256
+                                                                     },
+                                                                     {
+                                                                         "i":  1,
+                                                                         "name":  "texture_pbr_20250901_normal",
+                                                                         "mime":  "image/png",
+                                                                         "bytes":  675397,
+                                                                         "w":  1024,
+                                                                         "h":  1024
+                                                                     },
+                                                                     {
+                                                                         "i":  2,
+                                                                         "name":  "texture_pbr_20250901",
+                                                                         "mime":  "image/png",
+                                                                         "bytes":  1251588,
+                                                                         "w":  1024,
+                                                                         "h":  1024
+                                                                     },
+                                                                     {
+                                                                         "i":  3,
+                                                                         "name":  "texture_pbr_20250901_metallic-texture_pbr_20250901_roughness",
+                                                                         "mime":  "image/png",
+                                                                         "bytes":  909643,
+                                                                         "w":  1024,
+                                                                         "h":  1024
+                                                                     }
+                                                                 ],
+                                                      "imageBytes":  2868698,
+                                                      "skins":  1,
+                                                      "joints":  8,
+                                                      "skinName":  "FaceRig",
+                                                      "animations":  0,
+                                                      "extensionsUsed":  [
+
+                                                                         ],
+                                                      "extensionsRequired":  [
+
+                                                                             ],
+                                                      "morphTargets":  71,
+                                                      "sparseTargets":  42,
+                                                      "denseTargets":  29,
+                                                      "morphBytes":  887972,
+                                                      "meshesDetail":  [
+                                                                           {
+                                                                               "name":  "eyeball_L",
+                                                                               "verts":  134,
+                                                                               "tris":  264,
+                                                                               "targets":  0,
+                                                                               "targetNames":  null,
+                                                                               "morphWeights":  null,
+                                                                               "nonzeroWeights":  null
+                                                                           },
+                                                                           {
+                                                                               "name":  "eyeball_R",
+                                                                               "verts":  134,
+                                                                               "tris":  264,
+                                                                               "targets":  0,
+                                                                               "targetNames":  null,
+                                                                               "morphWeights":  null,
+                                                                               "nonzeroWeights":  null
+                                                                           },
+                                                                           {
+                                                                               "name":  "mouth_cavity",
+                                                                               "verts":  2093,
+                                                                               "tris":  1001,
+                                                                               "targets":  16,
+                                                                               "targetNames":  [
+                                                                                                   "vis_silence",
+                                                                                                   "vis_AA",
+                                                                                                   "vis_E",
+                                                                                                   "vis_I",
+                                                                                                   "vis_O",
+                                                                                                   "vis_U",
+                                                                                                   "vis_MBP",
+                                                                                                   "vis_FV",
+                                                                                                   "vis_L",
+                                                                                                   "vis_TH",
+                                                                                                   "vis_WQ",
+                                                                                                   "vis_RR",
+                                                                                                   "vis_SS",
+                                                                                                   "vis_KK",
+                                                                                                   "vis_NN",
+                                                                                                   "expr_surprise"
+                                                                                               ],
+                                                                               "morphWeights":  [
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0
+                                                                                                ],
+                                                                               "nonzeroWeights":  [
+
+                                                                                                  ]
+                                                                           },
+                                                                           {
+                                                                               "name":  "node_0",
+                                                                               "verts":  38996,
+                                                                               "tris":  53893,
+                                                                               "targets":  23,
+                                                                               "targetNames":  [
+                                                                                                   "vis_silence",
+                                                                                                   "vis_AA",
+                                                                                                   "vis_E",
+                                                                                                   "vis_I",
+                                                                                                   "vis_O",
+                                                                                                   "vis_U",
+                                                                                                   "vis_MBP",
+                                                                                                   "vis_FV",
+                                                                                                   "vis_L",
+                                                                                                   "vis_TH",
+                                                                                                   "vis_WQ",
+                                                                                                   "vis_RR",
+                                                                                                   "vis_SS",
+                                                                                                   "vis_KK",
+                                                                                                   "vis_NN",
+                                                                                                   "expr_blink_L",
+                                                                                                   "expr_blink_R",
+                                                                                                   "expr_smile",
+                                                                                                   "expr_frown",
+                                                                                                   "expr_surprise",
+                                                                                                   "expr_squint",
+                                                                                                   "expr_brow_up",
+                                                                                                   "expr_brow_down"
+                                                                                               ],
+                                                                               "morphWeights":  [
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0
+                                                                                                ],
+                                                                               "nonzeroWeights":  [
+
+                                                                                                  ]
+                                                                           },
+                                                                           {
+                                                                               "name":  "teeth",
+                                                                               "verts":  312,
+                                                                               "tris":  200,
+                                                                               "targets":  16,
+                                                                               "targetNames":  [
+                                                                                                   "vis_silence",
+                                                                                                   "vis_AA",
+                                                                                                   "vis_E",
+                                                                                                   "vis_I",
+                                                                                                   "vis_O",
+                                                                                                   "vis_U",
+                                                                                                   "vis_MBP",
+                                                                                                   "vis_FV",
+                                                                                                   "vis_L",
+                                                                                                   "vis_TH",
+                                                                                                   "vis_WQ",
+                                                                                                   "vis_RR",
+                                                                                                   "vis_SS",
+                                                                                                   "vis_KK",
+                                                                                                   "vis_NN",
+                                                                                                   "expr_surprise"
+                                                                                               ],
+                                                                               "morphWeights":  [
+                                                                                                    1,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0
+                                                                                                ],
+                                                                               "nonzeroWeights":  [
+                                                                                                      [
+                                                                                                          "vis_silence",
+                                                                                                          1
+                                                                                                      ]
+                                                                                                  ]
+                                                                           },
+                                                                           {
+                                                                               "name":  "tongue",
+                                                                               "verts":  264,
+                                                                               "tris":  120,
+                                                                               "targets":  16,
+                                                                               "targetNames":  [
+                                                                                                   "vis_silence",
+                                                                                                   "vis_AA",
+                                                                                                   "vis_E",
+                                                                                                   "vis_I",
+                                                                                                   "vis_O",
+                                                                                                   "vis_U",
+                                                                                                   "vis_MBP",
+                                                                                                   "vis_FV",
+                                                                                                   "vis_L",
+                                                                                                   "vis_TH",
+                                                                                                   "vis_WQ",
+                                                                                                   "vis_RR",
+                                                                                                   "vis_SS",
+                                                                                                   "vis_KK",
+                                                                                                   "vis_NN",
+                                                                                                   "expr_surprise"
+                                                                                               ],
+                                                                               "morphWeights":  [
+                                                                                                    1,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0,
+                                                                                                    0
+                                                                                                ],
+                                                                               "nonzeroWeights":  [
+                                                                                                      [
+                                                                                                          "vis_silence",
+                                                                                                          1
+                                                                                                      ]
+                                                                                                  ]
+                                                                           }
+                                                                       ],
+                                                      "generator":  "Khronos glTF Blender I/O v5.1.20"
+                                                  },
+                         "delivery_glb_unbaked_bytes":  6727416,
+                         "note":  "交付期投递 BilinAI_MaleFaceRig_60k_delivery_baked.glb（默认档位已烘进顶点）；编辑期投递 BilinAI_MaleFaceRig_60k_edit.blend（20 骨 + 111 shape_*）与 BilinAI_MaleFaceRig_60k_edit.glb（R41 补导，9265136 B：20 骨 / 131 键 / 逐网格默认 morph 权重全 0），与女生编辑期 BilinAI_FaceRig_60k.glb（13,648,312 B：20 骨 / 无形态键的早期快照）对称"
+                     },
+    "counts":  {
+                   "total_tri":  55742,
+                   "budget_tri":  60000,
+                   "head_tri":  23107,
+                   "head_budget_tri":  25000,
+                   "head_scope":  "node_0 中 min(worldZ) \u003e= 0.955 的面（与女生同口径）",
+                   "meshes":  {
+                                  "node_0":  {
+                                                 "verts":  27005,
+                                                 "faces":  53893,
+                                                 "tris":  53893,
+                                                 "materials":  [
+                                                                   "Material.001"
+                                                               ]
+                                             },
+                                  "mouth_cavity":  {
+                                                       "verts":  547,
+                                                       "faces":  546,
+                                                       "tris":  1001,
+                                                       "materials":  [
+                                                                         "M_MouthCavity",
+                                                                         "M_LipInner"
+                                                                     ]
+                                                   },
+                                  "teeth":  {
+                                                "verts":  104,
+                                                "faces":  100,
+                                                "tris":  200,
+                                                "materials":  [
+                                                                  "M_Teeth"
+                                                              ],
+                                                "budget":  1500
+                                            },
+                                  "tongue":  {
+                                                 "verts":  62,
+                                                 "faces":  72,
+                                                 "tris":  120,
+                                                 "materials":  [
+                                                                   "M_Tongue"
+                                                               ]
+                                             },
+                                  "eyeball_L":  {
+                                                    "verts":  134,
+                                                    "faces":  144,
+                                                    "tris":  264,
+                                                    "materials":  [
+                                                                      "M_Eyeball"
+                                                                  ],
+                                                    "budget":  600
+                                                },
+                                  "eyeball_R":  {
+                                                    "verts":  134,
+                                                    "faces":  144,
+                                                    "tris":  264,
+                                                    "materials":  [
+                                                                      "M_Eyeball"
+                                                                  ],
+                                                    "budget":  600
+                                                }
+                              },
+                   "removed_objects":  [
+
+                                       ],
+                   "removed_objects_note":  "自动备份对象 node_0_bak 在全部男生交付件与中间件中均不存在（对 7 个 .blend + 3 个 .glb（共 10 个文件 / 68,407,706 B）逐字节 ASCII（Latin-1）扫描，node_0_bak 命中 0）",
+                   "bbox_m":  {
+                                  "min":  [
+                                              -0.287907,
+                                              -0.148834,
+                                              5E-06
+                                          ],
+                                  "max":  [
+                                              0.287543,
+                                              0.101215,
+                                              1.162359
+                                          ],
+                                  "height_m":  1.162354
+                              }
+               },
+    "armature":  {
+                     "object":  "FaceRig",
+                     "bones":  8,
+                     "delivery_bone_budget":  8,
+                     "bone_names":  [
+                                        "neck",
+                                        "head",
+                                        "jaw",
+                                        "tongue",
+                                        "eye_L",
+                                        "ear_L",
+                                        "eye_R",
+                                        "ear_R"
+                                    ],
+                     "armature_matrix_world":  "单位阵（与女生交付件逐元素一致）",
+                     "constraints":  0,
+                     "drivers":  0,
+                     "deform_groups_on_node_0":  8,
+                     "per_bone_vertex_stats":  {
+                                                   "neck":  {
+                                                                "gt0":  17758,
+                                                                "gt05":  16634,
+                                                                "max":  1.0
+                                                            },
+                                                   "head":  {
+                                                                "gt0":  10972,
+                                                                "gt05":  9459,
+                                                                "max":  1.0
+                                                            },
+                                                   "jaw":  {
+                                                               "gt0":  2686,
+                                                               "gt05":  447,
+                                                               "max":  0.8628
+                                                           },
+                                                   "eye_L":  {
+                                                                 "gt0":  530,
+                                                                 "gt05":  148,
+                                                                 "max":  0.9998
+                                                             },
+                                                   "eye_R":  {
+                                                                 "gt0":  561,
+                                                                 "gt05":  143,
+                                                                 "max":  0.9991
+                                                             },
+                                                   "ear_L":  {
+                                                                 "gt0":  105,
+                                                                 "gt05":  12,
+                                                                 "max":  0.855
+                                                             },
+                                                   "ear_R":  {
+                                                                 "gt0":  101,
+                                                                 "gt05":  8,
+                                                                 "max":  0.809
+                                                             }
+                                               },
+                     "editing_bones":  20,
+                     "editing_bone_names":  [
+                                                "root",
+                                                "neck",
+                                                "head",
+                                                "jaw",
+                                                "tongue",
+                                                "nose",
+                                                "lip_upper",
+                                                "lip_lower",
+                                                "eye.L",
+                                                "eyelid_upper.L",
+                                                "eyelid_lower.L",
+                                                "brow.L",
+                                                "cheek.L",
+                                                "ear.L",
+                                                "eye.R",
+                                                "eyelid_upper.R",
+                                                "eyelid_lower.R",
+                                                "brow.R",
+                                                "cheek.R",
+                                                "ear.R"
+                                            ],
+                     "delivery_bone_note":  "编辑期 20 骨 → 交付期 8 骨（neck / head / jaw / tongue / eye_L / eye_R / ear_L / ear_R）。删除 root / nose / lip_upper / lip_lower / eyelid_upper.L|R / eyelid_lower.L|R / brow.L|R / cheek.L|R 共 12 根，权重在迁移时并入 head / neck（root 为纯删，顶层权重组由 neck 承担）；.L/.R 改名 _L/_R 与女生交付件一致。耳骨峰值按女生（ear_L 0.855 / ear_R 0.809）等比增益，使 ear_size / ear_protrusion / ear_height 三条 bone 通道参数在交付件上可驱动"
+                 },
+    "materials":  {
+                      "slots":  6,
+                      "budget":  6,
+                      "list":  [
+                                   "M_Eyeball",
+                                   "M_LipInner",
+                                   "M_MouthCavity",
+                                   "M_Teeth",
+                                   "M_Tongue",
+                                   "Material.001"
+                               ],
+                      "double_sided":  6,
+                      "specular_alignment":  "Material.001 的 Specular IOR Level 由源文件 1.0 改为 0.5（= 女生同一材质值），导出后 extensionsUsed 由 [KHR_materials_specular] 变为 []，与女生交付 glb 完全一致"
+                  },
+    "textures":  {
+                     "budget_px":  1024,
+                     "source_was_px":  4096,
+                     "items":  [
+                                   {
+                                       "name":  "eye_iris.png",
+                                       "w":  256,
+                                       "h":  256,
+                                       "bytes":  32070
+                                   },
+                                   {
+                                       "name":  "texture_pbr_20250901.png",
+                                       "w":  2048,
+                                       "h":  2048,
+                                       "bytes":  4023376
+                                   },
+                                   {
+                                       "name":  "texture_pbr_20250901_metallic.png",
+                                       "w":  2048,
+                                       "h":  2048,
+                                       "bytes":  1163261
+                                   },
+                                   {
+                                       "name":  "texture_pbr_20250901_normal.png",
+                                       "w":  2048,
+                                       "h":  2048,
+                                       "bytes":  2014206
+                                   },
+                                   {
+                                       "name":  "texture_pbr_20250901_roughness.png",
+                                       "w":  2048,
+                                       "h":  2048,
+                                       "bytes":  1214671
+                                   }
+                               ],
+                     "packed_bytes_after":  8447584,
+                     "packed_bytes_in_glb":  2868698,
+                     "missing_textures":  0,
+                     "verify_method":  "直接解析 .glb 内嵌 PNG 的 IHDR（大端读 width/height），非依赖元数据",
+                     "downsample_note":  "常服男源 4 张 PBR 贴图 4096²：M7 先降到 2048² 并 pack 进 .blend（.blend 源保持 2048²，供换预设重烘焙），R45 交付 .glb 内嵌副本再降至 1024²（Blender im.scale 同一路径），normal 675397 B / albedo 1251588 B / metallic-roughness 909643 B / eye_iris 32070 B；edit glb 的 4096² 副本同样降至 1024²（normal 639616 / albedo 1229521 / metallic-roughness 897948）"
+                 },
+    "morphs":  {
+                   "shape":  [
+                                 "vis_silence",
+                                 "vis_AA",
+                                 "vis_E",
+                                 "vis_I",
+                                 "vis_O",
+                                 "vis_U",
+                                 "vis_MBP",
+                                 "vis_FV",
+                                 "vis_L",
+                                 "vis_TH",
+                                 "vis_WQ",
+                                 "vis_RR",
+                                 "vis_SS",
+                                 "vis_KK",
+                                 "vis_NN",
+                                 "expr_blink_L",
+                                 "expr_blink_R",
+                                 "expr_smile",
+                                 "expr_frown",
+                                 "expr_surprise",
+                                 "expr_squint",
+                                 "expr_brow_up",
+                                 "expr_brow_down"
+                             ],
+                   "vis":  [
+                               "vis_silence",
+                               "vis_AA",
+                               "vis_E",
+                               "vis_I",
+                               "vis_O",
+                               "vis_U",
+                               "vis_MBP",
+                               "vis_FV",
+                               "vis_L",
+                               "vis_TH",
+                               "vis_WQ",
+                               "vis_RR",
+                               "vis_SS",
+                               "vis_KK",
+                               "vis_NN"
+                           ],
+                   "expr":  [
+                                "expr_blink_L",
+                                "expr_blink_R",
+                                "expr_smile",
+                                "expr_frown",
+                                "expr_surprise",
+                                "expr_squint",
+                                "expr_brow_up",
+                                "expr_brow_down"
+                            ],
+                   "count":  23,
+                   "node_0_morphs":  23,
+                   "mouth_mesh_morphs":  16,
+                   "gltf_morph_targets":  23,
+                   "whitelist_violations":  0,
+                   "shape_in_runtime_asset":  0,
+                   "sparse_targets":  42,
+                   "dense_targets":  29,
+                   "node_0_morph_bytes":  887972,
+                   "shape_count_editing_node_0":  111,
+                   "shape_targets_total":  113,
+                   "shape_in_editing_asset":  111,
+                   "shape_editing_per_mesh":  {
+                                                  "node_0":  111,
+                                                  "mouth_cavity":  6,
+                                                  "teeth":  8,
+                                                  "tongue":  6
+                                              },
+                   "shape_baked_max_delta_mm":  1.095018,
+                   "shape_baked_max_delta_mm_female":  1.11661,
+                   "shape_namespace_map":  "@{meshes=; weights=; textures=; bones=8; bone_names=System.Object[]; arm_matrix=System.Object[]; constraints=0; materials=System.Object[]; objects=System.Object[]; groups=System.Object[]; head_tri=23107; bbox_max=System.Object[]; bbox_min=System.Object[]; total_tri=55742}\\shape-namespace-map.json",
+                   "note":  "vis_*/expr_*（23 个）常驻运行期；shape_*（捏脸 111 个，含口内 18 个）只在编辑期存在，交付期按默认档位烘焙进顶点，运行期 shape_* 数量为 0",
+                   "transfer":  {
+                                    "method":  "女生编辑期 20 骨局部空间 → 男生同名骨 → 世界最近邻 + 逐键峰值归一（gain 迭代至男生 max == 女生 max）",
+                                    "target_parity":  "131 / 131 条 target 峰值与女生实测一致（误差 0.000 mm）",
+                                    "gain_min":  1,
+                                    "gain_max":  3.3726,
+                                    "gain_top":  "shape_jaw_angle_up=3.3726, shape_jaw_angle_dn=3.3726, shape_ear_lobe_size_dn=1.5452, shape_ear_lobe_size_up=1.545",
+                                    "mesh_pairing":  "女生 node_0 27170 v / 男生 node_0 27005 v（非同源拓扑，最近邻迁移）"
+                                }
+               },
+    "gltf":  {
+                 "file":  {
+                              "bytes":  6727452,
+                              "nodes":  15,
+                              "meshes":  6,
+                              "primitives":  6,
+                              "materials":  [
+                                                "M_Eyeball",
+                                                "M_MouthCavity",
+                                                "Material.001",
+                                                "M_Teeth",
+                                                "M_Tongue"
+                                            ],
+                              "textures":  4,
+                              "images":  [
+                                             {
+                                                 "i":  0,
+                                                 "name":  "eye_iris",
+                                                 "mime":  "image/png",
+                                                 "bytes":  32070,
+                                                 "w":  256,
+                                                 "h":  256
+                                             },
+                                             {
+                                                 "i":  1,
+                                                 "name":  "texture_pbr_20250901_normal",
+                                                 "mime":  "image/png",
+                                                 "bytes":  675397,
+                                                 "w":  1024,
+                                                 "h":  1024
+                                             },
+                                             {
+                                                 "i":  2,
+                                                 "name":  "texture_pbr_20250901",
+                                                 "mime":  "image/png",
+                                                 "bytes":  1251588,
+                                                 "w":  1024,
+                                                 "h":  1024
+                                             },
+                                             {
+                                                 "i":  3,
+                                                 "name":  "texture_pbr_20250901_metallic-texture_pbr_20250901_roughness",
+                                                 "mime":  "image/png",
+                                                 "bytes":  909643,
+                                                 "w":  1024,
+                                                 "h":  1024
+                                             }
+                                         ],
+                              "imageBytes":  2868698,
+                              "skins":  1,
+                              "joints":  8,
+                              "skinName":  "FaceRig",
+                              "animations":  0,
+                              "extensionsUsed":  [
+
+                                                 ],
+                              "extensionsRequired":  [
+
+                                                     ],
+                              "morphTargets":  71,
+                              "sparseTargets":  42,
+                              "denseTargets":  29,
+                              "morphBytes":  887972,
+                              "meshesDetail":  [
+                                                   {
+                                                       "name":  "eyeball_L",
+                                                       "verts":  134,
+                                                       "tris":  264,
+                                                       "targets":  0,
+                                                       "targetNames":  null,
+                                                       "morphWeights":  null,
+                                                       "nonzeroWeights":  null
+                                                   },
+                                                   {
+                                                       "name":  "eyeball_R",
+                                                       "verts":  134,
+                                                       "tris":  264,
+                                                       "targets":  0,
+                                                       "targetNames":  null,
+                                                       "morphWeights":  null,
+                                                       "nonzeroWeights":  null
+                                                   },
+                                                   {
+                                                       "name":  "mouth_cavity",
+                                                       "verts":  2093,
+                                                       "tris":  1001,
+                                                       "targets":  16,
+                                                       "targetNames":  [
+                                                                           "vis_silence",
+                                                                           "vis_AA",
+                                                                           "vis_E",
+                                                                           "vis_I",
+                                                                           "vis_O",
+                                                                           "vis_U",
+                                                                           "vis_MBP",
+                                                                           "vis_FV",
+                                                                           "vis_L",
+                                                                           "vis_TH",
+                                                                           "vis_WQ",
+                                                                           "vis_RR",
+                                                                           "vis_SS",
+                                                                           "vis_KK",
+                                                                           "vis_NN",
+                                                                           "expr_surprise"
+                                                                       ],
+                                                       "morphWeights":  [
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0
+                                                                        ],
+                                                       "nonzeroWeights":  [
+
+                                                                          ]
+                                                   },
+                                                   {
+                                                       "name":  "node_0",
+                                                       "verts":  38996,
+                                                       "tris":  53893,
+                                                       "targets":  23,
+                                                       "targetNames":  [
+                                                                           "vis_silence",
+                                                                           "vis_AA",
+                                                                           "vis_E",
+                                                                           "vis_I",
+                                                                           "vis_O",
+                                                                           "vis_U",
+                                                                           "vis_MBP",
+                                                                           "vis_FV",
+                                                                           "vis_L",
+                                                                           "vis_TH",
+                                                                           "vis_WQ",
+                                                                           "vis_RR",
+                                                                           "vis_SS",
+                                                                           "vis_KK",
+                                                                           "vis_NN",
+                                                                           "expr_blink_L",
+                                                                           "expr_blink_R",
+                                                                           "expr_smile",
+                                                                           "expr_frown",
+                                                                           "expr_surprise",
+                                                                           "expr_squint",
+                                                                           "expr_brow_up",
+                                                                           "expr_brow_down"
+                                                                       ],
+                                                       "morphWeights":  [
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0
+                                                                        ],
+                                                       "nonzeroWeights":  [
+
+                                                                          ]
+                                                   },
+                                                   {
+                                                       "name":  "teeth",
+                                                       "verts":  312,
+                                                       "tris":  200,
+                                                       "targets":  16,
+                                                       "targetNames":  [
+                                                                           "vis_silence",
+                                                                           "vis_AA",
+                                                                           "vis_E",
+                                                                           "vis_I",
+                                                                           "vis_O",
+                                                                           "vis_U",
+                                                                           "vis_MBP",
+                                                                           "vis_FV",
+                                                                           "vis_L",
+                                                                           "vis_TH",
+                                                                           "vis_WQ",
+                                                                           "vis_RR",
+                                                                           "vis_SS",
+                                                                           "vis_KK",
+                                                                           "vis_NN",
+                                                                           "expr_surprise"
+                                                                       ],
+                                                       "morphWeights":  [
+                                                                            1,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0
+                                                                        ],
+                                                       "nonzeroWeights":  [
+                                                                              [
+                                                                                  "vis_silence",
+                                                                                  1
+                                                                              ]
+                                                                          ]
+                                                   },
+                                                   {
+                                                       "name":  "tongue",
+                                                       "verts":  264,
+                                                       "tris":  120,
+                                                       "targets":  16,
+                                                       "targetNames":  [
+                                                                           "vis_silence",
+                                                                           "vis_AA",
+                                                                           "vis_E",
+                                                                           "vis_I",
+                                                                           "vis_O",
+                                                                           "vis_U",
+                                                                           "vis_MBP",
+                                                                           "vis_FV",
+                                                                           "vis_L",
+                                                                           "vis_TH",
+                                                                           "vis_WQ",
+                                                                           "vis_RR",
+                                                                           "vis_SS",
+                                                                           "vis_KK",
+                                                                           "vis_NN",
+                                                                           "expr_surprise"
+                                                                       ],
+                                                       "morphWeights":  [
+                                                                            1,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0
+                                                                        ],
+                                                       "nonzeroWeights":  [
+                                                                              [
+                                                                                  "vis_silence",
+                                                                                  1
+                                                                              ]
+                                                                          ]
+                                                   }
+                                               ],
+                              "generator":  "Khronos glTF Blender I/O v5.1.20"
+                          },
+                 "bytes":  6727452,
+                 "generator":  "Khronos glTF Blender I/O v5.1.20",
+                 "gltf_version":  "2.0",
+                 "extensions_used":  [
+
+                                     ],
+                 "nodes":  15,
+                 "meshes":  6,
+                 "primitives":  6,
+                 "materials":  5,
+                 "textures":  4,
+                 "images":  4,
+                 "skins":  1,
+                 "joints":  8,
+                 "joint_names_mapped":  true,
+                 "animations":  0,
+                 "total_tri":  55742,
+                 "export_settings":  {
+                                         "export_format":  "GLB",
+                                         "export_yup":  true,
+                                         "export_apply":  true,
+                                         "export_skins":  true,
+                                         "export_def_bones":  false,
+                                         "export_morph":  true,
+                                         "export_animations":  false,
+                                         "export_cameras":  false,
+                                         "export_lights":  false,
+                                         "draco":  false,
+                                         "image_format":  "AUTO",
+                                         "all_influences":  false
+                                     }
+             },
+    "fixes":  [
+                  {
+                      "id":  "M11",
+                      "title":  "形态键默认权重未复位（交付阻断级）",
+                      "symptom":  "全部 morph 默认 value=1.0，20 条变形叠加生效：mouth_cavity / teeth / tongue 被拉成纵向大筒并遮住下颌与脖颈，脸前呈纵向拉丝（_m_shots4/baked_head.png 可复现）",
+                      "cause":  "Blender shape_key_add 建键默认 value=1.0；_m45_morph.py（M4/M5）与 _m8_shape4.py（M8）建键后未复位，M7 / M9 导出沿用",
+                      "fix":  "对 5 个男生 .blend 复位默认权重（Basis 0；teeth / tongue 仅 vis_silence = 1；其余全 0），并按原导出参数重导 delivery.glb / delivery_baked.glb",
+                      "verify":  "glb 逐网格 mesh.weights 与女生交付件一致（node_0 23 条 / mouth_cavity 16 条全 0；teeth / tongue 首条 vis_silence = 1）；_m_shots6 重渲头脸正常，仅余源文件既有左脸方块贴图缺陷"
+                  }
+              ],
+    "checks":  [
+                   {
+                       "id":  "mesh.budget.total_tri",
+                       "result":  "PASS",
+                       "detail":  "全场景 55742 tri \u003c= 60000（女生 56077）"
+                   },
+                   {
+                       "id":  "mesh.budget.head_tri",
+                       "result":  "PASS",
+                       "detail":  "头部 23107 tri \u003c= 25000（女生 24475，同口径 min worldZ \u003e= 0.955）"
+                   },
+                   {
+                       "id":  "mesh.budget.eyeball_tri",
+                       "result":  "PASS",
+                       "detail":  "eyeball_L / eyeball_R 各 264 tri \u003c= 600"
+                   },
+                   {
+                       "id":  "mesh.budget.teeth_tri",
+                       "result":  "PASS",
+                       "detail":  "teeth 200 tri \u003c= 1500"
+                   },
+                   {
+                       "id":  "mesh.clean_scene",
+                       "result":  "PASS",
+                       "detail":  "场景对象 7 个（FaceRig + 6 网格），无 Camera / Light / 备份对象：FaceRig, eyeball_L, eyeball_R, mouth_cavity, node_0, teeth, tongue"
+                   },
+                   {
+                       "id":  "mesh.node_0_bak_absent",
+                       "result":  "PASS",
+                       "detail":  "node_0_bak 在全部男生交付件与中间件中命中 0：对 7 个 .blend + 3 个 .glb（共 10 个文件 / 68,407,706 B）逐字节 ASCII（Latin-1）扫描，node_0_bak 命中 0；女生物件同样干净"
+                   },
+                   {
+                       "id":  "armature.bone_count",
+                       "result":  "PASS",
+                       "detail":  "交付骨架 8 骨 \u003c= 8（neck / head / jaw / tongue / eye_L / ear_L / eye_R / ear_R）"
+                   },
+                   {
+                       "id":  "armature.editing_bone_count",
+                       "result":  "PASS",
+                       "detail":  "编辑期 20 骨，与女生编辑期骨骼名单逐条同名（root/neck/head/jaw/tongue/nose/lip_upper/lip_lower/eye/eyelid_upper/eyelid_lower/brow/cheek/ear 各 L/R）"
+                   },
+                   {
+                       "id":  "armature.rest_pose_zero",
+                       "result":  "PASS",
+                       "detail":  "面骨骼 armature matrix_world = 单位阵，与女生交付件逐元素一致"
+                   },
+                   {
+                       "id":  "armature.constraints",
+                       "result":  "PASS",
+                       "detail":  "约束 0 / 驱动 0，与女生交付件一致"
+                   },
+                   {
+                       "id":  "skin.max_influences",
+                       "result":  "PASS",
+                       "detail":  "node_0 每顶点影响骨数 \u003c= 3（=3，与女生同口径）"
+                   },
+                   {
+                       "id":  "skin.weight_sum",
+                       "result":  "PASS",
+                       "detail":  "node_0 权重和区间 [0.999992, 1.000000]，越界顶点 0 个"
+                   },
+                   {
+                       "id":  "skin.empty_vertices",
+                       "result":  "PASS",
+                       "detail":  "node_0 无权重顶点 0 个"
+                   },
+                   {
+                       "id":  "skin.ear_bone_channel_ready",
+                       "result":  "PASS",
+                       "detail":  "ear_L 权重 \u003e0 顶点 105 / \u003e0.5 12 / max 0.855；ear_R 101 / 8 / max 0.809。女生 ear_L 0.855/10 点、ear_R 0.809/9 点 → ear_size / ear_protrusion / ear_height 三条 bone 通道参数可驱动"
+                   },
+                   {
+                       "id":  "material.slot_count",
+                       "result":  "PASS",
+                       "detail":  "材质槽 6 \u003c= 6：M_Eyeball, M_LipInner, M_MouthCavity, M_Teeth, M_Tongue, Material.001"
+                   },
+                   {
+                       "id":  "texture.max_size",
+                       "result":  "PASS",
+                       "detail":  "交付 .glb 内嵌 4 张 PBR 贴图全部 1024x1024（源 4096；.blend 源保持 2048），eye_iris 256x256"
+                   },
+                   {
+                       "id":  "gltf.texture_budget",
+                       "result":  "PASS",
+                       "detail":  "交付 .glb 内嵌贴图长边现算最大值 = 1024（edit 件 1024）\u003c= 1024；delivery_baked 6727452 B（内嵌图 2868698 B），delivery 6727416 B，edit 9265136 B。现算：eye_iris=256x256 / texture_pbr_20250901_normal=1024x1024 / texture_pbr_20250901=1024x1024 / texture_pbr_20250901_metallic-texture_pbr_20250901_roughness=1024x1024。R45 做法 = 容器内原地替换（im.scale 1024² 后按 4 字节对齐重排 BIN；除 3 个 image bufferView 外其余 bufferView 逐字节不变，accessors / meshes / skins / materials / textures / samplers 深等，Blender 重导入新旧对照 objects / 顶点数 / 面数 / 形态键名 / 骨骼名 / 材质名零差异）"
+                   },
+                   {
+                       "id":  "texture.no_missing",
+                       "result":  "PASS",
+                       "detail":  "缺失贴图 0，全部 pack 进 .blend 与 .glb"
+                   },
+                   {
+                       "id":  "texture.colorspace",
+                       "result":  "PASS",
+                       "detail":  "非彩色贴图（normal / roughness / metallic）colorspace 全部 Non-Color（R42 修正）：eye_iris.png=sRGB, texture_pbr_20250901.png=sRGB, texture_pbr_20250901_metallic.png=Non-Color, texture_pbr_20250901_normal.png=Non-Color, texture_pbr_20250901_roughness.png=Non-Color"
+                   },
+                   {
+                       "id":  "gltf.exported",
+                       "result":  "PASS",
+                       "detail":  "delivery_baked 6727452 B / delivery 6727416 B，Khronos glTF Blender I/O v5.1.20"
+                   },
+                   {
+                       "id":  "deliver.size_budget",
+                       "result":  "PASS",
+                       "detail":  "导出 .glb 字节对规格书 §5（预算 5MB / 上限 8MB『Draco 压缩后』）：交付 delivery_baked 6727452 B = 6.42 MB \u003c= 8 MB 上限。R45 贴图 1K 化前为 12,924,836 B = 12.33 MB（超上限），降至 1K 后 6.42 MB 重新合规，未开 Draco（draco=false）"
+                   },
+                   {
+                       "id":  "gltf.extensions",
+                       "result":  "PASS",
+                       "detail":  "extensionsUsed = []，与女生交付 glb 完全一致（男生源材质 Specular 1.0 已对齐为 0.5）"
+                   },
+                   {
+                       "id":  "gltf.joints",
+                       "result":  "PASS",
+                       "detail":  "8 骨 + 1 skin，与女生交付件同口径"
+                   },
+                   {
+                       "id":  "gltf.tri_count_match",
+                       "result":  "PASS",
+                       "detail":  "glTF 三角数 55742 与 .blend 实测一致"
+                   },
+                   {
+                       "id":  "morph.vis_set_exact",
+                       "result":  "PASS",
+                       "detail":  "node_0 上 vis_silence + 14 个 vis_* = 15 条，名单与女生交付件逐条一致"
+                   },
+                   {
+                       "id":  "morph.expr_set",
+                       "result":  "PASS",
+                       "detail":  "expr_blink_L / expr_blink_R / expr_smile / expr_frown / expr_surprise / expr_squint / expr_brow_up / expr_brow_down = 8 条，名单与女生一致"
+                   },
+                   {
+                       "id":  "morph.shape_absent_runtime",
+                       "result":  "PASS",
+                       "detail":  "交付期 .glb 中 node_0 的 morph target 仅 23 个（vis_ 15 + expr_ 8），shape_* 数量 0（捏脸结果已烘进顶点）"
+                   },
+                   {
+                       "id":  "morph.cross_mesh_follow",
+                       "result":  "PASS",
+                       "detail":  "mouth_cavity / teeth / tongue 各 16 个 target（15 vis_ + expr_surprise），与女生逐项一致；eyeball_L/R 不挂 morph"
+                   },
+                   {
+                       "id":  "morph.delta_sparsity",
+                       "result":  "PASS",
+                       "detail":  "稀疏度（\u003c1e-5 顶点占比）：node_0 95.2% / mouth_cavity 19.1% / teeth 70.8% / tongue 41.7%（女生 94.9% / 20.4% / 70.8% / 41.7%）"
+                   },
+                   {
+                       "id":  "morph.shape_amplitude_parity",
+                       "result":  "PASS",
+                       "detail":  "111 条 shape_* + 口内 20 条，共 131 条 target 的峰值位移与女生实测逐条一致（最大偏差 0.000 mm）"
+                   },
+                   {
+                       "id":  "shape.editing_asset",
+                       "result":  "PASS",
+                       "detail":  "编辑期 node_0 111 条 shape_*（=113 targets 减去挂在 teeth 上的 teeth_size 2 个）；mouth_cavity 6 / teeth 8 / tongue 6，与女生编辑期逐项一致"
+                   },
+                   {
+                       "id":  "shape.naming_whitelist",
+                       "result":  "PASS",
+                       "detail":  "111 条全部形如 shape_\u003ckey\u003e_up/_dn，无越界命名，未与 vis_*/expr_* 混用"
+                   },
+                   {
+                       "id":  "shape.transfer_gain",
+                       "result":  "PASS",
+                       "detail":  "男生/女生非同源拓扑（27005 v vs 27170 v），迁移 gain 区间 1.0000~3.3726；gain \u003e 1 集中在女生场峰值陡峭区：shape_jaw_angle_up=3.3726, shape_jaw_angle_dn=3.3726, shape_ear_lobe_size_dn=1.5452, shape_ear_lobe_size_up=1.545"
+                   },
+                   {
+                       "id":  "gltf.editing_glb",
+                       "result":  "PASS",
+                       "detail":  "编辑期 .glb 与女生编辑期件对称：9265136 B / 27 nodes / 6 meshes / 1 skin / 20 joints（root/neck/head/jaw/tongue/nose/lip_upper/lip_lower/eye/eyelid_upper/eyelid_lower/brow/cheek/ear 各 L/R）/ materials 5 与交付件同名 / extensionsUsed = [] / node_0 111 条 target 全为 shape_*（111 条）；逐网格默认 morph 权重全 0（编辑期专供，无 vis_*/expr_*）；node_0_bak 命中 0"
+                   },
+                   {
+                       "id":  "deliver.bone_reduction",
+                       "result":  "PASS",
+                       "detail":  "编辑期 20 骨 -\u003e 交付期 8 骨，删除 12 根辅助骨，权重并入 head / neck"
+                   },
+                   {
+                       "id":  "deliver.shape_baked",
+                       "result":  "PASS",
+                       "detail":  "默认档位烘焙位移：node_0 max 1.0950 mm / mean 0.1680 mm / 13324 顶点；mouth_cavity 0.2500 / teeth 0.2500 / tongue 0.2315 mm（女生 1.1166 / 0.1775 / 12915 顶点）"
+                   },
+                   {
+                       "id":  "deliver.delivery_pair",
+                       "result":  "PASS",
+                       "detail":  "交付对 delivery（未烘焙）与 delivery_baked（默认档位已烘）双件齐备，与女生投递形态一致"
+                   },
+                   {
+                       "id":  "client.shared_suite",
+                       "result":  "PASS",
+                       "detail":  "client/* 8 文件与 uni-app 接入包与女生资产同源、交付收口唯一改动 = client/care-trim.js 康养裁剪表封版（stats().open true→false，3 条 beard_*『不做』定稿），接入包已同步重投（8 文件 135,445 B）；其 3212 条端侧断言 + 打包冒烟 153 条沿用女生报告结论（见 source_report）"
+                   },
+                   {
+                       "id":  "params.shared_table",
+                       "result":  "PASS",
+                       "detail":  "参数表 102 条（A17/B8/C18/D10/E12/F5/G12/H10/I7/J3，通道 morph 63 / bone 6 / material 27 / asset 6）男生资产直接复用，未改动"
+                   },
+                   {
+                       "id":  "asset.source_texture_defect",
+                       "result":  "WARN",
+                       "detail":  "男生源文件 常服男.blend 本身在左脸（+x 侧）有一块大方块错位贴图；已用源文件直接渲染确认非减面/迁移产物（见 _m_prev2.py 渲染）。本次不改贴图 UV，按原样交付。收口定论（R40）：归美术（重做该区 UV / 贴图），本流程按原样交付且不阻断发布；美术修图后替换源贴图并按 M7 重跑即可，无需改骨骼与参数表"
+                   },
+                   {
+                       "id":  "asset.male_default_preset",
+                       "result":  "WARN",
+                       "detail":  "delivery_baked 的默认档位沿用女生 20 条默认预设（face_width -0.20 / jaw_width -0.25 / eye_size +0.20 / eye_aegyo +0.35 / lip_* +0.15~0.25 等），未针对男性单独调档。收口定论（R40）：按『参数表 / 客户端 / uni-app 与女生同源、双性别共用一套默认档』执行，属有意选择；男性专属默认脸为产品新增需求、不阻断本次交付 —— 产品给一份 male preset 即按 M9 重烘（_m9_bake.py 可复用）"
+                   },
+                   {
+                       "id":  "test.not_rerun_for_male",
+                       "result":  "INFO",
+                       "detail":  "以下女生项未在男生重跑（依赖女生专用的测试台架/素材）：eyeball.penetration_* / eyeball.hole_light_leak / mouth.edge_stretch / deform.* / morph.vis_recognizable / morph.blink_closure / morph.regression_extreme_mouth / shape.extreme_combo / uniapp.* / care.* / client.*。其中 client / care / uniapp 与资产无关（同源代码），params.* 与资产无关（同源参数表）；eyeball / mouth / deform / morph 的几何类检查待男生专属回归台架搭建后补跑"
+                   },
+                   {
+                       "id":  "morph.default_weights_neutral",
+                       "result":  "PASS",
+                       "detail":  "交付 glb 逐网格默认 morph 权重与女生交付件一致：node_0 23 条 / mouth_cavity 16 条全为 0，teeth / tongue 仅 vis_silence = 1（其余 15 条为 0）。M11 修复项：M4/M5 与 M8 建键未复位 shape_key_add 默认 value=1.0，曾使 20 条 morph 默认全量生效并把口内三件拉成大筒（_m_shots4/baked_head.png），已复位并重导 2 个 glb"
+                   },
+                   {
+                       "id":  "mesh.mouth_aux_in_place",
+                       "result":  "PASS",
+                       "detail":  "口内三件 world bbox 均落在口腔区间 z 0.98~1.06：mouth_cavity 1.0072-1.0282 / teeth 1.0130-1.0220 / tongue 1.0090-1.0177（女生 1.0171-1.0392 / 1.0214-1.0345 / 1.0135-1.0237）"
+                   }
+               ],
+    "summary":  {
+                    "pass":  41,
+                    "warn":  2,
+                    "info":  1,
+                    "fail":  0,
+                    "release_gate":  "RELEASABLE",
+                    "release_gate_reasons":  "2 项 WARN 均非阻断且已收口定论：源文件贴图缺陷（归美术，非本流程产物）与男性默认档位（按双性别同源口径有意选择）；另 1 项规格张力（胡须 3 条不做）已封版并记为已接受偏离",
+                    "note":  "男生资产（常服男）已按女生资产工艺流程走完全程：M1 减面 55742 tri / M2b 眼裂开洞 + 口内几何 / M3 20 骨 + 权重 / M4-M5 vis_* + expr_* 形态键 / M6 减骨 20-\u003e8（耳骨增益）/ M7 平滑着色 + 贴图 4096-\u003e2048 + 导出（R45：交付 .glb 内嵌图再降至 1024） / M8 编辑期 113 个 shape_* 捏脸 target（131/131 峰值与女生一致）/ M9 默认档位烘焙 / M10 材质与着色对齐女生。交付件 delivery_baked 6727452 B、delivery 6727416 B；编辑期 node_0 111 条 shape_*、编辑期 .glb 9265136 B（20 骨 / node_0 111 条 shape_* / 131 键，与女生 BilinAI_FaceRig_60k.glb 对称）。参数表 / 客户端 / uni-app 与女生同源（R40 唯一改动 = client/care-trim.js 康养裁剪表封版，接入包已同步重投）。"
+                },
+    "warn_root_cause_evidence":  null,
+    "warn_investigation":  {
+                               "round":  "男生资产：M1-M10 全流程 + M11 阻断级缺陷修复 + R40 交付收口（3 项待确认 -\u003e 定论）+ R41 补导男生编辑期 .glb（与女生 BilinAI_FaceRig_60k.glb 对称：20 骨 / 131 键 / 逐网格默认权重全 0）",
+                               "asset_changed":  true,
+                               "source_texture_defect_origin":  "常服男.blend 源文件自带（+x 侧左脸方块错位），非减面 / 非形态键迁移产物",
+                               "shape_transfer_underscale_root_cause":  "女生 27170 v 与男生 27005 v 为不同源拓扑，单点最近邻在峰值陡峭区（jaw_angle / ear_* / nose_*）会削峰，实测最低 0.239x；已改为逐键峰值归一（迭代 gain，男生 max == 女生 max，误差 0.000 mm）",
+                               "specular_alignment":  "Material.001 Specular IOR Level 1.0 -\u003e 0.5，extensionsUsed 由 [KHR_materials_specular] 收敛为 []"
+                           },
+    "dispositions":  [
+                         {
+                             "id":  "asset.source_texture_defect",
+                             "kind":  "源文件缺陷（非本流程产物）",
+                             "status":  "已定论 · 保持 WARN",
+                             "owner":  "美术",
+                             "decision":  "常服男.blend 自带左脸（+x 侧）方块错位贴图；本流程不改 UV、按原样交付、不阻断发布。修复归美术：重做该区 UV / 贴图后替换源贴图并按 M7 重跑即可，无需改骨骼与参数表"
+                         },
+                         {
+                             "id":  "asset.male_default_preset",
+                             "kind":  "产品口径（有意同源）",
+                             "status":  "已定论 · 保持 WARN",
+                             "owner":  "产品",
+                             "decision":  "按『参数表 / 客户端 / uni-app 与女生同源、双性别共用一套 20 条默认档』执行，属有意选择、不阻断发布。男性专属默认脸为产品新增需求：给一份 male preset 即按 M9 重烘（_m9_bake.py 可复用）"
+                         },
+                         {
+                             "id":  "care.trim_coverage",
+                             "kind":  "规格张力（规格书 §9 要求胡须保留并强化）",
+                             "status":  "已收口 · 封版",
+                             "owner":  "产品（按『不做』口径定稿）",
+                             "decision":  "本档（女生 + 常服男）均无胡须资产，beard_type / beard_density / beard_color 维持『不做』（UI 隐藏）；client/care-trim.js 的 stats().open 由 true 改为 false 封版，接入包已同步重投（8 文件 135,445 B）。张力记为已接受偏离；后续补齐胡须资产则改回保留并重跑 _mk_params_el.mjs 重新封版"
+                         }
+                     ]
+}

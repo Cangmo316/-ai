@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "artifactId": "bilinai-viseme-map-v1",
+  "modelVersion": "face-rig-0.5.1",
+  "targetAsset": "BilinAI_FaceRig_60k_delivery.glb",
+  "purpose": "CosyVoice 2 音素流 -> 运行时 morph 权重。morph 名称必须按 glTF mesh.extras.targetNames 解析成 index，禁止硬编码。",
+  "visemes": ["vis_silence","vis_AA","vis_E","vis_I","vis_O","vis_U","vis_MBP","vis_FV","vis_L","vis_TH","vis_WQ","vis_RR","vis_SS","vis_KK","vis_NN"],
+  "carriers": {
+    "node_0": "全部 15 个 vis_* (+ 8 个 expr_*)",
+    "mouth_cavity": "全部 15 个 vis_* (+ expr_surprise)",
+    "teeth": "全部 15 个 vis_* (+ expr_surprise)",
+    "tongue": "全部 15 个 vis_* (+ expr_surprise)",
+    "eyeball_L / eyeball_R": "无 morph（不参与口型）"
+  },
+  "driveMode": {
+    "recommended": "morph",
+    "note": "vis_* 已把下颌开合烘焙进 morph，单独驱动 morph 即可得到完整口型，牙齿/舌/口腔网格带同名 morph 同步跟随，不会漏光。此时 jaw 骨必须保持静置。",
+    "boneChannelAlternative": "若端侧选择让 jaw 骨驱动开合，则不得同时驱动 vis_*（4.3 节：同一区域禁止骨骼+morph 双强驱动）。jawAngleDegrees 给出与每个 morph 等效的单骨角度。",
+    "jawAngleDegrees": {"vis_silence":0.0,"vis_AA":14.0,"vis_E":7.0,"vis_I":4.0,"vis_O":9.0,"vis_U":5.0,"vis_MBP":0.0,"vis_FV":2.0,"vis_L":8.0,"vis_TH":5.0,"vis_WQ":4.0,"vis_RR":6.0,"vis_SS":3.0,"vis_KK":6.0,"vis_NN":3.0}
+  },
+  "silence": "vis_silence",
+  "fallback": "vis_silence",
+  "mandarinInitials": {
+    "b":"vis_MBP","p":"vis_MBP","m":"vis_MBP",
+    "f":"vis_FV",
+    "d":"vis_L","t":"vis_L",
+    "n":"vis_NN","l":"vis_L",
+    "g":"vis_KK","k":"vis_KK","h":"vis_KK",
+    "j":"vis_SS","q":"vis_SS","x":"vis_SS",
+    "zh":"vis_SS","ch":"vis_SS","sh":"vis_SS","r":"vis_RR",
+    "z":"vis_SS","c":"vis_SS","s":"vis_SS",
+    "y":"vis_I","w":"vis_WQ"
+  },
+  "mandarinFinals": {
+    "a":"vis_AA","o":"vis_O","e":"vis_E","i":"vis_I","u":"vis_U","v":"vis_U","er":"vis_RR",
+    "ai":["vis_AA","vis_I"],"ei":["vis_E","vis_I"],"ao":["vis_AA","vis_O"],"ou":["vis_O","vis_U"],
+    "an":"vis_AA","en":"vis_E","ang":"vis_AA","eng":"vis_E","ong":"vis_O",
+    "ia":["vis_I","vis_AA"],"ie":["vis_I","vis_E"],"iao":["vis_I","vis_AA","vis_O"],"iu":["vis_I","vis_U"],
+    "ian":"vis_I","in":"vis_I","iang":"vis_I","ing":"vis_I","iong":"vis_I",
+    "ua":["vis_U","vis_AA"],"uo":["vis_U","vis_O"],"uai":["vis_U","vis_AA","vis_I"],"ui":["vis_U","vis_I"],
+    "uan":"vis_U","un":"vis_U","uang":"vis_U","ueng":"vis_U",
+    "ve":["vis_U","vis_E"],"van":"vis_U","vn":"vis_U"
+  },
+  "englishPhonemes": {
+    "p":"vis_MBP","b":"vis_MBP","m":"vis_MBP","f":"vis_FV","v":"vis_FV",
+    "th":"vis_TH","dh":"vis_TH","t":"vis_L","d":"vis_L","n":"vis_NN","l":"vis_L",
+    "k":"vis_KK","g":"vis_KK","ng":"vis_KK","h":"vis_AA",
+    "s":"vis_SS","z":"vis_SS","sh":"vis_SS","zh":"vis_SS","ch":"vis_SS","jh":"vis_SS",
+    "r":"vis_RR","w":"vis_WQ","y":"vis_I",
+    "iy":"vis_I","ih":"vis_I","ey":"vis_E","eh":"vis_E","ae":"vis_AA","aa":"vis_AA",
+    "ah":"vis_AA","ao":"vis_O","ow":"vis_O","uh":"vis_U","uw":"vis_U","er":"vis_RR","ax":"vis_E",
+    "ay":["vis_AA","vis_I"],"ey_d":["vis_E","vis_I"],"oy":["vis_O","vis_I"],"aw":["vis_AA","vis_U"],"ow_d":["vis_O","vis_U"]
+  },
+  "cosyVoiceControlTokens": {
+    "SIL":"vis_silence","SP":"vis_silence","<s>":"vis_silence","</s>":"vis_silence","<blank>":"vis_silence","<unk>":"vis_silence",
+    "1":"vis_silence","2":"vis_silence","3":"vis_silence","4":"vis_silence"
+  },
+  "diphthongPolicy": "数组表示按时间顺序依次驱动，单元素为稳态口型；相邻 viseme 交叉淡化 40-60 ms。",
+  "timingHint": {
+    "defaultHoldMs": 60,
+    "crossfadeMs": 50,
+    "maxCoarticulationBlend": 2,
+    "note": "同一时刻最多混合 2 个 viseme；总权重和 <= 1，余量归 vis_silence。"
+  }
+}

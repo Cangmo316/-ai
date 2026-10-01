@@ -1,0 +1,110 @@
+{
+    "set":  "01_female_60s_v3",
+    "source":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery_baked.blend",
+    "note":  "R42：2K 为自 _delivery_baked.blend 的 packed 原始字节原样落盘（逐字节等于 pack 源）；1K 为 2K 下采样 LOD；colorspace 为修正后口径",
+    "count":  10,
+    "textures_2k":  [
+                        {
+                            "role":  "albedo",
+                            "file":  "BilinAI_FaceRig_60k_albedo.png",
+                            "bytes":  5016848,
+                            "sha256":  "C5C07B2D9BD3D118038110243BCCB9D02FD7E7BED5BF29CD7E598C74065EC144",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Base Color",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "normal",
+                            "file":  "BilinAI_FaceRig_60k_normal.png",
+                            "bytes":  2918807,
+                            "sha256":  "C2FE3C2E6C50BB2FC354B88D972F3C3801EFD06D77386031F327ED90FB16BCB9",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Normal Map",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "roughness",
+                            "file":  "BilinAI_FaceRig_60k_roughness.png",
+                            "bytes":  1198789,
+                            "sha256":  "D6AAE6E815EF43A19B6BB4B09E41FFCB755974E2C3097B0460F24F0B6D4605D2",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Roughness",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "metallic",
+                            "file":  "BilinAI_FaceRig_60k_metallic.png",
+                            "bytes":  1118567,
+                            "sha256":  "152808E390175B7FC0E5F06EF4004C10304AD5DBC40EA3A76163A757BBFBAC0B",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Metallic",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "eye_iris",
+                            "file":  "BilinAI_FaceRig_60k_eye_iris.png",
+                            "bytes":  32070,
+                            "sha256":  "6F5A9480D974314982A32093AB9A5667A6FE9F78D258DCFDB4E2025E7E64360F",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Eyeball Base Color",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        }
+                    ],
+    "textures_1k":  [
+                        {
+                            "role":  "albedo",
+                            "file":  "BilinAI_FaceRig_60k_albedo.png",
+                            "bytes":  1531557,
+                            "sha256":  "F3118EF13C298632865CC3F8E864C22EE01CA4712BC81A5229D84C39517F3F47",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Base Color",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_FaceRig_60k_albedo.png"
+                        },
+                        {
+                            "role":  "normal",
+                            "file":  "BilinAI_FaceRig_60k_normal.png",
+                            "bytes":  905092,
+                            "sha256":  "5BD110149150E60C3D6C1F288B5C9FBBD3B2BAAC5255312D26DE74C86172C7D1",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Normal Map",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_FaceRig_60k_normal.png"
+                        },
+                        {
+                            "role":  "roughness",
+                            "file":  "BilinAI_FaceRig_60k_roughness.png",
+                            "bytes":  349840,
+                            "sha256":  "E166A4BB8A5658EC753C2E3BD907BE407901BDB5994414EAC9890C3C7B112246",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Roughness",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_FaceRig_60k_roughness.png"
+                        },
+                        {
+                            "role":  "metallic",
+                            "file":  "BilinAI_FaceRig_60k_metallic.png",
+                            "bytes":  337245,
+                            "sha256":  "70C95D7F22593BBE857CF542590C8CBB6EF9210A554948D3EB283A7FBC95D5E7",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Metallic",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_FaceRig_60k_metallic.png"
+                        },
+                        {
+                            "role":  "eye_iris",
+                            "file":  "BilinAI_FaceRig_60k_eye_iris.png",
+                            "bytes":  32070,
+                            "sha256":  "6F5A9480D974314982A32093AB9A5667A6FE9F78D258DCFDB4E2025E7E64360F",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Eyeball Base Color",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_FaceRig_60k_eye_iris.png"
+                        }
+                    ]
+}

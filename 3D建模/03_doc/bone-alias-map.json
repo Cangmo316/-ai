@@ -1,0 +1,156 @@
+{
+    "schema":  "bilinai.digital-human.bone-alias/v1",
+    "generated_at":  "2026-10-01T22:11:37+08:00",
+    "asset_id":  "female_60s_v3",
+    "note":  "编辑期(20 骨, Blender 命名 X.L/X.R) 与交付期(8 骨, X_L/X_R) 的骨名对照。R43 复核更正：client/face-adapter.js 的 expandBoneTargets() 把参数表里的 tg 字符串（如 ear.L/ear.R）改写成 _L/_R 约定，而 bindThree() 的 getBone() 是逐字 Map 查询、没有回退，因此展开结果只与 8 骨交付件同名。在两代编辑期 _edit.glb 上，eye_L/eye_R/ear_L/ear_R 查不到骨，会走「找不到骨 -\u003e 告警跳过」。本表即用于补上这层 20-\u003e8 的名字映射。",
+    "runtime_bones_8":  [
+                            "head",
+                            "neck",
+                            "jaw",
+                            "tongue",
+                            "eye_L",
+                            "eye_R",
+                            "ear_L",
+                            "ear_R"
+                        ],
+    "editing_bones_20":  [
+                             "brow.L",
+                             "brow.R",
+                             "cheek.L",
+                             "cheek.R",
+                             "ear.L",
+                             "ear.R",
+                             "eye.L",
+                             "eye.R",
+                             "eyelid_lower.L",
+                             "eyelid_lower.R",
+                             "eyelid_upper.L",
+                             "eyelid_upper.R",
+                             "head",
+                             "jaw",
+                             "lip_lower",
+                             "lip_upper",
+                             "neck",
+                             "nose",
+                             "root",
+                             "tongue"
+                         ],
+    "edit_to_runtime":  {
+                            "head":  "head",
+                            "neck":  "neck",
+                            "jaw":  "jaw",
+                            "tongue":  "tongue",
+                            "eye.L":  "eye_L",
+                            "eye.R":  "eye_R",
+                            "ear.L":  "ear_L",
+                            "ear.R":  "ear_R",
+                            "root":  null,
+                            "nose":  null,
+                            "lip_upper":  null,
+                            "lip_lower":  null,
+                            "eyelid_upper.L":  null,
+                            "eyelid_upper.R":  null,
+                            "eyelid_lower.L":  null,
+                            "eyelid_lower.R":  null,
+                            "brow.L":  null,
+                            "brow.R":  null,
+                            "cheek.L":  null,
+                            "cheek.R":  null
+                        },
+    "edit_only_bones":  [
+                            "root",
+                            "nose",
+                            "lip_upper",
+                            "lip_lower",
+                            "eyelid_upper.L",
+                            "eyelid_upper.R",
+                            "eyelid_lower.L",
+                            "eyelid_lower.R",
+                            "brow.L",
+                            "brow.R",
+                            "cheek.L",
+                            "cheek.R"
+                        ],
+    "edit_only_note":  "这 12 根骨只存在于编辑期 20 骨骨架；交付期 8 骨件里它们的权重已按 §27.2 M6 并回 head，故交付件上无同名骨。",
+    "bone_rules":  {
+                       "neck_thickness":  {
+                                              "target":  "neck",
+                                              "type":  "scale"
+                                          },
+                       "head_scale":  {
+                                          "target":  "head",
+                                          "type":  "scale"
+                                      },
+                       "eye_spacing":  {
+                                           "mirror":  true,
+                                           "axis":  "x",
+                                           "target":  "eye",
+                                           "type":  "translate"
+                                       },
+                       "ear_size":  {
+                                        "target":  "ear",
+                                        "type":  "scale"
+                                    },
+                       "ear_protrusion":  {
+                                              "mirror":  true,
+                                              "axis":  "y",
+                                              "target":  "ear",
+                                              "type":  "rotate"
+                                          },
+                       "ear_height":  {
+                                          "mirror":  false,
+                                          "axis":  "z",
+                                          "target":  "ear",
+                                          "type":  "translate"
+                                      }
+                   },
+    "bone_rules_resolve":  {
+                               "resolved_targets_by_adapter":  [
+                                                                   "neck",
+                                                                   "eye_L",
+                                                                   "eye_R",
+                                                                   "head",
+                                                                   "ear_L",
+                                                                   "ear_R"
+                                                               ],
+                               "on_delivery_8":  {
+                                                     "hit":  [
+                                                                 "neck",
+                                                                 "head",
+                                                                 "eye_L",
+                                                                 "eye_R",
+                                                                 "ear_L",
+                                                                 "ear_R"
+                                                             ],
+                                                     "miss":  [
+
+                                                              ],
+                                                     "note":  "逐字命中 6/6"
+                                                 },
+                               "on_editing_20":  {
+                                                     "hit":  [
+                                                                 "neck",
+                                                                 "head"
+                                                             ],
+                                                     "miss":  [
+                                                                  "eye_L",
+                                                                  "eye_R",
+                                                                  "ear_L",
+                                                                  "ear_R"
+                                                              ],
+                                                     "note":  "编辑期骨名为 eye.L/eye.R/ear.L/ear.R，展开后的 _L/_R 查不到骨，4/6 会告警跳过"
+                                                 },
+                               "conclusion":  "更正：6 条 BONE_RULES 参数在 8 骨交付件上 6/6 生效；在 20 骨编辑件上仅 neck_thickness / head_scale 生效，eye_spacing / ear_size / ear_protrusion / ear_height 共 4 条跳过。参数表 102 条中其余 96 条（morph 63 / material 27 / asset 6）不受影响。"
+                           },
+    "revision":  "R43 复核更正：20 骨编辑件上 4/6 骨骼通道参数会告警跳过（此前「已归一、都能命中」的结论有误）",
+    "revised_at":  "2026-10-01T22:16:51+08:00",
+    "adapter_lookup":  {
+                           "expandBoneTargets":  "tg \u0027.L/.R\u0027 -\u003e \u0027_L/_R\u0027（face-adapter.js:58 BONE_SUFFIX / :61 正则）",
+                           "getBone":  "bindThree() 用 obj.name 原样做键（:365/:367），getBone() 为逐字 Map 查询（:389），无 . \u003c-\u003e _ 回退",
+                           "fix_option_b":  {
+                                                "where":  "client/face-adapter.js bindThree() getBone",
+                                                "patch":  "getBone: (name) =\u003e bones.get(name)\r\n  || bones.get(String(name).replace(/_(L|R)$/, \u0027.$1\u0027))\r\n  || bones.get(String(name).replace(/\\.(L|R)$/, \u0027_$1\u0027))\r\n  || null,",
+                                                "note":  "改完需同步 client/README.md 与交付说明 §24.8。本轮未执行。"
+                                            }
+                       }
+}

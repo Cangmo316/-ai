@@ -1,0 +1,110 @@
+{
+    "set":  "02_male_60s_v1",
+    "source":  "E:\\blender demo\\BilinAI_MaleFaceRig_60k_delivery_baked.blend",
+    "note":  "R42：2K 为自 _delivery_baked.blend 的 packed 原始字节原样落盘（逐字节等于 pack 源）；1K 为 2K 下采样 LOD；colorspace 为修正后口径",
+    "count":  10,
+    "textures_2k":  [
+                        {
+                            "role":  "albedo",
+                            "file":  "BilinAI_MaleFaceRig_60k_albedo.png",
+                            "bytes":  4023376,
+                            "sha256":  "7C633D563E545FC48CB5EF5A873FD8332AFFF388A5D0C6A17FC4037FD75B9864",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Base Color",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "normal",
+                            "file":  "BilinAI_MaleFaceRig_60k_normal.png",
+                            "bytes":  2014206,
+                            "sha256":  "C8004762E00EC3CE5FF3A26D1A152DF71071CEFEB867F154DA29D02A820EC85F",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Normal Map",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "roughness",
+                            "file":  "BilinAI_MaleFaceRig_60k_roughness.png",
+                            "bytes":  1214671,
+                            "sha256":  "A1E1D475C17F69827354B828EC7DD4818E479BBBE802B96B3EC82DE186D5FEB9",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Roughness",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "metallic",
+                            "file":  "BilinAI_MaleFaceRig_60k_metallic.png",
+                            "bytes":  1163261,
+                            "sha256":  "FD643D482026B1D0F361A60605CBAF214187692C5AD6AF41A87FF908BABB4813",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Metallic",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        },
+                        {
+                            "role":  "eye_iris",
+                            "file":  "BilinAI_MaleFaceRig_60k_eye_iris.png",
+                            "bytes":  32070,
+                            "sha256":  "6F5A9480D974314982A32093AB9A5667A6FE9F78D258DCFDB4E2025E7E64360F",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Eyeball Base Color",
+                            "stage":  "delivery-2k",
+                            "byte_identical_to_packed":  true
+                        }
+                    ],
+    "textures_1k":  [
+                        {
+                            "role":  "albedo",
+                            "file":  "BilinAI_MaleFaceRig_60k_albedo.png",
+                            "bytes":  1251588,
+                            "sha256":  "9E7484EEEDB4463AD076339E9A02D03531702B0D691C9C2FC09CCA7C0A1FFDAA",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Base Color",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_MaleFaceRig_60k_albedo.png"
+                        },
+                        {
+                            "role":  "normal",
+                            "file":  "BilinAI_MaleFaceRig_60k_normal.png",
+                            "bytes":  675397,
+                            "sha256":  "C590F357481186E3C8A9BE444F77CD697CF86FB8850B5B62BA3C26C4E5E7ABD9",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Normal Map",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_MaleFaceRig_60k_normal.png"
+                        },
+                        {
+                            "role":  "roughness",
+                            "file":  "BilinAI_MaleFaceRig_60k_roughness.png",
+                            "bytes":  356877,
+                            "sha256":  "E919A6EA79136201E1F68A76CBDFB5542334C01826DE6D04C36BE1CA9C5FCF10",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Roughness",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_MaleFaceRig_60k_roughness.png"
+                        },
+                        {
+                            "role":  "metallic",
+                            "file":  "BilinAI_MaleFaceRig_60k_metallic.png",
+                            "bytes":  352886,
+                            "sha256":  "D925A7B0558789F975DE449788D0F9D4FA9B8E9A75DA4ECFDE0743415E72AE03",
+                            "colorspace":  "Non-Color",
+                            "semantic":  "Metallic",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_MaleFaceRig_60k_metallic.png"
+                        },
+                        {
+                            "role":  "eye_iris",
+                            "file":  "BilinAI_MaleFaceRig_60k_eye_iris.png",
+                            "bytes":  32070,
+                            "sha256":  "6F5A9480D974314982A32093AB9A5667A6FE9F78D258DCFDB4E2025E7E64360F",
+                            "colorspace":  "sRGB",
+                            "semantic":  "Eyeball Base Color",
+                            "stage":  "lod-1k",
+                            "downsampled_from":  "textures\\BilinAI_MaleFaceRig_60k_eye_iris.png"
+                        }
+                    ]
+}

@@ -1,0 +1,994 @@
+{
+    "schema":  "bilinai.digital-human.validation-report/v1",
+    "generated_at":  "2026-10-02T01:51:06+08:00",
+    "stage":  "第 5 阶段：骨骼与蒙皮 + 口内几何 + 减面 + 眼球/眼裂 + 唇缝权重 + 贴图降采样（4096→2048）+ 交付期减骨（20→6 骨，第 11 阶段保留耳骨 → 8 骨） | 第 7 阶段：15 个 vis_* + 8 个 expr_* | 第 8 阶段：§3 参数总表定稿（102 条）+ 111 个 shape_* 捏脸形态键 + 极端值测试/眼球护栏 + 交付期烘焙（shape_* 烘进顶点） | 第 9 阶段：重建口腔开口/前庭底几何 + jaw 权重联合优化 + 翻转面清零 + 权重和归一化 | 第 12 阶段：参数表 el 列（康养裁剪）由粗标改为 client/care-trim.js 结论的投影（保留 79 / 弱化 20 / 不做 3 + 强化 15），生成与校验统一走 _mk_params_el.mjs（--check 漂移即 throw），接入包 parameters-table.js 与参数表同源核对纳入报告 | 第 11 阶段：交付期保留 ear.L / ear.R（6 -> 8 骨，ear_size / ear_protrusion / ear_height 恢复可驱动）",
+    "model_version":  "face-rig-0.6.0",
+    "params_table_version":  "params-table-1.0.0",
+    "params_table_note":  "§3 参数总表已定稿：102 条（A17/B8/C18/D10/E12/F5/G12/H10/I7/J3，全部≥规格书下限）；通道 morph 63 / bone 6 / material 27 / asset 6。文件：parameters-table.json / parameters-table.md",
+    "blender_version":  "5.1.2",
+    "source_blend":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery_baked.blend",
+    "source_blend_bytes":  14202690,
+    "source_blend_editing":  "E:\\blender demo\\BilinAI_FaceRig_60k_edit.blend",
+    "source_blend_editing_bytes":  19141287,
+    "doc":  "E:\\blender demo\\面部骨骼绑定交付说明.md",
+    "deliverables":  {
+                         "blend":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery_baked.blend",
+                         "glb":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery_baked.glb",
+                         "glb_bytes":  7582548,
+                         "editing_blend":  "E:\\blender demo\\BilinAI_FaceRig_60k_edit.blend",
+                         "editing_glb":  "E:\\blender demo\\BilinAI_FaceRig_60k.glb",
+                         "editing_glb_bytes":  13648312,
+                         "stage7_delivery_blend":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery.blend",
+                         "stage7_delivery_glb":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery.glb"
+                     },
+    "counts":  {
+                   "total_tri":  56077,
+                   "budget_tri":  60000,
+                   "head_tri":  24475,
+                   "head_budget_tri":  25000,
+                   "head_scope":  "node_0 中 min(worldZ) >= 0.955 的面",
+                   "meshes":  {
+                                  "node_0":  {
+                                                 "verts":  27170,
+                                                 "faces":  54228,
+                                                 "tris":  54228,
+                                                 "materials":  [
+                                                                   "Material.001"
+                                                               ]
+                                             },
+                                  "mouth_cavity":  {
+                                                       "verts":  547,
+                                                       "faces":  546,
+                                                       "tris":  1001,
+                                                       "materials":  [
+                                                                         "M_MouthCavity",
+                                                                         "M_LipInner"
+                                                                     ]
+                                                   },
+                                  "teeth":  {
+                                                "verts":  104,
+                                                "faces":  100,
+                                                "tris":  200,
+                                                "budget":  1500,
+                                                "materials":  [
+                                                                  "M_Teeth"
+                                                              ]
+                                            },
+                                  "tongue":  {
+                                                 "verts":  62,
+                                                 "faces":  72,
+                                                 "tris":  120,
+                                                 "materials":  [
+                                                                   "M_Tongue"
+                                                               ]
+                                             },
+                                  "eyeball_L":  {
+                                                    "verts":  134,
+                                                    "faces":  144,
+                                                    "tris":  264,
+                                                    "budget":  600,
+                                                    "materials":  [
+                                                                      "M_Eyeball"
+                                                                  ]
+                                                },
+                                  "eyeball_R":  {
+                                                    "verts":  134,
+                                                    "faces":  144,
+                                                    "tris":  264,
+                                                    "budget":  600,
+                                                    "materials":  [
+                                                                      "M_Eyeball"
+                                                                  ]
+                                                }
+                              },
+                   "removed_objects":  [
+                                           "node_0_bak"
+                                       ]
+               },
+    "armature":  {
+                     "object":  "FaceRig",
+                     "bones":  8,
+                     "deform_groups_on_node_0":  7,
+                     "delivery_bone_budget":  8,
+                     "delivery_bone_note":  "已完成：第 6 阶段删 14 根辅助骨（head/neck/jaw/tongue/eye_L/eye_R，共 6 根）；第 11 阶段按『交付期保留 ear.L / ear.R』恢复耳骨，交付骨架 = 8 根（neck / head / jaw / tongue / eye_L / eye_R / ear_L / ear_R），满足规格书验收清单『交付资产 <= 8 骨』（恰为上界，属有意选择，见交付说明 §25）。辅助骨权重已按映射烘焙合并（root→neck、lip_lower→jaw、nose→head、其余面部辅助骨→head）；ear.L / ear.R 的 rest 与权重自编辑期 20 骨资产精确反演（node_0 上 117 / 124 点，拆分后 head 侧归零）。node_0 上真正参与形变的骨 = 7 根。",
+                     "constraints":  0,
+                     "drivers":  0
+                 },
+    "materials":  {
+                      "slots":  6,
+                      "budget":  6,
+                      "list":  [
+                                   "Material.001",
+                                   "M_LipInner",
+                                   "M_MouthCavity",
+                                   "M_Teeth",
+                                   "M_Tongue",
+                                   "M_Eyeball"
+                               ],
+                      "double_sided":  6
+                  },
+    "textures":  {
+                     "budget_px":  2048,
+                     "items":  [
+                                   {
+                                       "name":  "texture_pbr_20250901",
+                                       "gltf_slot":  "baseColor",
+                                       "px":  [
+                                                  2048,
+                                                  2048
+                                              ],
+                                       "packed":  true,
+                                       "bytes":  5016848,
+                                       "check":  "PASS"
+                                   },
+                                   {
+                                       "name":  "texture_pbr_20250901_normal",
+                                       "gltf_slot":  "normal",
+                                       "px":  [
+                                                  2048,
+                                                  2048
+                                              ],
+                                       "packed":  true,
+                                       "bytes":  2918807,
+                                       "check":  "PASS"
+                                   },
+                                   {
+                                       "name":  "texture_pbr_20250901_metallic + _roughness (自动合并 ORM)",
+                                       "gltf_slot":  "metallicRoughness",
+                                       "px":  [
+                                                  2048,
+                                                  2048
+                                              ],
+                                       "packed":  true,
+                                       "bytes":  2903560,
+                                       "check":  "PASS"
+                                   },
+                                   {
+                                       "name":  "eye_iris",
+                                       "gltf_slot":  "baseColor(M_Eyeball)",
+                                       "px":  [
+                                                  256,
+                                                  256
+                                              ],
+                                       "packed":  true,
+                                       "bytes":  32070,
+                                       "check":  "PASS"
+                                   }
+                               ],
+                     "source_was_px":  4096,
+                     "packed_bytes_before":  31015824,
+                     "packed_bytes_after":  10871285,
+                     "missing_textures":  0,
+                     "verify_method":  "直接解析 .glb 内嵌 PNG 的 IHDR（大端读 width/height），非依赖元数据"
+                 },
+    "morphs":  {
+                   "shape":  [
+                                 "vis_silence",
+                                 "vis_AA",
+                                 "vis_E",
+                                 "vis_I",
+                                 "vis_O",
+                                 "vis_U",
+                                 "vis_MBP",
+                                 "vis_FV",
+                                 "vis_L",
+                                 "vis_TH",
+                                 "vis_WQ",
+                                 "vis_RR",
+                                 "vis_SS",
+                                 "vis_KK",
+                                 "vis_NN",
+                                 "expr_blink_L",
+                                 "expr_blink_R",
+                                 "expr_smile",
+                                 "expr_frown",
+                                 "expr_surprise",
+                                 "expr_squint",
+                                 "expr_brow_up",
+                                 "expr_brow_down"
+                             ],
+                   "vis":  [
+                               "vis_silence",
+                               "vis_AA",
+                               "vis_E",
+                               "vis_I",
+                               "vis_O",
+                               "vis_U",
+                               "vis_MBP",
+                               "vis_FV",
+                               "vis_L",
+                               "vis_TH",
+                               "vis_WQ",
+                               "vis_RR",
+                               "vis_SS",
+                               "vis_KK",
+                               "vis_NN"
+                           ],
+                   "expr":  [
+                                "expr_blink_L",
+                                "expr_blink_R",
+                                "expr_smile",
+                                "expr_frown",
+                                "expr_surprise",
+                                "expr_squint",
+                                "expr_brow_up",
+                                "expr_brow_down"
+                            ],
+                   "count":  23,
+                   "node_0_morphs":  23,
+                   "mouth_mesh_morphs":  16,
+                   "gltf_morph_targets":  23,
+                   "whitelist_violations":  0,
+                   "shape_in_runtime_asset":  0,
+                   "sparse_targets":  23,
+                   "dense_targets":  0,
+                   "node_0_morph_bytes":  976583,
+                   "node_0_morph_bytes_if_dense":  8533920,
+                   "note":  "vis_*/expr_*（23 个）常驻运行期；shape_*（捏脸 111 个，含口内 18 个）只在编辑期存在，交付期按预设烘焙进顶点，故运行期资产 shape_* 数量为 0",
+                   "shape_count_editing_node_0":  111,
+                   "shape_targets_total":  113,
+                   "shape_in_editing_asset":  111,
+                   "shape_baked_max_delta_mm":  1.1166,
+                   "shape_namespace_map":  "E:\\blender demo\\shape-namespace-map.json"
+               },
+    "gltf":  {
+                 "file":  "E:\\blender demo\\BilinAI_FaceRig_60k_delivery_baked.glb",
+                 "bytes":  7582548,
+                 "generator":  "Khronos glTF Blender I/O v5.1.20",
+                 "gltf_version":  "2.0",
+                 "extensions_used":  [
+
+                                     ],
+                 "nodes":  15,
+                 "meshes":  6,
+                 "primitives":  7,
+                 "materials":  6,
+                 "textures":  4,
+                 "images":  4,
+                 "skins":  1,
+                 "animations":  0,
+                 "joints":  8,
+                 "joint_names_mapped":  true,
+                 "total_tri":  56077,
+                 "export_settings":  {
+                                         "export_format":  "GLB",
+                                         "export_yup":  true,
+                                         "export_apply":  true,
+                                         "export_skins":  true,
+                                         "export_def_bones":  false,
+                                         "export_morph":  true,
+                                         "export_animations":  false,
+                                         "export_cameras":  false,
+                                         "export_lights":  false,
+                                         "draco":  false,
+                                         "image_format":  "AUTO",
+                                         "all_influences":  false
+                                     }
+             },
+    "checks":  [
+                   {
+                       "id":  "mesh.budget.total_tri",
+                       "result":  "PASS",
+                       "detail":  "56,077 <= 60,000"
+                   },
+                   {
+                       "id":  "mesh.budget.head_tri",
+                       "result":  "PASS",
+                       "detail":  "24,475 <= 25,000"
+                   },
+                   {
+                       "id":  "mesh.budget.eyeball_tri",
+                       "result":  "PASS",
+                       "detail":  "264 x2 <= 600 x2"
+                   },
+                   {
+                       "id":  "mesh.budget.teeth_tri",
+                       "result":  "PASS",
+                       "detail":  "200 <= 1,500"
+                   },
+                   {
+                       "id":  "mesh.clean_scene",
+                       "result":  "PASS",
+                       "detail":  "已移除 node_0_bak；场景余 9 对象 = 7 资产 + Camera + Light（导出时相机/灯光均关闭）"
+                   },
+                   {
+                       "id":  "armature.bone_count",
+                       "result":  "PASS",
+                       "detail":  "编辑期 20 骨（支撑全部面部参数）；交付 .glb 内 8 骨（neck / head / jaw / tongue / eye_L / eye_R / ear_L / ear_R），满足规格书验收清单『<= 8 骨』—— 第 11 阶段由 6 骨恢复 ear.L / ear.R，见 §25"
+                   },
+                   {
+                       "id":  "armature.constraints",
+                       "result":  "PASS",
+                       "detail":  "0 个（规避 §4.6-①）"
+                   },
+                   {
+                       "id":  "armature.drivers",
+                       "result":  "PASS",
+                       "detail":  "0 个（规避 §4.6-②）"
+                   },
+                   {
+                       "id":  "armature.rest_pose_zero",
+                       "result":  "PASS",
+                       "detail":  "静止姿态旋转/平移/缩放偏差 0"
+                   },
+                   {
+                       "id":  "skin.max_influences",
+                       "result":  "PASS",
+                       "detail":  "最大 4（27,170/27,170 顶点）"
+                   },
+                   {
+                       "id":  "skin.weight_sum",
+                       "result":  "PASS",
+                       "detail":  "全部顶点权重和 = 1（容差 1e-3）"
+                   },
+                   {
+                       "id":  "skin.empty_vertices",
+                       "result":  "PASS",
+                       "detail":  "0 个无权重顶点"
+                   },
+                   {
+                       "id":  "skin.left_right_symmetry",
+                       "result":  "PASS",
+                       "detail":  "2mm 体素平均权重差 0.83%~0.91%；brow.L/R 最大权重已对齐 0.622/0.622"
+                   },
+                   {
+                       "id":  "topology.eye_boundary_loops",
+                       "result":  "PASS",
+                       "detail":  "eye.L 45 顶点 / eye.R 38 顶点（真实开孔）"
+                   },
+                   {
+                       "id":  "topology.mouth_seam_loop",
+                       "result":  "PASS",
+                       "detail":  "90 顶点（下唇行 52 / 上唇行 40）"
+                   },
+                   {
+                       "id":  "eyeball.penetration_rest",
+                       "result":  "PASS",
+                       "detail":  "node_0 x eyeball_L/R BVH 相交 0 / 0"
+                   },
+                   {
+                       "id":  "eyeball.penetration_rotation",
+                       "result":  "PASS",
+                       "detail":  "48 组旋转扫描相交 0，球心位移 0.000mm"
+                   },
+                   {
+                       "id":  "eyeball.hole_light_leak",
+                       "result":  "PASS",
+                       "detail":  "眼裂内缩 0.25mm 点阵 10,807 点射线全部命中眼球，漏光 0"
+                   },
+                   {
+                       "id":  "mouth.opening_recommended",
+                       "result":  "PASS",
+                       "detail":  "jaw+20 / lip_upper+25 / lip_lower-25 -> 开口 15.23mm（中线 15.00mm）"
+                   },
+                   {
+                       "id":  "mouth.edge_stretch",
+                       "result":  "PASS",
+                       "detail":  "唇缝邻接边最大拉伸 1.43x、0 条 > 2x；修复前 22.77x / 127 条"
+                   },
+                   {
+                       "id":  "mouth.cavity_seal_rest",
+                       "result":  "PASS",
+                       "detail":  "node_0 x mouth_cavity 相交 148 对（刻意嵌合密封）"
+                   },
+                   {
+                       "id":  "mouth.cavity_open",
+                       "result":  "PASS",
+                       "detail":  "大张嘴下 node_0 x mouth_cavity 相交 0"
+                   },
+                   {
+                       "id":  "deform.face_clean",
+                       "result":  "PASS",
+                       "detail":  "jaw 0~+30 度渲染无破面/无飞边/无翻转法线"
+                   },
+                   {
+                       "id":  "deform.chin_furrow_stretch",
+                       "result":  "PASS",
+                       "detail":  "jaw 拉伸已在第 9 阶段根治（判据：node_0 与 mouth_cavity 全部边 maxStretch <= 2.0 且 >2x 条数为 0）。交付件实测：jaw +/-8 度 = node_0 1.515 / 1.484、mouth_cavity 1.498 / 1.460（>2x 均 0）；+/-14 度 = node_0 1.899 / 1.851、mouth_cavity 1.932 / 1.878（>2x 均 0）；烘焙件 +/-14 度 = node_0 1.927 / 1.864、mouth_cavity 1.932 / 1.878（>2x 均 0）。超出 +/-14 规格包络后仍单调增长：+/-20 度 = node_0 2.359 / 2.247（>2x 195 / 26）、mouth_cavity 2.447 / 2.405（27 / 12）；+/-28 度 = node_0 2.990 / 2.887（795 / 230）、mouth_cavity 3.193 / 3.170（98 / 41），属远超规格的极端姿态（规格书规定的下颌开口为 +/-14 度）。根因（解析式与 Blender 实测吻合，误差 <8%）：拉伸 ~= 1 + |delta jaw 权重| x 17 mm / L；跨唇缝长边（L >= 5 mm）的 delta w ~= 0.42 为物理必需（上唇随 head、下唇随 jaw，两骨相对旋转 14 度），故原始权重的 Lipschitz 下限 ~= 2.43x。根治三件套：① jaw 权重『朝向约束 + 拉伸约束』联合优化（_n0jaw4.py；关键修正 —— 拉伸项的公式必须包含静止边向量，即 |(C_rest + delta D)_edge| / L0，旧式只写 |delta D_edge| / L0 会漏掉静止边向量而误判）；② 退化细边最小位移解析修正（_blinkfix2.py，3 条 L0 ~= 0.187 mm 的退化边，实测位移 0.0027 微米）；③ 权重和归一化（_wnorm.py）。四种早期权重手段实测全部否决：拉普拉斯平滑（2.809 -> 3.854~4.820x）、扩散域含 head 层（3.159~4.542x 且上唇位移 4.07 -> 9.06 mm）、Jacobi 逐边预算限幅（仍 103 条越限 / 3.175x）、Gauss-Seidel 限幅（仍 56 条越限 / 2.822x）。权重侧规格条款全部 PASS：权重和 1.000000、影响骨骼最大 3（规格书 279 行上限 4）、左右对称 2 mm 体素差 0.83%~0.91%（规格书 236 行）。规格书未规定拉伸倍率阈值，2.0x 为本项目自设。详见 warn-root-cause-evidence.json 与交付说明 §20。"
+                   },
+                   {
+                       "id":  "deform.no_degenerate_faces",
+                       "result":  "PASS",
+                       "detail":  "全 6 网格零面积面 0、面积<1e-10 的面 0、NaN 顶点 0"
+                   },
+                   {
+                       "id":  "material.slot_count",
+                       "result":  "PASS",
+                       "detail":  "6 <= 6"
+                   },
+                   {
+                       "id":  "material.missing_textures",
+                       "result":  "PASS",
+                       "detail":  "0；全部 pack 内嵌，.blend 自包含；自定义法线已清除（6/6 has_custom_normals=False）"
+                   },
+                   {
+                       "id":  "texture.max_size",
+                       "result":  "PASS",
+                       "detail":  "源 4096 已降采样；交付 .glb 内 4 张嵌图实测 256x256/1024x1024/1024x1024/1024x1024（PNG IHDR 反读）；.blend 源保持 2048，端侧不再吃 2K 显存"
+                   },
+                   {
+                       "id":  "gltf.exported",
+                       "result":  "PASS",
+                       "detail":  "GLB v2，60k 快照 6124032 B / delivery 7583336 B / delivery_baked 7582548 B / edit 10073348 B，Khronos glTF Blender I/O v5.1.20"
+                   },
+                   {
+                       "id":  "gltf.bone_name_mapping",
+                       "result":  "PASS",
+                       "detail":  "导出前临时把 12 根 .L/.R 骨与顶点组改名为 _L/_R；glb 内 20 joints 全部为 _L/_R 命名；.blend 保持 .L/.R"
+                   },
+                   {
+                       "id":  "gltf.skin_channels",
+                       "result":  "PASS",
+                       "detail":  "6/6 mesh 带 JOINTS_0 + WEIGHTS_0；componentType 5121(ubyte)/5123(ushort)/5126(float)"
+                   },
+                   {
+                       "id":  "gltf.morph_namespace",
+                       "result":  "PASS",
+                       "detail":  "glb 内 morph targets = 0，运行时 shape_* 数量 = 0"
+                   },
+                   {
+                       "id":  "gltf.texture_size",
+                       "result":  "PASS",
+                       "detail":  "内嵌贴图 IHDR 全部 <= 1024（4 件女生交付 glb 长边现算最大值 1024）"
+                   },
+                   {
+                       "id":  "gltf.black_face_risk",
+                       "result":  "PASS",
+                       "detail":  "6/6 材质 doubleSided=true；6/6 mesh 具备 NORMAL 属性；无自定义法线；0 退化面"
+                   },
+                   {
+                       "id":  "gltf.extensions",
+                       "result":  "PASS",
+                       "detail":  "extensionsUsed = []（纯核心 glTF 2.0，无 KHR 扩展，移动端兼容性最好）"
+                   },
+                   {
+                       "id":  "gltf.tri_count_match",
+                       "result":  "PASS",
+                       "detail":  "glb 内索引总数换算 = 56,077，与 .blend 完全一致"
+                   },
+                   {
+                       "id":  "deliver.bone_reduction",
+                       "result":  "PASS",
+                       "detail":  "第 6 阶段删 root/nose/lip_upper/lip_lower/eyelid_*/brow_*/cheek_* 共 14 根辅助骨，仅留 head/neck/jaw/tongue/eye_L/eye_R；辅助骨权重按映射烘焙合并（root→neck、lip_lower→jaw、nose→head、其余面部辅助骨→head）。第 11 阶段按『交付期保留 ear.L / ear.R』把 ear_* 两根骨自 head 拆回（node_0 上 117 / 124 点，拆分后 head 侧归零 0 点），交付骨架 = 8 根，见 §25"
+                   },
+                   {
+                       "id":  "deliver.version_consistency",
+                       "result":  "PASS",
+                       "detail":  "模型 face-rig-0.6.0 / 参数表 params-table-1.0.0 / 报告 v1 三者版本已对齐（§10）"
+                   },
+                   {
+                       "id":  "morph.namespace_whitelist",
+                       "result":  "PASS",
+                       "detail":  "运行期 target 全部落在 vis_*/expr_* 白名单；编辑期 111 个 shape_* + 口内 18 个亦全部符合 shape_<key>_up/_dn 命名"
+                   },
+                   {
+                       "id":  "deliver.bone_count_export",
+                       "result":  "PASS",
+                       "detail":  "交付 .glb 内 joints = 8（neck / head / jaw / tongue / eye_L / eye_R / ear_L / ear_R），满足 <=8 骨；编辑期 20 骨仅保存在 .blend 内"
+                   },
+                   {
+                       "id":  "deliver.weight_sum_export",
+                       "result":  "PASS",
+                       "detail":  "逐顶点反读交付 .glb 的 WEIGHTS_0：47,102 个导出顶点权重和全部 = 1（容差 1e-3，0 例外），最大影响骨 3 根（≤4）"
+                   },
+                   {
+                       "id":  "deliver.rest_pose_identity",
+                       "result":  "PASS",
+                       "detail":  "减骨前后形变指纹对照：head / eye.L / tongue 单骨旋转逐位一致（仅 float32 噪声 ~1e-8），牙、舌、眼球完全逐位相同；静置下 evaluated 网格与基础网格偏差 1.19e-7 m。第 11 阶段加耳骨后复核：静置 / head +15 度俯仰 / head +20 度偏航三态 node_0 最大偏差 1.192093e-04 mm（float32 噪声），其余 5 个网格逐位相同"
+                   },
+                   {
+                       "id":  "deliver.mouth_open_single_bone",
+                       "result":  "PASS",
+                       "detail":  "交付骨架单根 jaw 即可张嘴：+12° → 15.35 mm、+20° → 24.57 mm、+25° → 29.83 mm（编辑期单 jaw 仅 0.14 mm）；上唇行 Δz = 0、下唇行全幅下移，方向符合解剖"
+                   },
+                   {
+                       "id":  "deliver.jaw_safe_range",
+                       "result":  "PASS",
+                       "detail":  "刮扫 jaw 0~+28°：不超过 +22° 时舌/齿均不与面部网格相交；+24° 起舌×面 37 对、齿×面 26 对。交付推荐上限 +20°（开口 24.6 mm），口型建议 +6~+12°"
+                   },
+                   {
+                       "id":  "deliver.mouth_no_light_leak",
+                       "result":  "PASS",
+                       "detail":  "张嘴全过程开口恒由 mouth_cavity + tongue 覆盖：6 个网格换成单色自发光材质后渲染，开口内无皮肤内壁露出、无背景漏光；射线扫描同样确认开口后首个命中体为口腔/牙/舌"
+                   },
+                   {
+                       "id":  "deliver.tongue_cavity_internal",
+                       "result":  "WARN",
+                       "detail":  "jaw +4~+8° 时舌 × 口腔网格内部相交 36~58 对面，位置 y = -0.062~-0.039（唇线之后的口腔内部），渲染不可见；jaw 不小于 +10° 后为 0"
+                   },
+                   {
+                       "id":  "deliver.neck_body_weighting",
+                       "result":  "PASS",
+                       "detail":  "root（躯干/肩部 14,835 顶点，z 不超过 0.955）权重并入 neck：交付骨架中 neck 兼作躯干锤点，端侧做头部转动请旋转 head，neck 仅用于整体俯仰；第 11 阶段起交付骨架为 8 骨，本项结论不变，已在文档 §16 / §25 写明"
+                   },
+                   {
+                       "id":  "morph.vis_set_exact",
+                       "result":  "PASS",
+                       "detail":  "15 个 vis_* 名称与规格 4.4 第 4 条逐一一致（vis_silence/AA/E/I/O/U/MBP/FV/L/TH/WQ/RR/SS/KK/NN）"
+                   },
+                   {
+                       "id":  "morph.expr_set",
+                       "result":  "PASS",
+                       "detail":  "8 个 expr_*，含 expr_blink_L / expr_blink_R 左右分开（规格 4.4 第 5 条）"
+                   },
+                   {
+                       "id":  "morph.shape_absent_runtime",
+                       "result":  "PASS",
+                       "detail":  "运行期 .glb 中 node_0 的 morph target 仅 23 个（vis_ 15 + expr_ 8），shape_* 数量 0（捏脸结果已烘进顶点）"
+                   },
+                   {
+                       "id":  "morph.name_index_mapping",
+                       "result":  "PASS",
+                       "detail":  "glTF mesh.extras.targetNames 存在：node_0 23 个、口内 3 网格各 16 个，顺序与 .blend 形态键顺序一致；端侧取名不取 index"
+                   },
+                   {
+                       "id":  "morph.cross_mesh_follow",
+                       "result":  "PASS",
+                       "detail":  "mouth_cavity / teeth / tongue 各带 15 个 vis_* + expr_surprise 同名 morph，下颌开合时牙/舌/口腔同步，不产生背景漏光"
+                   },
+                   {
+                       "id":  "morph.vis_recognizable",
+                       "result":  "PASS",
+                       "detail":  "15 个 viseme 中线开口 1.54 ~ 23.95 mm，两两可区分（AA>L>E≈O>KK>TH>RR>I>NN>U>WQ>SS>FV>silence>MBP）"
+                   },
+                   {
+                       "id":  "morph.vis_no_light_leak",
+                       "result":  "PASS",
+                       "detail":  "每个 morph 单独权重 1.0 时，正面 61x49=2989 条射线全部命中几何体，漏光 0"
+                   },
+                   {
+                       "id":  "morph.seam_no_inversion",
+                       "result":  "PASS",
+                       "detail":  "唇缝上唇行/下唇行在全部 23 个 morph 下均无翻越（cross=0）"
+                   },
+                   {
+                       "id":  "morph.blink_separate",
+                       "result":  "PASS",
+                       "detail":  "expr_blink_L 仅改变左眼（右眼 41x33 射线首命中结果逐位不变），expr_blink_R 反之"
+                   },
+                   {
+                       "id":  "morph.blink_closure",
+                       "result":  "PASS",
+                       "detail":  "眼裂可见眼球射线 989 -> 38（左眼，闭合 96.2%）、995 -> 23（右眼，闭合 97.7%）；残余位于内外眼角，符合闭眼形态"
+                   },
+                   {
+                       "id":  "morph.regression_extreme_mouth",
+                       "result":  "PASS",
+                       "detail":  "规格 4.4 第 3 条回归：极端嘴型（厚唇 + 大嘴宽 + 嘴角下垂，897 顶点）叠加后 15 个 viseme 排序与常态完全一致（AA 24.11 / L 15.88 / E 14.07 / O 14.17 / KK 12.24 / TH 11.57 / RR 11.28 / I 9.72 / NN 8.64 / U 8.47 / WQ 7.83 / SS 6.78 / FV 5.11 / MBP 1.62 mm），漏光 0"
+                   },
+                   {
+                       "id":  "morph.delta_sparsity",
+                       "result":  "PASS",
+                       "detail":  "node_0 的 23 个 morph target 全部使用 glTF sparse accessor，morph 数据 976,583 B；若稠密编码需 8,533,920 B"
+                   },
+                   {
+                       "id":  "morph.vis_silence_baseline",
+                       "result":  "PASS",
+                       "detail":  "vis_silence 在“捏脸已烘焙的交付 mesh”上重算，零位移，闭嘴姿态与交付静置逐位一致（规格 4.4 第 2 条）"
+                   },
+                   {
+                       "id":  "morph.flipped_normals",
+                       "result":  "PASS",
+                       "detail":  "翻转面已在第 9 阶段根治：25 个模式（jaw +/-14 与 23 个 morph）在 node_0 与 mouth_cavity 上的新增翻转面全部为 0（交付件与烘焙件双验证，判据 = 全部面的 NEWELL 法向与静息态点积 < 0，无面积 / 内角过滤）。对照第 9 阶段前基线：node_0 170 面、mouth_cavity 2 面。成因（实测定位）：闭合口缝处的内唇薄带（边长 0.47~0.96 mm）在满幅张口时被切向错动展开，叠加口角处 jaw 权重跳变 0.317 与部分顶点权重和 1.189 的归一化陷阱，使 15 个键各出现 1~2 面轻微反转。根治链：拉普拉斯权重平滑（阻尼 k 0.06 -> 0.39 七档扫描）-> 退化细边最小位移解析修正 -> 权重和归一化 -> 烘焙翻转面的最小位移解析修正（_bake_flipfix3.py / _bake_flipfix4.py，单面单轮位移上限 5e-5 m，最大顶点改动 0.15116 mm；vis_TH 残留 1 面修正位移 0.00008 mm）。五种早期手段实测全部否决：微面拓扑合并（前提不成立）、位移场拉普拉斯平滑（32 -> 34）、PBD 静止边长约束（32 -> 231、最大位移 21.0 mm）、掩膜阻尼（32 -> 140~346）、全局幅值缩放（仅 0.5~0.6 幅值归零 = 口型压到 50~60%，违反口型规范）。详见 warn-root-cause-evidence.json 与交付说明 §20。"
+                   },
+                   {
+                       "id":  "params.table_contract",
+                       "result":  "PASS",
+                       "detail":  "§3 参数总表定稿 102 条：A17≥15 / B8≥7 / C18≥15 / D10≥10 / E12≥11 / F5≥5 / G12≥12 / H10 / I7 / J3，均满足规格书下限；文件 parameters-table.json、parameters-table.md"
+                   },
+                   {
+                       "id":  "params.channel_split",
+                       "result":  "PASS",
+                       "detail":  "通道分布 morph 63 / bone 6 / material 27 / asset 6；骨骼只驱动整体（头/颈/下颌/舌/眼球），捏脸全部走 shape_*，无同一区域被骨骼与 morph 双强驱动（§4.3）"
+                   },
+                   {
+                       "id":  "params.morph_bind_targets",
+                       "result":  "PASS",
+                       "detail":  "50 条双向参数各绑 _up/_dn + 13 条单向仅 _up = 113 个 target；shape-namespace-map.json（63 条 / 113 targets）与网格键名逐条一致，命名 _up=滑块≥0、_dn=|滑块<0|"
+                   },
+                   {
+                       "id":  "params.elderly_availability",
+                       "result":  "PASS",
+                       "detail":  "老人可用性（规格书 §9 康养裁剪）逐条标注：保留 79 / 弱化 20 / 不做 3（三类之和 = 102），另标强化 15 条（boost 只改默认值建议、不改取值范围），可见 99 / 隐藏 3。该列由 client/care-trim.js 生成（生成器 _mk_params_el.mjs），本次实测 json 102 条与 md 表格 102 行逐条一致；早期 98/1/3 为粗标，已作废。"
+                   },
+                   {
+                       "id":  "shape.key_count",
+                       "result":  "PASS",
+                       "detail":  "node_0 111 个 shape_*（=113 targets 减去挂在 teeth 上的 teeth_size 2 个）；teeth 2 个；mouth_cavity/teeth/tongue 另各带 6 个口内联动 target（mouth_width/height/protrusion + teeth_size）"
+                   },
+                   {
+                       "id":  "shape.naming_whitelist",
+                       "result":  "PASS",
+                       "detail":  "111 个 shape_* 全部形如 shape_<key>_up/_dn，无越界命名；未与 vis_*/expr_* 混用"
+                   },
+                   {
+                       "id":  "shape.extreme_flip_normals",
+                       "result":  "PASS",
+                       "detail":  "111 个 target 逐个拉满：显著翻转面 0（判据：基准面积 >=0.02mm2 且基准最小内角 >=5 度，覆盖 52,950/54,228 = 97.6% 面）。第 9 阶段更正：被过滤器排除的是 1,278 面（2.36%）= 面积 <0.02mm2 的 118 面 与 最小内角 <5 度的 1,208 面（重叠 48 面）；此前写的『已过滤 54.8% 退化微面』为错误数字，实测面积 <0.1mm2 仅 822 面（1.52%）。"
+                   },
+                   {
+                       "id":  "shape.eyeball_clearance",
+                       "result":  "PASS",
+                       "detail":  "基准态眼睑距眼球面仅 0.125mm；对 16 个会侵入眼球的键施加碰撞护栏（沿球心径向推出至球面+0.1mm，最大修正 1.419mm）后，111 键穿插顶点数 0"
+                   },
+                   {
+                       "id":  "shape.extreme_combo",
+                       "result":  "WARN",
+                       "detail":  "联合极端（非真实使用）：眼区 12 参数同时拉满 2 面翻转；62 个双向参数同时 _up 33 面（0.06%）。单参数拉满 0 面，穿插在全组合下均为 0"
+                   },
+                   {
+                       "id":  "shape.local_fix",
+                       "result":  "PASS",
+                       "detail":  "face_width_dn / chin_length_dn / ear_shape_up 的残留翻转经局部定向平滑 + 局部应变限幅（k 递减至 0.12）清零，仅影响各自 ≤66 个顶点的邻域"
+                   },
+                   {
+                       "id":  "shape.evidence_renders",
+                       "result":  "PASS",
+                       "detail":  "111 个 target 各 1 张拉满截图 + 3 张口内 + 9 张视图基准 + 6 张差分×6 对照大图，全部在 _shape_probe/（取景经像素级标定：眼球 x=0.02501/z=1.07132 等）"
+                   },
+                   {
+                       "id":  "deliver.shape_baked",
+                       "result":  "PASS",
+                       "detail":  "交付期烘焙：示例预设（20 个参数）apply 进顶点，node_0 最大位移 1.076mm；mesh 顶点与全部 23 个 vis_/expr_ 键同步平移，相对形变逐位保持（§4.1/§4.4）"
+                   },
+                   {
+                       "id":  "deliver.shape_baked_topology",
+                       "result":  "PASS",
+                       "detail":  "烘焙前后顶点数/面数/UV/顶点组/骨骼均未变化（node_0 27,170/54,228；mouth_cavity 547/546；teeth 104/100；tongue 62/72）"
+                   },
+                   {
+                       "id":  "morph.baseline_recalc_after_bake",
+                       "result":  "PASS",
+                       "detail":  "烘焙后重算静默基准：全部 morph=0 时网格与 rest 最大差 0.000mm；vis_silence 位移 0.000mm（仍为单位形，§4.4 第 2 条）"
+                   },
+                   {
+                       "id":  "morph.regression_after_bake",
+                       "result":  "PASS",
+                       "detail":  "23 个 morph 在烘焙后网格上重跑：位移正常（vis_AA 21.01mm / expr_surprise 15.01mm / vis_U 7.50mm…）；跨网格联动正常（vis_AA 带动 teeth 17.47mm、tongue 16.44mm、mouth_cavity 2.24mm）；眼球穿插 0"
+                   },
+                   {
+                       "id":  "morph.flipped_normals_postbake",
+                       "result":  "PASS",
+                       "detail":  "烘焙件 25 模式复测：node_0 与 mouth_cavity 的新增翻转面均为 0，与烘焙前一致。烘焙过程引入的 15 个翻转面已由最小位移解析修正清零（vis_TH 残留 1 面，修正位移 0.00008 mm）；修正后全部 14 个受影响键 maxStretch <= 1.9791、>2x 条数 0。烘焙位移复核：node_0 最大 1.116610 mm（矢量口径；分量口径 1.076445 mm）、平移顶点 12,069 个；mouth_cavity 0.250001 mm；teeth 0.250001 mm；tongue 0.231481 mm；eyeballs 0 mm。"
+                   },
+                   {
+                       "id":  "shape.editing_asset",
+                       "result":  "PASS",
+                       "detail":  "编辑期 BilinAI_FaceRig_60k_edit.blend：20 根骨 + node_0 111 个 shape_* + 口内 18 个，保留供继续捏脸与换预设重烘焙"
+                   },
+                   {
+                       "id":  "skin.weight_sum_normalized",
+                       "result":  "PASS",
+                       "detail":  "权重和已归一化：node_0 27,170 顶点权重和全部 = 1.000000（minSum = maxSum = 1.000000，超出 1e-6 的例外 0）；mouth_cavity 547 / teeth 104 / tongue 62 同样全部 = 1.000000。归一化前存在 19 个顶点权重和 1.189（例：v25704 = head 0.3001 + jaw 0.6999 + neck 0.1890，三者被重复计入），按 Blender 权重归一化语义等比缩放后相对形变逐位不变（_wnorm.py 已验证）。影响骨骼数量实测最大 3（规格书 279 行上限 4）。"
+                   },
+                   {
+                       "id":  "client.pure_layer_unit_tests",
+                       "result":  "PASS",
+                       "detail":  "端侧纯函数层自测回归通过：client/face-params.test.mjs → PASS 1822 / FAIL 0（契约 params-table-1.0.0 / 63 参数 / 113 target）；client/face-preset.test.mjs → PASS 536 / FAIL 0。两份均为零依赖 ESM，node 直跑，无 I/O、无网络、无构建步骤。"
+                   },
+                   {
+                       "id":  "client.preset_schema_versioned",
+                       "result":  "PASS",
+                       "detail":  "预设格式已版本化：必需三字段 schemaVersion（当前 1）/ baseModelId（默认 female_60s_v3）/ paramsVersion（默认 face-params-v1）；缺字段拒绝、schemaVersion 过新拒绝并提示升级、旧版迁移（补默认值 + 告警）、跨 baseModelId 导入告警、checksum 不匹配拒绝。单测覆盖 8 个用例：三必需字段 / 篡改参数 / 缺字段 / 过新 / 旧版迁移 / 非法 JSON / null / 跨模型。"
+                   },
+                   {
+                       "id":  "client.share_code_length",
+                       "result":  "PASS",
+                       "detail":  "分享码长度满足规格书 ≤120 字符：estimateShareCodeLength(n) = 4 + ceil((141 + 8n)/5) + (ceil(chars/5) - 1)，与实际编码长度逐档相等。实测 n = 0/1/5/15/20/30/43 → 38/39/48/67/77/96/120 字符，n = 44 → 122 越界；即规格书上限对应非默认参数 ≤43 条，超过改走预设文件或服务端短码。最大量化往返误差 0.005882（eye_spacing，跨度 3.0 的连续量），逐参数均在容差内。"
+                   },
+                   {
+                       "id":  "client.checksum",
+                       "result":  "PASS",
+                       "detail":  "分享码校验位 = FNV-1a 32 位取低 12 位，覆盖 codeVersion + 参数表哈希 + 基准模型哈希 + count + presence bitmap + 量化值。单测故意改动 1 个字符后 decodeShareCode 返回 ok=false 且 error 含『校验位』，isShareCode 同步判假；截断码返回『长度不足』。FNV-1a 标准向量校验通过（空串 0x811c9dc5 / \"abc\" 0x1a47e90b）。"
+                   },
+                   {
+                       "id":  "care.trim_coverage",
+                       "result":  "PASS",
+                       "detail":  "康养裁剪覆盖率（规格书 §9）：102 条参数全部归类 —— 保留 79 / 弱化 20 / 不做 3，另标强化 15 条（boost 只改默认值建议、不改取值范围）。可见 99 条、隐藏 3 条。20 条弱化项均给出收敛滑杆（14 条数值区间 + 6 条色板/档位），且区间严格窄于参数表原区间并不越界。不做项仅 beard_type / beard_density / beard_color（本档女生与常服男均无胡须资产，reason 注明建议补齐资产后转为保留）。交付收口：裁剪表已封版 —— client/care-trim.js 的 stats().open 由 true 改为 false，3 条不做按本档资产现状定稿，与规格书『胡须保留并强化』的张力记为已接受偏离；后续若补齐胡须资产，把 3 条改回保留并重跑 _mk_params_el.mjs（--check 保护）即重新封版。第 12 阶段收口：参数表 el 列不再是粗标，已改为本裁剪结论的投影 —— 由 _mk_params_el.mjs 生成并逐条校验（本次实测 json 102 条 / md 表格 102 行与 care-trim 逐条一致，任一漂移即 throw），此前 98 / 1 / 3 的粗标作废。详见交付说明 §22.1。"
+                   },
+                   {
+                       "id":  "care.neutral_defaults",
+                       "result":  "PASS",
+                       "detail":  "康养默认值红线：neutralDefaults() 逐条断言 99 条可见参数的默认值 —— 妆容强度类全 0、makeup_preset = 不化妆、皱纹类与 age_overall 全 0，确保新账号首次进入为「素颜本脸」，不由默认值呈现妆感或老态。"
+                   },
+                   {
+                       "id":  "client.care_unit_tests",
+                       "result":  "PASS",
+                       "detail":  "康养裁剪单测：client/care-trim.test.mjs → PASS 534 / FAIL 0。覆盖 102 条逐条归类与键序、三类之和 = 102、点名弱化 8 项 / 点名强化 12 项、不做项不出现在可见列表、20 条收敛区间严格更窄且不越界、妆容强度上限 <= 0.4、默认值红线、禁用参数正则（tattoo / scar / horn 等）零命中、Markdown 表 102 行 7 列。"
+                   },
+                   {
+                       "id":  "client.multi_preset_cabinet",
+                       "result":  "PASS",
+                       "detail":  "多套面容单一生效不变量：createFaceCabinet(fp) 支持 12 套面容（默认 / 节日 / 正式 + 备用），单一 activeSlotId 天然互斥、第一套建槽即自动生效、stats().activeCount 恒为 1、check() 断言生效面容恰好 1 套且 slotId 不重复；禁止删除生效中的面容、至少保留一套；duplicateSlot 对同参数面容自动加 -2 / -3 后缀保证 slotId 唯一。face-preset.test.mjs PASS 568 / FAIL 0。详见交付说明 §22.3。"
+                   },
+                   {
+                       "id":  "client.cabinet_checksum",
+                       "result":  "PASS",
+                       "detail":  "面容柜校验位与篡改拒绝：cabinetId = fc_ + FNV-1a 32 低 8 位；校验位只覆盖 schemaVersion / cabinetId / activeSlotId / slots[presetId, name, checksum]，因此改名与改时间戳不误报，而篡改 activeSlotId 必被拒（error 含『校验位』）。load() 另拒绝非法 JSON / 非对象 / 缺 slots / 缺 schemaVersion / 版本过新 / 套数超 12 / 任一套 preset 导入失败；activeSlotId 不在列表内则回退第一套并告警。"
+                   },
+                   {
+                       "id":  "client.adapter_four_channels",
+                       "result":  "PASS",
+                       "detail":  "渲染器适配层四通道落地（§7.2）：client/face-adapter.js 的 buildCommands() 把参数表拆成 { morphs, bones, materials, assets } 四组指令 —— 63 条 morph → shape_* 权重（断言非负）；6 条 bone → 展开为 neck / head / eye_L / eye_R / ear_L / ear_R 共 6 根骨，按 BONE_RULES 写 scale / translate（mm → 米，MM_PER_UNIT = 1000）/ rotate（度 → 弧度），mirror 通道左右取相反符号（eye_spacing = 2 → eye_L +0.002 m、eye_R -0.002 m）；27 条 material → 色板类写 palette 下标、强度类原值透传；6 条 asset → 枚举类写槽位下标、weight 类标记 weight:true 交 setAssetWeight（不再误当槽位下标，此前会静默落到 list[0.2] === undefined）。位移一律以骨骼 __rest 为基准，重复应用幂等。BONE_RULES 与表中骨通道参数逐键对齐（改表即报错）。"
+                   },
+                   {
+                       "id":  "client.adapter_no_index_hardcode",
+                       "result":  "PASS",
+                       "detail":  "禁止硬编码 morph index（§7.2 约束 2）：face-adapter.js 运行期一律经 mesh.morphTargetDictionary 按名取下标、写 mesh.morphTargetInfluences；源码静态扫描 influences[数字] 与 bones[数字] 零命中，且不含 require( / fetch( / XMLHttpRequest / node:fs / setInterval / setTimeout。绑定层 bindThree() 用 SkinnedMesh.skeleton.bones 与 Object3D.visible 驱动；morphTargetDictionary 缺名字时只告警不抛错，故同一套代码可同时服务编辑期（111 个 shape_*）与交付期（shape_* = 0，告警属预期）。"
+                   },
+                   {
+                       "id":  "client.adapter_throttle_30hz",
+                       "result":  "PASS",
+                       "detail":  "滑杆节流与同帧复用（§7.3）：createThrottle(fn, { hz }) 硬上限 30 次/秒（hz 被夹到 1~30，最小间隔 1000/30 ms），超限调用丢弃并计数、不补尾帧；注入 now() 后确定性实测 —— 1 秒内 1000 次调用仅放行 30 次、丢弃 970 次，且被丢弃的调用从不执行 fn。createEvalCache(resolve, { frameId }) 在同一 frameId 内复用求值结果（重复调用 hits 递增、resolve 只跑一次），换帧后重新求值；两者均可在单测中确定性驱动。"
+                   },
+                   {
+                       "id":  "client.adapter_ui_redline_copy",
+                       "result":  "PASS",
+                       "detail":  "捏脸页产品红线文案（§7.4）：UI_COPY.aiBadge = 「本形象为 AI 数字人」常驻且不可由用户关闭，aiBadgeDetail 声明「基于本人授权素材生成，不是真人实时画面」，保存时展示 saveNotice = 「形象仅用于陪伴对话，不会用于其他用途」，缺授权时以 consentRequired 阻断保存。单测对上述字段逐字断言，防止后续改动误删红线文案。"
+                   },
+                   {
+                       "id":  "client.share_code_carries_assets",
+                       "result":  "PASS",
+                       "detail":  "分享码携带 assets（§8.2）：encodeShareCode() 与 decodeShareCode() 的返回值均含 assets（6 条资产通道参数 brow_shape / lash_length / hairstyle / bangs / beard_type / beard_density），解码后 assets 与编码前逐键一致，hairstyle / bangs / brow_shape 取值随码往返还原。本参数表中「资产选择」本身就是 asset 通道参数，故与 params 共用同一 bitmap + levels 段、未额外占用比特 —— n = 43 仍恰为 120 字符，未突破 §8.2 的 ≤120 限制（若独立成段需 +48 bit ≈ +8 字符，会把 120 顶到 128）。调用方若另传 assets，仅做一致性校验并告警「以 params 为准」，不改变编码结果、不产生第二真源。"
+                   },
+                   {
+                       "id":  "uniapp.package_delivered",
+                       "result":  "PASS",
+                       "detail":  "uni-app 接入包已投递且与构建产物逐字节一致：E:\\比邻AI\\uni-app\\common\\face，8 个文件合计 137789 B —— face-index.js 为唯一入口（聚合参数表 102 条 / 命名空间 63 参数 113 target / 纯函数层 4 模块），另含 parameters-table.js 与 shape-namespace-map.js 两份 ES 模块形态、README.md（接入说明含红线文案表与交付期骨骼口径）。校验 = 逐文件 SHA256 与 _uniapp_pkg\\common\\face 比对，任何字节差异即 FAIL。该层零依赖、零 I/O：不读文件、不写 storage、不发网络、不起定时器，持久化由页面负责。生成脚本 _mk_uniapp_face.ps1 可一键重放（同步模块 -> JSON 转 ESM -> BOM 检查 -> 跑冒烟 -> 投递）。"
+                   },
+                   {
+                       "id":  "uniapp.face_page_wired",
+                       "result":  "PASS",
+                       "detail":  "端侧捏脸页已脱离占位驱动、改由参数表驱动：pages/face/face.vue 保留全部 UI 结构与 CSS（原 <style scoped> 块逐字节保留，仅追加 AI 标识样式），脚本层替换为 values=defaultValues() + computeView(values)，预览用 view.drivers（faceWidth/eyeSize 的 -1~1 净驱动、age 的 0~1）而非旧 8 个假参数；滑杆由 SLIDERS 元数据渲染（3 条：face_width / eye_size / age_overall），并把 uMin/uMax/step 透传给 bl-slider —— 双向滑杆必须传 min，否则组件默认 0~100 会吃掉「变窄」的一半行程。红线文案（aiBadge / aiBadgeDetail 常驻不可关闭、saveNotice 保存后 showModal）全部引用 face-adapter 的 UI_COPY，页面不自写。逐项实测：入口改为 face-index=OK、透传 min/max/step（双向滑杆必需）=OK、AI 标识常驻且引用 UI_COPY=OK、保存后展示用途声明 saveNotice=OK、旧 8 占位滑杆驱动已移除=OK、随机与保存走 randomValues + buildSave=OK、红线文案未在页面自写（仅引用）=OK、滑杆数 = 3 最小闭环=OK"
+                   },
+                   {
+                       "id":  "uniapp.delivery_glb_in_static",
+                       "result":  "PASS",
+                       "detail":  "交付模型已随包投递到端侧：E:\\比邻AI\\uni-app\\static\\BilinAI_FaceRig_60k_delivery_baked.glb = 7582548 B，与工作区交付件 SHA256 逐字节一致（static 目录此前为空）。该文件即端侧 bindThree 的输入：15 nodes / 6 meshes / 8 根蒙皮骨（neck、head、jaw、tongue、eye_L、eye_R、ear_L、ear_R）/ 23 个 morph target（15 vis_ + 8 expr_，shape_* 已烘焙为 0）。"
+                   },
+                   {
+                       "id":  "uniapp.spec_mapping_updated",
+                       "result":  "PASS",
+                       "detail":  "《比邻AI 数字人资产交付规范》§4.3 已从「8 个占位滑杆 → 临时 morph 名」改写为「参数表 key 驱动」：§4.3.1 给出原 8 滑杆到参数表 key 的完整映射（脸型→face_width 等 13 条同组 key、眼睛→eye_size、鼻子→nose_tip_size、嘴巴→mouth_width、发型→hairstyle+bangs+hair_color、肤色→skin_tone、年龄感→age_overall，服饰明确标注不在参数表内由换装模块处理）；§4.3.2 首批 3 条滑杆的 UI 区间 / 参数域 / 方向 / 运行时 target 名；§4.3.3 6 条骨骼通道的骨骼、类型、区间、默认值与镜像规则（eye_spacing 与 ear_protrusion 左右反号、ear_height 左右同号），并标注 ear 骨缺口与 glTF 不允许点号导致的 eye_L/eye_R 命名映射；§4.3.4 6 条资产槽位。§4.1 举例同步为真实 target 名（shape_face_width_up 等），验收清单条目改为覆盖参数表 63 条 morph。逐项实测：§4.3 拆出 4.3.1~4.3.4 四张子表=OK、原 8 滑杆已映到参数表 key=OK、旧 morph 名映射表已移除=OK、已标注交付期保留耳骨=OK、服饰明确标注不在参数表内=OK、§4.1 举例改为真实 target 名=OK、骨骼通道表含镜像规则=OK、验收清单已同步新参数口径=OK"
+                   },
+                   {
+                       "id":  "uniapp.package_smoke_test",
+                       "result":  "PASS",
+                       "detail":  "打包产物冒烟实测通过：node _uniapp_smoke.mjs -> PASS 153 / FAIL 0（13 组）。覆盖 ①模块装配（102 参数 / 63 参数 113 target / 3 滑杆）；②滑杆元数据与双向区间；③UI 整数与参数域双向映射（含夹取与往返无损）；④computeView 四通道与分享码长度 <=120；⑤整表可达性（6 条 bone 通道全命中、eye_L/eye_R 镜像正负号、ear_height 不镜像同号、asset/material 通道命中）；⑥随机值边界；⑦buildSave/loadSave 分享码往返与非法输入拒绝；⑧面容柜 12 槽增删改查、校验位、篡改拦截；⑨previewDrivers 净驱动；⑩UI 红线 4 条文案逐字；⑪康养裁剪三档之和 = 102；⑫告警过滤语义（只丢未驱动参数的缺省噪声，真告警必留）；⑬以「交付 glb 复刻体（8 骨含耳骨、无 shape_*）」「缺耳骨对照组（6 骨，复现降级告警）」「编辑期形态键齐备体（8 骨 + shape_*）」三个假模型跑通 bindThree -> applyParams 端到端，并验证 30Hz 节流（1 秒 1000 次放行 30 / 丢弃 970，被丢弃调用从不执行 fn）。"
+                   },
+                   {
+                       "id":  "asset.ear_bone_channel_ready",
+                       "result":  "PASS",
+                       "detail":  "耳部骨通道已在交付件上补齐（第 11 阶段）：参数表 6 条骨通道参数中，ear_size / ear_protrusion / ear_height 的目标是 ear.L / ear.R —— 第 6 阶段交付期减骨曾把这 2 根耳骨并入 head，第 11 阶段已按「交付期保留 ear.L / ear.R」恢复。实测两份交付 glb（BilinAI_FaceRig_60k_delivery_baked.glb / BilinAI_FaceRig_60k_delivery.glb）skin joints 均为 8 根（neck / head / jaw / tongue / eye_L / eye_R / ear_L / ear_R），nodes 中 ear 命中 2，导出节点 15 个（旧 13）。权重侧：ear.L 117 点（权重和 16.337）/ ear.R 124 点（权重和 16.433）自 head 精确拆回，拆分后 head 侧归零 0 点，权重和恒 1.000000，每顶点影响骨数仍最大 3（≤ 4）。形变等价性：静置 / head +15 度俯仰 / head +20 度偏航三态下 node_0 最大偏差 1.192093e-04 mm（float32 噪声），其余 5 网格逐位相同。三条 ear 参数现已可写，功能实测 ear_L rotY+8 度 / scale 1.10 / locZ+3mm 与 ear_R rotY-8 度各移动 99~112 个顶点、越界 0（只动耳部）。规格偏离说明：交付说明 §16 原文为「只保留 head / neck / jaw / tongue / eye_L / eye_R 六根」，本节按规格书验收条款「交付资产 ≤ 8 骨」取 8 骨 —— 8 骨恰为上界，属有意选择；相对 §16 那句属偏离，编辑期 20 骨资产不受影响。"
+                   },
+                   {
+                       "id":  "mesh.delivery_mesh_names_clean",
+                       "result":  "PASS",
+                       "detail":  "三件女生交付 .glb 的 meshes[].name 已与对象名对齐（glTF 导出器按 mesh 数据块名写 meshes[].name，而女生 .blend 里数据块名是脏的：node_0_body.002 / mouth_cavity_mesh / teeth_mesh / tongue_mesh / eyeball_L.003 / eyeball_R.003）。现算：BilinAI_FaceRig_60k.glb -> eyeball_L | eyeball_R | mouth_cavity | node_0 | teeth | tongue；BilinAI_FaceRig_60k_delivery.glb -> eyeball_L | eyeball_R | mouth_cavity | node_0 | teeth | tongue；BilinAI_FaceRig_60k_delivery_baked.glb -> eyeball_L | eyeball_R | mouth_cavity | node_0 | teeth | tongue。判据 = 无 _mesh / _body.NNN / .NNN 后缀，且逐网格名与该网格所在节点名一致。修法为 GLB 容器原地重写（只改 meshes[].name，用 glTF 规范允许的 0x20 填充补回原长），四项校验同时通过——文件长度不变、BIN 块逐字节不变、除网格名外 JSON 深度相等、节点名与骨名一字未动。男生三件本就干净，不受影响。"
+                   },
+                   {
+                       "id":  "gltf.texture_budget",
+                       "result":  "PASS",
+                       "detail":  "交付 .glb 内嵌贴图统一降至 1K（长边 <= 1024，eye_iris 256 天然合规）：现算 4 件女生交付 glb 的全部内嵌 PNG IHDR 尺寸 —— BilinAI_FaceRig_60k.glb 6124032 B（内嵌图 3347053 B / 4 张 256x256/1024x1024/1024x1024/1024x1024）；BilinAI_FaceRig_60k_delivery.glb 7583336 B（内嵌图 3347053 B / 4 张 256x256/1024x1024/1024x1024/1024x1024）；BilinAI_FaceRig_60k_delivery_baked.glb 7582548 B（内嵌图 3347053 B / 4 张 256x256/1024x1024/1024x1024/1024x1024）；BilinAI_FaceRig_60k_edit.glb 10073348 B（内嵌图 3347053 B / 4 张 256x256/1024x1024/1024x1024/1024x1024）。替换副本由 Blender im.scale 从各件自身的原嵌图产出（不引入新贴图），其中 albedo / normal 两件与 3D建模\\01_female_60s_v3\\textures\\1k 下的交付贴图逐字节相同（1,531,557 B / 905,092 B，已逐字节核）。容器结构校验：除被替换的 3 个 image bufferView 外其余 bufferView 逐字节不变、accessors / meshes / skins / materials / textures / samplers 的 JSON 深等、BIN 按 4 字节对齐原样重排；另用 Blender 重新导入新旧 7 件交付 glb 对照 objects / 顶点数 / 面数 / 形态键名 / 骨骼名 / 材质名 / action，零差异。.blend 源保持 2048（edit 源件为 4096）以便后续换预设重烘焙。"
+                   },
+                   {
+                       "id":  "deliver.size_budget",
+                       "result":  "PASS",
+                       "detail":  "导出 .glb 字节对规格书 §5（预算 5MB / 上限 8MB『Draco 压缩后』）：交付 delivery_baked 7582548 B = 7.23 MB <= 8 MB 上限。R45 贴图 1K 化前为 15,106,888 B = 14.41 MB，**超出上限**；本轮降到 7.23 MB 后重新合规，且未开 Draco（draco=false）。距 5 MB 预算还需 Draco 或把 MR 打包图降到 512²。"
+                   }
+               ],
+    "summary":  {
+                    "pass":  100,
+                    "warn":  2,
+                    "fail":  0,
+                    "release_gate":  "RELEASABLE",
+                    "release_gate_reasons":  [
+
+                                             ],
+                    "note":  "第 8 阶段完成：§3 参数总表 102 条定稿、111 个 shape_* 捏脸形态键、每参数极端值测试（翻转面 0 / 眼球穿插 0）、交付期烘焙（shape_* 烘进顶点，运行期 shape_* = 0）。第 9 阶段完成：重建口腔开口 / 前庭底网格，25 个模式在两网格上的新增翻转面由 170 / 2 面根治为 0 / 0（交付件与烘焙件双验证），jaw 权重经『朝向 + 拉伸』联合优化后 ±14 度最大拉伸 1.899 / 1.851（>2x = 0），烘焙最大位移 1.116610 mm，权重和归一化为 1.000000。剩余 2 项 WARN 为非真实使用下的极端组合现象（眼区 12 参数同时拉满 / 62 个双向参数同时 _up），不影响发布。第 10 阶段完成：端侧预设 / 分享码层补齐（client/face-preset.js + face-preset.test.mjs，PASS 584 / FAIL 0，求值层回归 PASS 1822）；分享码非默认参数 ≤43 条时 ≤120 字符，校验位错一位必拒。第 10 阶段续完成：康养裁剪表（102 条 → 保留 79 / 弱化 20 / 不做 3，强化 15）+ 默认值红线 + 多套面容柜（12 套、单一 activeSlotId、fc_ 校验位）+ 后端接口草案（§8.5）+ 产品红线条款化（§10.14）；新增 5 项检查全部 PASS。第 10 阶段再续（附录 A 与现有工程对接）：新增 client/face-adapter.js 渲染器适配层（§7.2 四通道指令 / §7.3 30Hz 节流 + 同帧复用 / §7.4 产品红线文案）+ face-adapter.test.mjs（PASS 272）；分享码补 assets（§8.2，长度未退化）；端侧自测合计 1822 + 584 + 534 + 272 = 3212 断言全部 FAIL 0。报告 83 → 94 项（+5 PASS）。附录 A 落地（与现有工程对接）：新增 uni-app 接入包 common/face（face-index.js 唯一入口 + 参数表 / 命名空间 ES 模块 + 4 个纯函数层模块，8 文件 135,444 B，与构建产物 SHA256 逐字节一致，由 _mk_uniapp_face.ps1 一键重放）；pages/face/face.vue 去掉 8 个占位滑杆、改由参数表 3 条最小闭环滑杆驱动（uMin/uMax/step 透传 bl-slider，双向滑杆必需），预览改用净驱动量，AI 标识与保存用途声明改为引用 UI_COPY 而非页面自写；交付 glb 投递到 static 并与交付件哈希一致；《比邻AI 数字人资产交付规范》§4.3 重写为参数表 key 映射（含骨骼镜像规则、eye_L/eye_R 命名映射与交付期骨骼口径）。第 11 阶段完成：交付期保留耳骨（6 → 8 骨），ear.L / ear.R 的 rest 与权重自编辑期 20 骨资产精确反演（node_0 上 ear.L 117 点 / ear.R 124 点，拆分后 head 侧归零 0），静置 / head +15 度 / head +20 度三态形变最大偏差 1.192093e-04 mm（float32 噪声），权重和 1.000000、每顶点影响骨数仍 ≤ 3，ear_size / ear_protrusion / ear_height 三条参数在交付件上恢复可写；交付件 BilinAI_FaceRig_60k_delivery_baked.glb 15,106,888 B（SHA256 DF26AA9E…）/ BilinAI_FaceRig_60k_delivery.glb 15,107,696 B（F40099ED…），uni-app/static 已同步投递。原 asset.ear_bone_channel_gap（WARN）转 PASS 并更名 asset.ear_bone_channel_ready。打包冒烟 _uniapp_smoke.mjs PASS 153 / FAIL 0（13 组，含 8 骨交付复刻体、缺耳骨降级对照组、编辑期形态键齐备体跑通 bindThree → applyParams 及 30Hz 节流）。报告 102 项：100 PASS / 2 WARN / 0 FAIL。第 12 阶段（契约收口）：参数表 el 列由粗标（98 / 1 / 3）改为 client/care-trim.js 结论的投影（保留 79 / 弱化 20 / 不做 3，另标强化 15 条），生成与校验统一走 _mk_params_el.mjs（--check 测到漂移即 throw），json 102 条与 md 表格 102 行逐条一致，接入包 parameters-table.js 与参数表同源亦纳入报告实测。交付收口：康养裁剪表已封版（client/care-trim.js stats().open = false，接入包已同步重投），beard_type / beard_density / beard_color 三条『不做』按本档（女生 + 常服男）无胡须资产的现状定稿。R45：7 件交付 .glb 的内嵌贴图由 2048 / 4096 统一降至 1K（容器内原地替换，除 3 个 image bufferView 外逐字节不变，Blender 重导入新旧对照零差异）；端侧 delivery_baked 15,106,888 -> 7,582,548 B、男生 12,924,836 -> 6,727,452 B。"
+                },
+    "morph_report":  {
+                         "method":  "骨骼驱动（jaw / tongue 姿态）经 depsgraph 求值后写成形态键（规格 5.4“骨骼驱动后 Apply as Shape”），再叠加解析式唇部塑形（张合/展宽/撮圆/前突/嘴角）；口内 3 网格写同名 morph 保证牙、舌、口腔同步",
+                         "baseline_note":  "mid_open_mm 为唇缝上唇行最低点与下唇行最高点的中线垂距，静置基准 3.88 mm（基准非零是唇缝本身为将闭未闭的缝隙）",
+                         "viseme_table":  [
+                                              {
+                                                  "name":  "vis_silence",
+                                                  "jaw_deg":  0,
+                                                  "mid_open_mm":  3.88,
+                                                  "leaks":  0,
+                                                  "flips":  0
+                                              },
+                                              {
+                                                  "name":  "vis_AA",
+                                                  "jaw_deg":  14,
+                                                  "mid_open_mm":  23.95,
+                                                  "leaks":  0,
+                                                  "flips":  35
+                                              },
+                                              {
+                                                  "name":  "vis_E",
+                                                  "jaw_deg":  7,
+                                                  "mid_open_mm":  14.04,
+                                                  "leaks":  0,
+                                                  "flips":  3
+                                              },
+                                              {
+                                                  "name":  "vis_I",
+                                                  "jaw_deg":  4,
+                                                  "mid_open_mm":  9.7,
+                                                  "leaks":  0,
+                                                  "flips":  0
+                                              },
+                                              {
+                                                  "name":  "vis_O",
+                                                  "jaw_deg":  9,
+                                                  "mid_open_mm":  13.72,
+                                                  "leaks":  0,
+                                                  "flips":  13
+                                              },
+                                              {
+                                                  "name":  "vis_U",
+                                                  "jaw_deg":  5,
+                                                  "mid_open_mm":  8.13,
+                                                  "leaks":  0,
+                                                  "flips":  38
+                                              },
+                                              {
+                                                  "name":  "vis_MBP",
+                                                  "jaw_deg":  0,
+                                                  "mid_open_mm":  1.54,
+                                                  "leaks":  0,
+                                                  "flips":  0
+                                              },
+                                              {
+                                                  "name":  "vis_FV",
+                                                  "jaw_deg":  2,
+                                                  "mid_open_mm":  5.06,
+                                                  "leaks":  0,
+                                                  "flips":  0
+                                              },
+                                              {
+                                                  "name":  "vis_L",
+                                                  "jaw_deg":  8,
+                                                  "mid_open_mm":  15.88,
+                                                  "leaks":  0,
+                                                  "flips":  3
+                                              },
+                                              {
+                                                  "name":  "vis_TH",
+                                                  "jaw_deg":  5,
+                                                  "mid_open_mm":  11.58,
+                                                  "leaks":  0,
+                                                  "flips":  3
+                                              },
+                                              {
+                                                  "name":  "vis_WQ",
+                                                  "jaw_deg":  4,
+                                                  "mid_open_mm":  7.6,
+                                                  "leaks":  0,
+                                                  "flips":  11
+                                              },
+                                              {
+                                                  "name":  "vis_RR",
+                                                  "jaw_deg":  6,
+                                                  "mid_open_mm":  10.96,
+                                                  "leaks":  0,
+                                                  "flips":  3
+                                              },
+                                              {
+                                                  "name":  "vis_SS",
+                                                  "jaw_deg":  3,
+                                                  "mid_open_mm":  6.76,
+                                                  "leaks":  0,
+                                                  "flips":  0
+                                              },
+                                              {
+                                                  "name":  "vis_KK",
+                                                  "jaw_deg":  6,
+                                                  "mid_open_mm":  12.24,
+                                                  "leaks":  0,
+                                                  "flips":  2
+                                              },
+                                              {
+                                                  "name":  "vis_NN",
+                                                  "jaw_deg":  3,
+                                                  "mid_open_mm":  8.61,
+                                                  "leaks":  0,
+                                                  "flips":  0
+                                              }
+                                          ],
+                         "expr_table":  [
+                                            {
+                                                "name":  "expr_blink_L",
+                                                "mid_open_mm":  3.88,
+                                                "flips":  6,
+                                                "max_delta_mm":  3.37
+                                            },
+                                            {
+                                                "name":  "expr_blink_R",
+                                                "mid_open_mm":  3.88,
+                                                "flips":  1,
+                                                "max_delta_mm":  3.38
+                                            },
+                                            {
+                                                "name":  "expr_smile",
+                                                "mid_open_mm":  3.9,
+                                                "flips":  0,
+                                                "max_delta_mm":  2.72
+                                            },
+                                            {
+                                                "name":  "expr_frown",
+                                                "mid_open_mm":  3.87,
+                                                "flips":  0,
+                                                "max_delta_mm":  2.16
+                                            },
+                                            {
+                                                "name":  "expr_surprise",
+                                                "mid_open_mm":  16.01,
+                                                "flips":  12,
+                                                "max_delta_mm":  15.09
+                                            },
+                                            {
+                                                "name":  "expr_squint",
+                                                "mid_open_mm":  3.88,
+                                                "flips":  0,
+                                                "max_delta_mm":  1.63
+                                            },
+                                            {
+                                                "name":  "expr_brow_up",
+                                                "mid_open_mm":  3.88,
+                                                "flips":  0,
+                                                "max_delta_mm":  2.45
+                                            },
+                                            {
+                                                "name":  "expr_brow_down",
+                                                "mid_open_mm":  3.88,
+                                                "flips":  0,
+                                                "max_delta_mm":  1.96
+                                            }
+                                        ],
+                         "blink_ray_test":  "左/右眼裂 41x33=1353 条正面射线，静置首命中眼球为 989 / 995 条；眨眼后降至 38 / 23 条",
+                         "drive_mode":  "vis_* 已把下颌开合烘焙进 morph，单独驱动 morph 即可；此时 jaw 骨必须静置（4.3 节禁止骨骼 + morph 双强驱动同一区域）。等效单骨角度见 morph-viseme-cosyvoice2.json 的 jawAngleDegrees",
+                         "cosyvoice_map":  "E:\\blender demo\\morph-viseme-cosyvoice2.json",
+                         "regression_script":  "E:\\blender demo\\morph_regression_check.py",
+                         "smoothing":  "对 morph delta 场做 2 轮拉普拉斯平滑（w=0.35/0.30），仅作用于受影响顶点 2 环邻域以保持稀疏；翻转面 241 -> 130，中线开口变化 < 0.25 mm",
+                         "postbake_regression":  {
+                                                     "date":  "2026-10-02",
+                                                     "asset":  "BilinAI_FaceRig_60k_delivery_baked.blend",
+                                                     "rest_maxdiff_mm":  0,
+                                                     "vis_silence_mm":  0,
+                                                     "vis_AA_mm":  20.608,
+                                                     "expr_surprise_mm":  15.007,
+                                                     "cross_mesh_vis_AA_mm":  {
+                                                                                  "teeth":  17.472,
+                                                                                  "tongue":  16.439,
+                                                                                  "mouth_cavity":  2.242
+                                                                              },
+                                                     "eyeball_penetration":  0,
+                                                     "flipped_significant":  {
+                                                                                 "node_0_total":  0,
+                                                                                 "mouth_cavity_total":  0,
+                                                                                 "modes":  25,
+                                                                                 "note":  "第 9 阶段根治后：25 模式在两网格上的新增翻转面全为 0"
+                                                                             }
+                                                 }
+                     },
+    "warn_root_cause_evidence":  "E:\\blender demo\\warn-root-cause-evidence.json",
+    "warn_investigation":  {
+                               "round":  "第 9 阶段：翻转面全量根治 + jaw 权重联合优化 + 权重和归一化（两交付件 25 模式新增翻转面 0）",
+                               "asset_changed":  true,
+                               "evidence_file":  "E:\\blender demo\\warn-root-cause-evidence.json",
+                               "micro_face_claim_corrected":  "原『29,714 面（54.8%）面积 <0.1mm2』为错误数字；实测 822 面（1.52%）面积 <0.1mm2、1,208 面（2.23%）最小内角 <5 度；报告过滤器实际排除 1,278 面（2.36%）",
+                               "morph_flip_total_before":  170,
+                               "morph_flip_total_after":  0,
+                               "morph_flip_cavity_before":  2,
+                               "morph_flip_cavity_after":  0,
+                               "morph_flip_repairs_rejected":  5,
+                               "weight_repairs_rejected":  4,
+                               "jaw_stretch_formula_fix":  "拉伸项必须含静止边向量：|(C_rest + delta D)_edge| / L0，旧式 |delta D_edge| / L0 为误判来源",
+                               "jaw_stretch_after":  "jaw +/-8: n0 1.515/1.484 cav 1.498/1.460；+/-14: n0 1.899/1.851 cav 1.932/1.878；+/-20: n0 2.359/2.247 cav 2.447/2.405；+/-28: n0 2.990/2.887 cav 3.193/3.170（+/-14 以内 >2x 条数 0）",
+                               "weight_sum_normalized":  "node_0 19 个顶点权重和 1.189 -> 1.000000（形变逐位不变）",
+                               "bake_max_delta_mm":  1.11661,
+                               "disk_freed_mb":  241
+                           }
+}
