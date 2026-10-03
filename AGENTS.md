@@ -28,7 +28,10 @@
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
 - **改动 `uni-app/api/`、`uni-app/stores/`、`uni-app/pages/` 或 `tools/mock-server.mjs`
-  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13 + 鉴权与错误码 10 + 家人端 25，共 112 项）
+  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13 + 鉴权与错误码 10 + 家人端 25 + 捏脸参数面板 20，共 132 项）
+- **改 `uni-app/common/face/` 或 `uni-app/pages/face/` 后另外必须跑 `npm run test:face`**：
+  它直接读 `uni-app/static/avatar/*.glb`，守住「面板目录 ↔ 参数表 ↔ 适老裁剪 ↔ 真实资产」四者一致
+  （参数改名、漏导出、裁剪表与参数表口径分歧都会被抓住）
 - **改了 system prompt 或 `tools/check-chat-quality.mjs` 的合规正则后**：
   先 `npm run test:quality`（正反用例锁住误报），再接真模型跑 `npm run quality`（需 `server/.env` 配 key）
 - **合规正则有两处，必须同步**：`server/app/style/compliance.py` 与 `tools/check-chat-quality.mjs`

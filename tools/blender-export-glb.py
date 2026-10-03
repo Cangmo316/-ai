@@ -73,6 +73,22 @@ def main() -> None:
     # ── 贴图上限：出厂 GLB 内嵌贴图是 1024×1024；.blend 里可能留着 2048（甚至 4096），
     #    直接导出会让 GLB 体积翻倍。这里在**内存中**缩到上限后再导出；
     #    不保存 .blend，所以源文件与其 packed 数据不受影响。
+    # ── 网格名对齐对象名 ────────────────────────────────
+    # 原版 GLB 的网格名是对象名（node_0 / mouth_cavity / teeth / tongue / eyeball_L ...），
+    # 而 Blender 5.1.2 的导出器默认用**网格数据块名**（node_0_body.002 / mouth_cavity_mesh ...）。
+    # 不改就会让重导资产的网格名与交付文档、既有校验脚本对不上。
+    # 只在内存里改，不保存 .blend。
+    if not has_flag("--keep-mesh-data-names"):
+        renamed = 0
+        for obj in bpy.data.objects:
+            if obj.type != "MESH" or not obj.data:
+                continue
+            if obj.data.name != obj.name:
+                obj.data.name = obj.name
+                renamed += 1
+        if renamed:
+            print(f"  网格数据块改名对齐对象名: {renamed} 个")
+
     max_size = int(arg_value("--texture-max", "0"))
     if max_size > 0:
         for image in bpy.data.images:

@@ -333,10 +333,28 @@ export function createFaceStage(opt) {
     return full
   }
 
-  function applyWeights(next) {
-    weights = normalizeWeights(next)
+  /**
+   * 写「整包四通道指令」：morph / bone / material / asset。
+   *
+   * 背景（实测缺口）：旧版 applyWeights 只发 morphs，其余三通道恒传空对象，
+   * 于是 bones（脖子粗细、眼球转动等 6 条 bone 参数）与 materials（肤色/唇色/牙齿色
+   * 等 27 条材质参数）在界面上"能拖但不动"。这里整包下发，交给 adapter.applyToModel
+   * 的四通道实现（bindThree 已提供 getBone / getMaterial 视图）。
+   *
+   * morph 仍走 normalizeWeights 补零：上一轮写过、这一轮没出现的名字必须归零，
+   * 否则拖完 A 参数留下的形变会一直挂在模型上。
+   */
+  function applyCommandPack(cmds) {
+    const pack = cmds || {}
+    weights = normalizeWeights(pack.morphs || {})
     if (!bound) return 0
-    applyCommands({ morphs: weights, bones: {}, materials: {}, assets: {}, channels: {} })
+    applyCommands({
+      morphs: weights,
+      bones: pack.bones || {},
+      materials: pack.materials || {},
+      assets: pack.assets || {},
+      channels: pack.channels || {}
+    })
     let patched = 0
     for (const [name, list] of morphOwners) {
       if (list.length < 2) continue
@@ -351,7 +369,14 @@ export function createFaceStage(opt) {
     return patched
   }
 
-  const throttle = createThrottle((w) => applyWeights(w), { hz: DEFAULT_HZ })
+  /** 兼容旧接口：只发 morphs 时等价于「只含 morph 通道的整包」。 */
+  function applyWeights(next) {
+    return applyCommandPack({ morphs: next || {} })
+  }
+
+  const throttle = createThrottle((w) => applyCommandPack({ morphs: w }), { hz: DEFAULT_HZ })
+  /** 整包节流通道：面板拖动时按 30Hz 下发四通道指令 */
+  const commandThrottle = createThrottle((c) => applyCommandPack(c), { hz: DEFAULT_HZ })
 
   function rotate(nextYaw, nextPitch) {
     yaw = Number(nextYaw) || 0
@@ -363,9 +388,10 @@ export function createFaceStage(opt) {
     schedule()
   }
 
-  /** 收到宿主下发的完整状态：{ weights, yaw, pitch }。 */
+  /** 收到宿主下发的完整状态：{ commands, weights, yaw, pitch }。 */
   function applyPayload(payload) {
     if (!payload) return
+    if (payload.commands) applyCommandPack(payload.commands)
     if (payload.weights) applyWeights(payload.weights)
     if (payload.yaw !== undefined || payload.pitch !== undefined) rotate(payload.yaw, payload.pitch)
   }
@@ -557,7 +583,10 @@ export function createFaceStage(opt) {
     rotate,
     applyPayload,
     applyWeights,
+      applyCommands,
+      applyCommandsThrottled: (c) => commandThrottle.call(c),
     applyWeightsThrottled: (w) => throttle.call(w),
+      commandThrottleStats: () => commandThrottle.stats(),
     throttleStats: () => throttle.stats(),
     isReady: () => ready,
     stats,
@@ -573,6 +602,10 @@ let STAGE = null
 export function mountFaceStage(el, opt) {
   if (STAGE) return STAGE
   STAGE = createFaceStage(Object.assign({}, opt, { el }))
+  // 自动化验收句柄：无头浏览器（CDP）里 import 本模块拿到的可能是**另一个模块实例**
+  // （页面用 @ 别名、脚本用路径，Vite 会解析成不同 URL），因此把舞台挂到 window 上，
+  // 让"拖了滑杆到底动没动模型"能被逐像素验证，而不是靠猜。
+  if (typeof window !== 'undefined') window.__blFaceStage = STAGE
   return STAGE
 }
 

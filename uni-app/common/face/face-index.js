@@ -53,6 +53,21 @@ export function createCabinet(opt) {
 export const UI_UNIT = 100;
 
 /**
+ * 端侧渲染器**已经接线**的通道。
+ *
+ * face-three 的 applyCommands → adapter.applyToModel 会把 morph / bone / material
+ * 三类指令真正写进模型（bindThree 提供 getBone / getMorph / getMaterial 视图）；
+ * 而 `asset` 通道要多档模型资产（眉型 10 款 / 发型 / 服装款式）注册进 assetRegistry，
+ * 当前每档只有一套资产 —— 这类参数在面板上标注「等资产」，而不是假装能调。
+ *
+ * ⚠️ 必须在 sliderMeta 之前声明：sliderMeta 在模块初始化时（SLIDERS = sliderMeta()）
+ * 就会读它，放到后面会触发 TDZ（Cannot access before initialization）。
+ */
+export const WIRED_CHANNELS = Object.freeze(['morph', 'bone', 'material']);
+/** 需要额外资产才能生效的通道（面板标注用） */
+export const PENDING_CHANNELS = Object.freeze(['asset']);
+
+/**
  * 首批开放的 3 条滑杆（其余 99 条参数由参数表全量支持，UI 逐步开放）。
  * 三条均为康养裁剪「保留」，且覆盖 A 区（脸型）/ C 区（眼）/ G 区（年龄）。
  */
@@ -78,6 +93,8 @@ export function sliderMeta(keys) {
   const list = (keys && keys.length ? keys : SLIDER_KEYS);
   return list.map((key) => {
     const c = care.describeParam(key);
+    // 注意：命名空间映射表只覆盖 morph 通道的 63 条参数；bone / material / asset
+    // 通道的参数在这里取不到描述（fp.describeParam 返回 null），targets 记为空数组。
     const p = fp.describeParam(key);
     const b = rangeSpecToBounds(c);
     const uMin = Math.round(b.paramMin * UI_UNIT);
@@ -86,11 +103,14 @@ export function sliderMeta(keys) {
     return {
       key, name: c.cn, zone: c.zone, channel: c.channel, type: c.type,
       trim: c.trim, trimmed: Boolean(c.sliderTightened),
+      wired: WIRED_CHANNELS.indexOf(c.channel) >= 0,
+      pendingReason: WIRED_CHANNELS.indexOf(c.channel) >= 0 ? '' : '等资产',
+      trimReason: c.reason || '',
       paramMin: b.paramMin, paramMax: b.paramMax,
       uMin, uMax, step: 1, unit: UI_UNIT,
       defParam, defU: Math.round(defParam * UI_UNIT),
       bidirectional: b.paramMin < 0,
-      targets: p.targets.slice(),
+      targets: p ? p.targets.slice() : [],
     };
   });
 }
@@ -99,12 +119,70 @@ export function sliderMeta(keys) {
 export const SLIDERS = sliderMeta();
 export const SLIDER_BY_KEY = Object.freeze(SLIDERS.reduce((acc, m) => { acc[m.key] = m; return acc; }, {}));
 
+/* ─────────────────── 全量滑杆（按参数表 10 个分区组织，捏脸面板的目录） ─────────────────── */
+
+/**
+ * 面板分区：按参数表的 10 个分区组织滑杆。
+ * 适老裁剪判定「不做」的参数（战斗/异族妆容、纹身、胡须等）**不出现在面板里**
+ * —— has 由 care.visibleParams() 决定，页面不自己过滤。
+ */
+export function sliderGroups(opt) {
+  const o = opt || {};
+  const zones = (table && table.zones) || {};
+  const order = (o.zones && o.zones.length ? o.zones : Object.keys(zones));
+  const byZone = new Map();
+  for (const key of care.visibleParams()) {
+    const c = care.describeParam(key);
+    if (!c) continue;
+    if (!byZone.has(c.zone)) byZone.set(c.zone, []);
+    byZone.get(c.zone).push(key);
+  }
+  return order.filter((z) => byZone.has(z)).map((z) => {
+    const keys = byZone.get(z);
+    const sliders = sliderMeta(keys);
+    return {
+      zone: z,
+      name: zones[z] || z,
+      keys,
+      sliders,
+      count: keys.length,
+      wired: sliders.filter((s) => s.wired).length,
+      pending: sliders.filter((s) => !s.wired).length,
+    };
+  });
+}
+
+/** 面板目录（分区 → 滑杆）。页面只消费它，不自己拼参数表。 */
+export const SLIDER_GROUPS = Object.freeze(sliderGroups());
+/** 面板里全部可调参数的键（顺序 = 分区顺序）。 */
+export const GROUPED_KEYS = Object.freeze(SLIDER_GROUPS.reduce((acc, g) => acc.concat(g.keys), []));
+/** 全量 key → 元数据（含面板外参数，供回填与校验使用）。 */
+export const SLIDER_BY_KEY_ALL = Object.freeze(
+  sliderMeta([...GROUPED_KEYS, ...care.hiddenParams()]).reduce((acc, m) => { acc[m.key] = m; return acc; }, {})
+);
+
+/** 面板总览：给页头一行文案用（共 N 条 / 开放 M 条 / K 条等资产）。 */
+export function panelSummary() {
+  const wired = SLIDER_GROUPS.reduce((a, g) => a + g.wired, 0);
+  const pending = SLIDER_GROUPS.reduce((a, g) => a + g.pending, 0);
+  const stats = care.stats();
+  return {
+    total: stats.total,
+    open: GROUPED_KEYS.length,
+    wired,
+    pending,
+    dropped: stats.hidden,
+    softened: stats.soften,
+    zones: SLIDER_GROUPS.length,
+  };
+}
+
 /** 全部滑杆的默认 UI 值（0 / 0 / 0）。 */
 export function defaultValues(keys) {
   const list = (keys && keys.length ? keys : SLIDER_KEYS);
   const out = {};
   for (const k of list) {
-    const m = SLIDER_BY_KEY[k] || sliderMeta([k])[0];
+    const m = SLIDER_BY_KEY_ALL[k] || sliderMeta([k])[0];
     out[k] = m.defU;
   }
   return out;
@@ -131,7 +209,7 @@ export function paramsOf(values, keys) {
   const src = values || {};
   const out = {};
   for (const k of list) {
-    const m = SLIDER_BY_KEY[k] || sliderMeta([k])[0];
+    const m = SLIDER_BY_KEY_ALL[k] || sliderMeta([k])[0];
     out[k] = uToParam(m, Object.prototype.hasOwnProperty.call(src, k) ? src[k] : m.defU);
   }
   return out;
@@ -143,7 +221,7 @@ export function valuesOf(params, keys) {
   const src = params || {};
   const out = {};
   for (const k of list) {
-    const m = SLIDER_BY_KEY[k] || sliderMeta([k])[0];
+    const m = SLIDER_BY_KEY_ALL[k] || sliderMeta([k])[0];
     out[k] = paramToU(m, Object.prototype.hasOwnProperty.call(src, k) ? src[k] : m.defParam);
   }
   return out;
@@ -232,7 +310,7 @@ export function randomValues(keys, rnd) {
   const r = typeof rnd === 'function' ? rnd : Math.random;
   const out = {};
   for (const k of list) {
-    const m = SLIDER_BY_KEY[k] || sliderMeta([k])[0];
+    const m = SLIDER_BY_KEY_ALL[k] || sliderMeta([k])[0];
     out[k] = Math.round(m.uMin + r() * (m.uMax - m.uMin));
   }
   return out;
@@ -290,6 +368,8 @@ export default {
   schema: FACE_INDEX_SCHEMA, version: VERSION,
   table, namespaceMap, fp, preset, care, adapter,
   SLIDERS, SLIDER_BY_KEY, sliderMeta, defaultValues,
+  SLIDER_GROUPS, GROUPED_KEYS, SLIDER_BY_KEY_ALL, sliderGroups, panelSummary,
+  WIRED_CHANNELS, PENDING_CHANNELS,
   uToParam, paramToU, paramsOf, valuesOf, previewDrivers,
   computeView, randomValues, buildSave, loadSave, createCabinet,
   UI_COPY,

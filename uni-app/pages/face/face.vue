@@ -64,8 +64,37 @@
         </view>
       </view>
 
+      <!-- 分区 chips：目录来自参数表 + 适老裁剪，「不做」的参数不会出现在这里 -->
+      <scroll-view class="bl-face-zones" scroll-x>
+        <view class="bl-face-zones__inner">
+          <view
+            v-for="g in SLIDER_GROUPS"
+            :key="g.zone"
+            class="bl-face-zones__chip"
+            :class="{ 'bl-face-zones__chip--on': g.zone === activeZone }"
+            @click="switchZone(g.zone)"
+          >
+            <text
+              class="bl-face-zones__text"
+              :class="{ 'bl-face-zones__text--on': g.zone === activeZone }"
+            >{{ g.name }}</text>
+            <text
+              class="bl-face-zones__count"
+              :class="{ 'bl-face-zones__count--on': g.zone === activeZone }"
+            >{{ g.count }}</text>
+          </view>
+        </view>
+      </scroll-view>
+
+      <view class="bl-face-summary">
+        <text class="bl-face-summary__text">{{ summaryText }}</text>
+      </view>
+
       <scroll-view class="bl-face-controls" scroll-y>
-        <view v-for="p in SLIDERS" :key="p.key" class="bl-face-controls__row">
+        <view v-for="p in activeGroup.sliders" :key="p.key" class="bl-face-controls__row">
+          <view v-if="!p.wired" class="bl-face-controls__tag">
+            <text class="bl-face-controls__tag-text">{{ p.pendingReason || '未接线' }}</text>
+          </view>
           <bl-slider
             :name="p.name"
             :value="values[p.key]"
@@ -74,6 +103,9 @@
             :step="p.step"
             @update:value="onParam(p.key, $event)"
           />
+        </view>
+        <view class="bl-face-controls__zone-hint">
+          <text class="bl-face-controls__zone-hint-text">{{ zoneHint }}</text>
         </view>
       </scroll-view>
 
@@ -87,6 +119,21 @@
           <text class="bl-face-actions__text bl-face-actions__text--on">保存形象</text>
         </view>
       </view>
+
+      <!-- 分区级操作：只动当前分区，避免"想微调一处却整套随机" -->
+      <view class="bl-face-subactions">
+        <view class="bl-face-subactions__item" @click="randomizeZone">
+          <text class="bl-face-subactions__text">本区随机</text>
+        </view>
+        <view class="bl-face-subactions__sep" />
+        <view class="bl-face-subactions__item" @click="resetZone">
+          <text class="bl-face-subactions__text">重置本区</text>
+        </view>
+        <view class="bl-face-subactions__sep" />
+        <view class="bl-face-subactions__item" @click="resetAll">
+          <text class="bl-face-subactions__text">全部重置</text>
+        </view>
+      </view>
     </view>
   </view>
 </template>
@@ -95,7 +142,8 @@
 import { reactive, computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { settings } from '@/common/store.js'
 import {
-  SLIDERS, UI_COPY, SLIDER_KEYS, defaultValues, computeView, randomValues, buildSave,
+  SLIDER_GROUPS, GROUPED_KEYS, panelSummary, UI_COPY,
+  defaultValues, computeView, randomValues, buildSave,
 } from '@/common/face/face-index.js'
 // 资产路径与性别选项是纯数据（不 import three.js），任何端都能安全引
 import { GENDER_OPTIONS, DEFAULT_GENDER, genderLabel } from '@/common/face-gl/assets.js'
@@ -108,29 +156,56 @@ import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js
 
 /**
  * 滑杆值（UI 整数）。双向参数 -100~100，单向参数 0~100。
- * 首批 3 条最小闭环：脸宽 / 眼睛大小 / 年龄感，三条均被康养裁剪判定为「保留」。
- * 滑杆元数据（名称 / 区间 / 步长）全部来自参数表，页面不再自己维护一份。
+ * 滑杆目录（名称 / 区间 / 步长 / 是否已接线）全部来自参数表 + 适老裁剪层，
+ * 页面不再自己维护一份；「不做」的参数（战斗妆容、纹身、胡须等）不在目录里。
  */
-const values = reactive(defaultValues())
+const values = reactive(defaultValues(GROUPED_KEYS))
+
+/** 当前分区（A~J）。面板按分区展示，一次只显示一区的滑杆。 */
+const activeZone = ref(SLIDER_GROUPS[0].zone)
+const activeGroup = computed(
+  () => SLIDER_GROUPS.find((g) => g.zone === activeZone.value) || SLIDER_GROUPS[0]
+)
+
+/** 面板总览文案：参数总数 / 本档开放 / 已接线通道 / 等资产条数。 */
+const panel = panelSummary()
+const summaryText = computed(() => {
+  const g = activeGroup.value
+  return g.zone + ' ' + g.name + ' · 本区 ' + g.count + ' 条'
+    + (g.pending ? '（' + g.pending + ' 条等资产）' : '')
+    + ' · 全档 ' + panel.open + '/' + panel.total + ' 条'
+})
+
+/** 本区提示：说明哪些条目的滑杆区间被适老裁剪收敛过。 */
+const zoneHint = computed(() => {
+  const softened = activeGroup.value.sliders.filter((s) => s.trim === '弱化').length
+  if (!softened) return '本区参数滑杆区间按原规格开放'
+  return '本区有 ' + softened + ' 条按适老裁剪收敛了可调区间（如妆容强度上限）'
+})
 
 function onParam(key, value) {
   values[key] = value
 }
 
+function switchZone(zone) {
+  if (zone === activeZone.value) return
+  activeZone.value = zone
+}
+
 /**
  * 一次算全：UI 值 → 参数 → 四通道指令 → 形态键权重。
- * keys 必须显式传 SLIDER_KEYS：逻辑层按「驱动的参数」过滤告警，
+ * keys 显式传面板全量键：逻辑层按「驱动的参数」过滤告警，
  * 不传会把整表 102 条的缺失提示一起放出来。
  */
-const view = computed(() => computeView(values, { keys: SLIDER_KEYS }))
-/** 形态键权重（name → 0~1），3D 渲染器直接消费它。 */
+const view = computed(() => computeView(values, { keys: GROUPED_KEYS }))
+/** 形态键权重（name → 0~1），CSS 降级预览与 App 端 payload 都用它。 */
 const weights = computed(() => view.value.weights)
 
 /** 当前形象性别。默认女性，可切男性（交付 README：捏脸页默认形象 = 女性）。 */
 const gender = ref(DEFAULT_GENDER)
 
 /** 宿主 → renderjs 的唯一数据通道（App 端 renderjs 拿不到逻辑层对象，只能靠 prop 下发）。 */
-const payload = computed(() => JSON.stringify({ weights: weights.value }))
+const payload = computed(() => JSON.stringify({ commands: view.value.cmds }))
 /** 首帧兜底：renderjs 的 mounted 里 getState() 在个别版本拿不到 setup 数据，靠这个 tick 补一次。 */
 const bootTick = ref(0)
 
@@ -246,9 +321,9 @@ onUnmounted(() => {
   stageRef = null
 })
 
-// 滑杆 → 30Hz 节流写权重（规格书 §7.3）
-watch(weights, (w) => {
-  if (stageRef) stageRef.applyWeightsThrottled(w)
+// 滑杆 → 30Hz 节流下发「整包四通道指令」（morph / bone / material / asset，规格书 §7.3）
+watch(view, (v) => {
+  if (stageRef) stageRef.applyCommandsThrottled(v.cmds)
 })
 
 // 性别切换 → 换一份 .glb（同一个舞台，只换模型）
@@ -266,12 +341,30 @@ function switchGender(value) {
 }
 
 function randomize() {
-  Object.assign(values, randomValues())
+  Object.assign(values, randomValues(GROUPED_KEYS))
   uni.showToast({ title: '已随机生成一个新形象', icon: 'none' })
 }
 
+/** 只随机当前分区：想微调一处时，不必整套重来。 */
+function randomizeZone() {
+  const keys = activeGroup.value.keys
+  Object.assign(values, randomValues(keys))
+  uni.showToast({ title: '已随机' + activeGroup.value.name, icon: 'none' })
+}
+
+/** 当前分区恢复默认（0 / 区间内默认值）。 */
+function resetZone() {
+  Object.assign(values, defaultValues(activeGroup.value.keys))
+}
+
+/** 全部参数恢复默认。 */
+function resetAll() {
+  Object.assign(values, defaultValues(GROUPED_KEYS))
+  uni.showToast({ title: '已恢复默认形象', icon: 'none' })
+}
+
 function save() {
-  const built = buildSave(values, { name: '我的形象' })
+  const built = buildSave(values, { keys: GROUPED_KEYS, name: '我的形象' })
   try {
     uni.setStorageSync('bl_face_active', JSON.stringify(built.preset))
     uni.setStorageSync('bl_face_gender', gender.value)
@@ -307,8 +400,8 @@ function back() {
  * 接住 :change: 派发（方法不能缺，缺了会报找不到方法）。两端调的是同一个渲染器。
  */
 // #ifdef APP-PLUS
-import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
-import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
+import { mountFaceStage, unmountFaceStage } from '../../common/face-gl/face-three.js'
+import { DEFAULT_GENDER } from '../../common/face-gl/assets.js'
 // #endif
 
 export default {
@@ -522,6 +615,101 @@ export default {
   box-sizing: border-box;
 }
 .bl-face-controls__row { margin-bottom: 24rpx; }
+
+/* 分区 chips */
+.bl-face-zones {
+  flex: none;
+  white-space: nowrap;
+  padding: 16rpx 0 4rpx;
+}
+.bl-face-zones__inner {
+  display: inline-flex;
+  padding: 0 32rpx;
+  gap: 12rpx;
+}
+.bl-face-zones__chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 10rpx 22rpx;
+  border-radius: var(--bl-radius-pill);
+  background-color: #E4EAE6;
+}
+.bl-face-zones__chip--on {
+  background-color: var(--bl-primary);
+}
+.bl-face-zones__text {
+  flex: none;
+  white-space: nowrap;
+  font-size: 26rpx;
+  color: var(--bl-text-sub);
+}
+.bl-face-zones__text--on {
+  color: #FFFFFF;
+  font-weight: 600;
+}
+.bl-face-zones__count {
+  flex: none;
+  white-space: nowrap;
+  font-size: 22rpx;
+  color: #9AA8A1;
+}
+.bl-face-zones__count--on {
+  color: rgba(255, 255, 255, .85);
+}
+
+/* 面板总览 */
+.bl-face-summary {
+  flex: none;
+  padding: 12rpx 32rpx 0;
+}
+.bl-face-summary__text {
+  font-size: 22rpx;
+  color: var(--bl-text-sub);
+}
+
+/* 参数区（含"等资产"标注） */
+.bl-face-controls__tag {
+  align-self: flex-start;
+  background-color: #FFF3D6;
+  border-radius: var(--bl-radius-pill);
+  padding: 2rpx 14rpx;
+  margin-bottom: 8rpx;
+}
+.bl-face-controls__tag-text {
+  font-size: 20rpx;
+  color: #A97A16;
+}
+.bl-face-controls__zone-hint {
+  padding: 4rpx 0 24rpx;
+}
+.bl-face-controls__zone-hint-text {
+  font-size: 20rpx;
+  color: #9AA8A1;
+  line-height: 1.5;
+}
+
+/* 分区级操作 */
+.bl-face-subactions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32rpx 12rpx;
+}
+.bl-face-subactions__item {
+  padding: 8rpx 24rpx;
+}
+.bl-face-subactions__text {
+  font-size: 24rpx;
+  color: var(--bl-primary);
+}
+.bl-face-subactions__sep {
+  width: 2rpx;
+  height: 24rpx;
+  background-color: var(--bl-divider);
+}
 
 .bl-face-actions {
   flex: none;
