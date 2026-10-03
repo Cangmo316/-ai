@@ -26,6 +26,14 @@ const esc = (text) =>
 let flows = null
 let elderId = 'e_1'
 let busy = false
+/** 老人列表：用来把 elderId 显示成人名——计划接口返回的对象里没有 elderName */
+let elders = []
+
+/** elderId → 显示名。查不到才退回 id，绝不把裸 id 当名字展示给家属 */
+function elderName(id) {
+  const found = elders.find((item) => item.id === id)
+  return (found && (found.name || found.id)) || id || ''
+}
 
 /* ------------------------------------------------------------------ 连接 */
 
@@ -41,7 +49,7 @@ async function connect() {
       baseURL: el('base-url').value.trim(),
       token: el('api-token').value.trim()
     })
-    const elders = await flows.listElders()
+    elders = await flows.listElders()
     const select = el('elder-select')
     select.innerHTML = elders
       .map(
@@ -118,7 +126,7 @@ function renderPending(plans) {
       return (
         '<article class="plan">' +
         '<div class="plan__head">' +
-        '<strong>' + esc(plan.elderName || elderId) + '</strong>' +
+        '<strong>' + esc(plan.elderName || elderName(plan.elderId || elderId)) + '</strong>' +
         '<span class="badge badge--pending">' + esc(plan.statusLabel || '待家属确认') + '</span>' +
         '<span class="plan__time">生成于 ' + esc((plan.createdAt || '').replace('T', ' ').slice(0, 16)) + '</span>' +
         '</div>' +
