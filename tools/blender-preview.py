@@ -124,6 +124,24 @@ def main() -> None:
             center = (center[0], center[1], high.z - (high.z - low.z) * 0.11)
             size = (high.z - low.z) * 0.26
 
+    # eye / eye34：眼球微距——检查"眼球凸出、眼皮包裹、贴图拉伸"必须放大到眼睛这一级
+    if angle.startswith("eye"):
+        eyeball = None
+        for obj in bpy.data.objects:
+            if obj.type == "MESH" and "eyeball" in obj.name.lower():
+                eyeball = obj
+                break
+        if eyeball is not None:
+            eye_low, eye_high = world_bounds([eyeball])
+            center = (
+                (eye_low.x + eye_high.x) / 2,
+                (eye_low.y + eye_high.y) / 2,
+                (eye_low.z + eye_high.z) / 2,
+            )
+            size = max(eye_high.x - eye_low.x, eye_high.z - eye_low.z) * 4.5
+        else:
+            size = size * 0.25
+
     # 相机：正交投影，距离给足避免裁切
     distance = max(high.y - low.y, size) * 3 + 0.5
     if angle in ("three", "face34"):

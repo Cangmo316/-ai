@@ -234,6 +234,36 @@ async function main() {
     return
   }
 
+  if (command === 'drag') {
+    // 真的拖动：uni-app 的 <slider> 只认真实指针事件，DOM 里 .click() 或直接改 value 都无效
+    const [x, y, x2, y2] = flags._.slice(1).map(Number)
+    if ([x, y, x2, y2].some((v) => Number.isNaN(v))) die('drag 需要四个坐标: drag <x> <y> <x2> <y2>')
+    const steps = Number(flags.steps || 14)
+    const stepMs = Number(flags.stepMs || 28)
+    await withClient(async (client) => {
+      await client.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1
+      })
+      for (let i = 1; i <= steps; i += 1) {
+        const t = i / steps
+        await client.send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: x + (x2 - x) * t,
+          y: y + (y2 - y) * t,
+          button: 'left',
+          buttons: 1
+        })
+        await sleep(stepMs)
+      }
+      await client.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: x2, y: y2, button: 'left', buttons: 0, clickCount: 1
+      })
+      log(`  已拖动 (${x},${y}) → (${x2},${y2})`)
+      await sleep(Number(flags.wait || 800))
+    })
+    return
+  }
+
   if (command === 'key') {
     const text = flags._[1] || ''
     await withClient(async (client) => {

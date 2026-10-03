@@ -10,6 +10,14 @@ node_modules/
 _dl/
 _shots/_wip/
 _shots/hx_now.png
+# AI 协作产生的验收/诊断截图（可随时重跑工具再生成，不入库）
+_shots/h5-*.png
+_shots/diag-*.png
+_shots/after-*.png
+_shots/eye-*.png
+_shots/android-*.png
+_shots/rig-*.png
+_shots/f[0-9]*.png
 
 # ===== 系统 / 编辑器 =====
 Thumbs.db
@@ -47,4 +55,7 @@ server/**/*.bin
 # 入库：7 件 .glb（合计 54.1 MB，内嵌 1K）+ textures/1k/ + 文档 / 预览。若仍嫌大，可改走 Git LFS：
 #   git lfs track "*.glb"  （需先 git lfs install）
 3D建模/**/*.blend
+3D建模/**/*.blend1
 3D建模/**/textures/*.png
+# 资产修复前的备份（276MB）：只是本地保险，不进仓库
+3D建模/_backup_*/
