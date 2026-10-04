@@ -3,9 +3,11 @@
 比邻AI · 面部骨骼权重（第 2 步：骨相骨骼 → 蒙皮）
 
 用法：
-    blender --background <工作.blend> --python tools/blender-rig-weights.py -- \
-        --out <输出.blend> [--mode analytic|heat|hybrid] [--smooth 2] \
-        [--max-influences 4] [--structural-share 0.30] [--report]
+    blender --background <工作.blend> --python tools/blender-env.py \
+        --python tools/blender-rig-weights.py -- \
+        --out <输出.blend> [--mode analytic|heat|hybrid] [--rounds 3] \
+        [--max-influences 4] [--structural-share 0.30] [--report] \
+        [--hair-rounds 2] [--hair-factor 0.5] [--hair-hard-level 0.6] [--no-hair-relax]
 
 方法论位置：骨相骨骼（第 1 步，已完成）→ **权重（本脚本）** → 皮相 blendshape → RBF → 质检
 
@@ -18,10 +20,16 @@
                 （高斯团 + 竖直/横向带 + 正面门），天然连续、可控、可复现。
   · `hybrid`  —— 机能骨用解析场，骨相骨用解析场（等价 analytic；保留作对比开关）。
 
-另外两个必须处理的问题（否则权重看着"对"、一动就烂）：
+三个必须处理的问题（否则权重看着"对"、一动就烂）：
   1. **头发必须排除**：头发是独立大块，用贴图亮度做遮罩（albedo 近黑 = 头发）。
      只保留**大连通域**，这样画在脸上的**眉毛/睫毛**（也是黑的）不会被误判。
-  2. **名额分配**：bone heat/解析场都可能在一行里留下 5+ 个骨头，
+  2. **但遮罩不能是布尔**（本轮实测的根因）：头发壳与头皮/耳根只差 0.3~0.6mm，
+     布尔遮罩会让贴在一起的两个顶点场值 1.0 vs 0.0，而网格平滑是沿**拓扑边**走的
+     （两片壳之间没有边）→ 平滑扩散不进去 → `jaw` 20.6×、`ear.L` 13.9× 的硬边。
+     现在改成"沿拓扑边扩散成连续遮罩"（`soft_hair_mask`，`--hair-rounds/--hair-factor`）。
+     ⚠️ 不要用"到最近头发的三维距离"来做（第一版就是这么做，实测把躯干/脖子全判成
+     "非皮肤"，`jaw`/`lip_*`/`chin`/`nose` 的顶点数全部掉到 0）。
+  3. **名额分配**：bone heat/解析场都可能在一行里留下 5+ 个骨头，
      截断到 4 骨时必须让**骨相骨也拿到名额**（实测：不预留就全被挤成 0 权重）。
 """
 
@@ -171,11 +179,60 @@ def hair_mask(mesh_obj, dark_threshold=0.16, min_component_share=0.02, sample=10
     return vertex_mask, f"头发顶点 {int(vertex_mask.sum())} / {count}（域 {len(keep)} 个）"
 
 
-def analytic_fields(coords, vertex_hair):
-    """全部 33 骨的解析权重场；返回 {骨名: np.ndarray(顶点数)}（未归一化，0~1）"""
+def soft_hair_mask(mesh_obj, coords, vertex_hair, rounds=2, factor=0.5,
+                   hard_level=0.6, verbose=True):
+    """把布尔头发遮罩沿**拓扑边**扩散成连续场，返回 (soft 遮罩, hard 遮罩)
+
+    为什么必须扩散（本轮实测的根因，别再退回布尔遮罩）：
+      这个资产里**头发壳与头皮/耳根是两片平行表面，空间只差 0.3~0.6mm**
+      （`tools/blender-weight-source.py` 实测：耳根 x≈0.0605~0.0625 之间相邻顶点
+      一个判成头发、一个判成皮肤，交替出现）。布尔遮罩让贴在一起的两个顶点
+      拿到 1.0 与 0.0 两种场值，而权重平滑是沿**拓扑边**扩散的
+      （两片壳之间没有边）→ 平滑扩散不进去 → 权重留下"0.5mm 内差 0.35"的硬边：
+        · `ear.L` 12° 时 13.9× 拉伸（0.43mm 的边上 Δw 0.33）
+        · `jaw` 20° 时 20.6× 拉伸（0.32mm 的边上 Δw 0.13）
+      —— 这才是 §8.7.3 里"jaw 20.6×、ear 13.9×"的真正成因，**不是场的公式写错**。
+
+    ⚠️ 不能用"到最近头发的三维距离"来做这件事（第一版就是这么做，实测失败）：
+      头发只长在头上，**躯干离头发 20cm**，距离场会把整条脖子/下巴判成"非皮肤"
+      → `jaw`/`lip_*`/`chin`/`nose` 的顶点数全部掉到 0（日志里那排 "⚠️ 无权重"）。
+      所以扩散必须**沿拓扑边**（只在真正贴着头发的那几圈顶点上起作用）。
+
+    `hard_level`：hard 遮罩 = `soft < hard_level 归零`，用于骨相骨（避免半个头发
+    跟着 `face_width` / `temple` 一起横向位移）。
+    """
+    count = len(coords)
+    hair_values = vertex_hair.astype(np.float64)
+    targets, offsets = build_adjacency(mesh_obj)
+    soft = hair_values.copy()
+    for _ in range(max(0, rounds)):
+        soft = smooth_once(soft, targets, offsets, factor)
+    hard = np.where(soft >= hard_level, 1.0, 0.0)
+    if verbose:
+        touched = int(((soft > 1e-6) & (~vertex_hair)).sum())
+        print(f"  头发遮罩软扩散：{rounds} 轮 × α{factor}（沿拓扑边）；"
+              f"被染上遮罩的皮肤顶点 {touched}；hard 保留 {int(hard.sum())} / "
+              f"{int(vertex_hair.sum())}")
+    return soft, hard
+
+
+def analytic_fields(coords, vertex_hair, hair_soft=None):
+    """全部 33 骨的解析权重场；返回 {骨名: np.ndarray(顶点数)}（未归一化，0~1）
+
+    `vertex_hair` 是原布尔遮罩（用于骨相骨的 hard 门）；
+    `hair_soft` 是沿拓扑边扩散后的连续遮罩（0 = 纯皮肤、1 = 在头发里），
+    机能骨场按它软门控，避免头皮/耳根处"0.5mm 落差"。
+    """
     x = coords[:, 0]
     z = coords[:, 2]
-    skin = (~vertex_hair).astype(np.float64)
+    if hair_soft is None:
+        skin = (~vertex_hair).astype(np.float64)
+        skin_hard = skin
+    else:
+        hair_soft = np.clip(hair_soft, 0.0, 1.0)
+        skin = 1.0 - hair_soft
+        # 骨相骨用"硬门"：软遮罩超过 0.6 就算头发（否则半个头发会跟着轮廓骨位移）
+        skin_hard = np.where(hair_soft >= 0.6, 0.0, 1.0)
     fields = {}
 
     # ── 竖向三分：root / neck / head ──
@@ -187,6 +244,8 @@ def analytic_fields(coords, vertex_hair):
 
     face_front = front_gate(coords, -0.005, 0.03)     # 只在正面半边生效
     face = face_front * skin * head_zone
+    # 骨相骨单独用"硬门"：软遮罩 ≥0.6 的一律算头发，避免半个头发跟着轮廓骨横向位移
+    face_hard = face_front * skin_hard * head_zone
 
     # ── 机能骨 ──
     # ⚠️ `jaw` 必须有**下界**：只写 smoothstep((JAW_TOP_Z - z)/0.030) 会让下颌场一直罩到脖子上，
@@ -210,19 +269,19 @@ def analytic_fields(coords, vertex_hair):
                                  * smoothstep((np.abs(x) - 0.038) / 0.012))
 
     # ── 骨相骨（粗轮廓捏脸）：范围收紧，避免像 bone heat 那样糊到躯干/头发 ──
-    lateral_band = face * smoothstep((np.abs(x) - 0.008) / 0.012)
-    fields["face_width"] = (face * np.exp(-(((z - 1.055) / 0.045) ** 2) * 1.4)
+    lateral_band = face_hard * smoothstep((np.abs(x) - 0.008) / 0.012)
+    fields["face_width"] = (face_hard * np.exp(-(((z - 1.055) / 0.045) ** 2) * 1.4)
                             * smoothstep((np.abs(x) - 0.010) / 0.015))
-    fields["face_length"] = face * blob(coords, 0.0, 1.058, 0.045, 0.030)
-    fields["forehead_height"] = face * blob(coords, 0.0, FOREHEAD_Z, 0.050, 0.030)
-    fields["forehead_width"] = (face * np.exp(-(((z - 1.120) / 0.035) ** 2) * 1.4)
+    fields["face_length"] = face_hard * blob(coords, 0.0, 1.058, 0.045, 0.030)
+    fields["forehead_height"] = face_hard * blob(coords, 0.0, FOREHEAD_Z, 0.050, 0.030)
+    fields["forehead_width"] = (face_hard * np.exp(-(((z - 1.120) / 0.035) ** 2) * 1.4)
                                 * smoothstep((np.abs(x) - 0.010) / 0.015))
     for side, sign in (("L", 1.0), ("R", -1.0)):
-        fields[f"cheekbone.{side}"] = face * blob(coords, 0.040 * sign, CHEEK_Z, 0.024, 0.020)
+        fields[f"cheekbone.{side}"] = face_hard * blob(coords, 0.040 * sign, CHEEK_Z, 0.024, 0.020)
         fields[f"temple.{side}"] = lateral_band * blob(coords, 0.062 * sign, TEMPLE_Z, 0.022, 0.022)
-        fields[f"jaw_width.{side}"] = face * blob(coords, 0.048 * sign, 1.026, 0.024, 0.018)
-        fields[f"cheek_fat.{side}"] = face * blob(coords, 0.032 * sign, 1.045, 0.028, 0.022)
-        fields[f"eye_socket.{side}"] = face * blob(coords, EYE_X * sign, EYE_Z, 0.017, 0.013)
+        fields[f"jaw_width.{side}"] = face_hard * blob(coords, 0.048 * sign, 1.026, 0.024, 0.018)
+        fields[f"cheek_fat.{side}"] = face_hard * blob(coords, 0.032 * sign, 1.045, 0.028, 0.022)
+        fields[f"eye_socket.{side}"] = face_hard * blob(coords, EYE_X * sign, EYE_Z, 0.017, 0.013)
     return fields
 
 
@@ -280,12 +339,24 @@ def build_adjacency(mesh_obj):
 
 
 def smooth_once(matrix, targets, offsets, factor):
-    accumulated = np.zeros_like(matrix)
-    for row in range(matrix.shape[0]):
-        start, end = offsets[row], offsets[row + 1]
-        if end > start:
-            accumulated[row] = matrix[targets[start:end]].mean(axis=0)
-    return (1.0 - factor) * matrix + factor * accumulated
+    """沿拓扑边做一次邻域平均（矩阵版；任意列数）
+
+    ⚠️ 旧版是 `for row in range(499531)` 的 Python 循环（一次 30~60s，
+    本脚本要跑几十次）。现在用 `np.add.reduceat` 在排序好的邻接表上一次性求和，
+    再除以度数——同样的结果，快两个数量级。
+    """
+    was_flat = matrix.ndim == 1
+    if was_flat:
+        matrix = matrix[:, None]
+    counts = np.diff(offsets)
+    safe = offsets[:-1]
+    sums = np.add.reduceat(matrix[targets], safe, axis=0)
+    divisor = np.maximum(counts, 1).astype(matrix.dtype)
+    averaged = sums / divisor[:, None]
+    empty = counts == 0
+    blended = (1.0 - factor) * matrix + factor * averaged
+    blended[empty] = matrix[empty]
+    return blended[:, 0] if was_flat else blended
 
 
 def solve_weights(functional, structural, share, max_influences, targets, offsets,
@@ -341,6 +412,33 @@ def report_matrix(group_names, matrix):
     }
 
 
+def edge_gradient_report(group_names, matrix, edges, coords, min_edge_mm=0.3):
+    """每根骨"沿边的权重梯度"（单位：每毫米 Δw）
+
+    这是本轮的**核心判据**：拉伸比 ≈ 1 + Δw × (骨端位移 / 边长)，
+    所以只要把"每毫米 Δw"压下来，拉伸自然下来——比"事后多平滑几轮"更根本
+    （§8.8 记的"数值残差被 normalize 放大"是同族问题）。
+    只统计原长 > `min_edge_mm` 的边（与 `blender-bone-audit.py` 的"有效边"同口径）。
+    """
+    length_mm = np.linalg.norm(coords[edges[:, 0]] - coords[edges[:, 1]], axis=1) * 1000.0
+    valid = length_mm > min_edge_mm
+    report = {}
+    for index, name in enumerate(group_names):
+        column = matrix[:, index]
+        delta = np.abs(column[edges[:, 0]] - column[edges[:, 1]])
+        if not valid.any():
+            report[name] = {"max_per_mm": 0.0, "p999_per_mm": 0.0, "max_delta": 0.0}
+            continue
+        gradient = delta[valid] / length_mm[valid]
+        report[name] = {
+            "max_per_mm": round(float(gradient.max()), 4),
+            "p999_per_mm": round(float(np.percentile(gradient, 99.9)), 4),
+            "max_delta": round(float(delta[valid].max()), 4),
+        }
+    return report
+
+
+
 def write_matrix(mesh_obj, group_names, matrix, levels=2000):
     """按权重分桶批量写回：调用数从 200 万降到 3 万（量化误差 ≤ 0.05%）"""
     all_indices = list(range(matrix.shape[0]))
@@ -384,7 +482,14 @@ def main():
     smooth_factor = float(arg_value("--smooth-factor", "0.55"))
     max_influences = int(arg_value("--max-influences", "4"))
     share = float(arg_value("--structural-share", "0.30"))
+    hair_rounds = int(arg_value("--hair-rounds", "2"))
+    hair_factor = float(arg_value("--hair-factor", "0.5"))
+    hair_hard_level = float(arg_value("--hair-hard-level", "0.6"))
+    no_hair_relax = has_flag("--no-hair-relax")
     want_report = has_flag("--report")
+    want_gradient = not has_flag("--no-gradient")
+    worst_bones = (arg_value("--worst-bones") or "jaw,ear.L,ear.R,lip_lower,lip_upper,head,neck")
+    worst_bones = [name for name in worst_bones.split(",") if name]
 
     import time
     started = time.time()
@@ -418,7 +523,18 @@ def main():
     report["hair_mask"] = hair_note
     if vertex_hair is None:
         vertex_hair = np.zeros(count, dtype=bool)
-    fields = analytic_fields(coords, vertex_hair)
+    # 布尔遮罩 → 沿拓扑边扩散的连续遮罩（见 soft_hair_mask 的文档：
+    # 这是 jaw/ear 硬边的真正成因，别再退回布尔遮罩）
+    if no_hair_relax:
+        hair_soft = None
+        report["hair_soft"] = "关闭（--no-hair-relax）"
+    else:
+        hair_soft, hair_hard = soft_hair_mask(
+            mesh_obj, coords, vertex_hair, rounds=hair_rounds, factor=hair_factor,
+            hard_level=hair_hard_level)
+        report["hair_soft"] = {"rounds": hair_rounds, "factor": hair_factor,
+                              "hard_level": hair_hard_level}
+    fields = analytic_fields(coords, vertex_hair, hair_soft)
     report["field_bones"] = len(fields)
     functional, structural = combine_fields(fields, group_names, structural_names)
     report["field_seconds"] = round(time.time() - started, 1)
@@ -437,6 +553,12 @@ def main():
         final[:, index] = matrix[:, index_of_new[name]]
     report["stats"] = report_matrix(group_names, final)
 
+    edges = np.empty(len(mesh_obj.data.edges) * 2, dtype=np.int32)
+    mesh_obj.data.edges.foreach_get("vertices", edges)
+    edges = edges.reshape(-1, 2)
+    if want_gradient:
+        report["edge_gradient"] = edge_gradient_report(group_names, final, edges, coords)
+
     if out:
         write_matrix(mesh_obj, group_names, final)
         report["modifiers"] = bind_armature(mesh_obj, armature)
@@ -448,6 +570,9 @@ def main():
     print("面部权重 : " + bpy.data.filepath + f"   模式 {mode}")
     print(f"  网格 {mesh_obj.name}（{count} 顶点）× {len(group_names)} 组")
     print(f"  头发遮罩：{hair_note}")
+    if not no_hair_relax:
+        print(f"  头发软边界：沿拓扑边扩散 {hair_rounds} 轮 × α{hair_factor}"
+              f"（骨相骨用 hard 门 ≥ {hair_hard_level}）")
     print(f"  解析场：{len(fields)} 根骨；解算 {rounds} 轮「平滑↔截断到 "
           f"{max_influences} 骨」；骨相骨占比 {share}")
     stats = report["stats"]
@@ -459,6 +584,17 @@ def main():
     for name, item in stats["per_bone"].items():
         flag = "" if item["verts"] else "   ← ⚠️ 无权重"
         print(f"    {name:<20} {item['verts']:>7} {item['strong']:>7} {item['max']:>7}{flag}")
+    if want_gradient:
+        print("")
+        print(f"  沿边权重梯度（Δw/mm，只算原长 > 0.3mm 的边）—— 拉伸比的直接驱动量：")
+        print(f"    {'骨':<20}{'max Δw/mm':>12}{'p99.9':>10}{'max Δw':>10}")
+        gradient = report["edge_gradient"]
+        for name in worst_bones:
+            if name not in gradient:
+                continue
+            item = gradient[name]
+            print(f"    {name:<20}{item['max_per_mm']:>12}{item['p999_per_mm']:>10}"
+                  f"{item['max_delta']:>10}")
     if out:
         print("RIG_WEIGHTS_OK 已保存 " + out)
     if want_report:
