@@ -25,6 +25,7 @@ from .models import (
     MemoryStore,
 )
 from .retrieval import describe, score, search, tokens_of, topics
+from .sql_store import SqlMemoryStore
 
 __all__ = [
     "AUTO_MIN_CONFIDENCE",
@@ -37,6 +38,7 @@ __all__ = [
     "MemoryEntry",
     "MemorySettings",
     "MemoryStore",
+    "SqlMemoryStore",
     "REVIEW_APPROVED",
     "REVIEW_PENDING",
     "REVIEW_REJECTED",

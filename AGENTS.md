@@ -47,7 +47,13 @@
 - 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；
   仓库根 `package.json` 只为 `tools/` 提供 ESM 运行环境与快捷命令，`uni-app/` 工程仍零 npm 依赖
 - **改动 `server/app/` 或 `server/tests/` 后必须跑**
-  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（238 项，零测试依赖）
+  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（252 项，零测试依赖）
+- **落库默认是关的**：`DATABASE_URL` 默认 `memory://`（测试与 CI 必须互不污染，不许在仓库里留库文件）；
+  真要落库在 `server/.env` 里设 `sqlite:///data/bilin.db`。`server/data/` 与 `*.db` 已 gitignore，
+  **运行时数据（老人的经历与偏好）绝不进仓库**。启动日志与 `/healthz` 的 `storage`/`storageDurable`
+  必须如实反映当前后端
+- **写"清空/删除"类测试用例时不许用 `e_1`**：`tools/test-memory-store.mjs` 最后一条要验一键清空，
+  打真服务时会真的清掉该老人的数据（第一版就这么把演示数据清了）。用专用 id（默认 `e_mem_test`）
 - 跨语言端到端回归：先起 `server/run.py`，再
   `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs; node tools/test-push-store.mjs; node tools/test-memory-store.mjs; node tools/test-auth.mjs; node tools/test-family-flows.mjs`
 - **三层记忆有三条隐私硬约束**（设计方案 §3.4，改 `server/app/memory/` 或 `tools/mock-server.mjs`
@@ -59,6 +65,12 @@
      且**端侧不提供记忆写入入口**，写入只能走家人端或对话自动整理
 - **记忆检索的分数口径只有一个入口**：`server/app/memory/retrieval.py` 的 `score()`。
   现在是"标签/词组重合 + 时间衰减"（零依赖、可解释），换向量检索只改这一处
+- **⚠️ 已知未解决：模型会编造记录外的"共同回忆"**（真模型实测，2026-10-04）：
+  问记录里写着的（"你儿子带我去哪儿玩了"）能正确说出海南 ✓；
+  但**追问记录里没有的细节**（"那趟玩得怎么样"）时，3 次采样里 2 次编出具体场景
+  （"海边风大 我晒黑了点"、"那天太阳晒得舒服 你还跟人下棋赢了两把"），甚至编出一个
+  不存在的"公园那趟"。prompt 已加两层约束（往事段 + 不能越的线）仍不能可靠拦住。
+  **不要在文档或汇报里说这条已解决**；下一步选项见 `比邻AI_P2三层记忆进度报告_20261004.txt`
 - **对外提供服务前必须开鉴权**：`server/.env` 里设 `AUTH_MODE=required` 并配 `API_TOKENS`（端侧用 `setApiToken()`）；
   否则任何能访问到端口的人都能读健康档案、改计划、发提醒
 - **模型 key 只放 `server/.env`**（已 gitignore，含 `server/.env.*`）；

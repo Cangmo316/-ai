@@ -148,6 +148,15 @@ class Settings:
     auth_mode: str = "auto"
     api_tokens: str = ""
 
+    # ── 落库（P2）──────────────────────────────────────────
+    # 默认 memory://：**不落库、重启即清空**。这是刻意的——测试与 CI 必须互不污染，
+    # 不能因为跑一次单测就在仓库目录里留一个数据库文件。
+    # 要真落库就在 server/.env 里设（见 .env.example）：
+    #   memory://                 不落库（测试/CI）
+    #   sqlite:///data/bilin.db   标准库 sqlite3，零安装（本机推荐）
+    #   postgresql://...          需装驱动（psycopg）；方言差异见 app/storage/db.py
+    database_url: str = "memory://"
+
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> "Settings":
         load_env_file(env_path)
@@ -183,6 +192,7 @@ class Settings:
             log_level=_env_str("LOG_LEVEL", "info"),
             auth_mode=_env_str("AUTH_MODE", "auto").lower(),
             api_tokens=_env_str("API_TOKENS", ""),
+            database_url=_env_str("DATABASE_URL", "memory://"),
         )
 
     # ── 派生属性 ──────────────────────────────────────────

@@ -38,6 +38,7 @@
 | **幂等**（`clientMsgId`：重试回放缓存、不重复调模型；失败释放记录） | `app/orchestration/idempotency.py` |
 | **P2 三层记忆**（L1 档案 + L2 经历 + L3 偏好）：按相关性取 Top-K 注入 prompt、L3 话题权重 | `app/memory/`、`app/api/memories.py` |
 | **记忆自动整理**（从聊天里抽 L2/L3）：默认关、低置信只入待复核、自动整理内容家属不可见 | `app/memory/extractor.py` |
+| **记忆落库**（SQLite 默认零安装；`DATABASE_URL` 换 PostgreSQL 走同一套 SQL） | `app/storage/db.py`、`app/memory/sql_store.py` |
 
 **未实现 / 待你操作**（不藏着，避免误判进度）
 
@@ -49,7 +50,8 @@
   真正的做法（P2 随家人端做）见 `app/auth.py` 的"能防/不能防"表
 - **`CORS_ORIGINS=*`** 默认全放（HBuilderX 预览跨域方便），上线前要收紧成具体域名
 
-- **数据库**：会话、计划、打卡、提醒任务、cid、**记忆**全在内存，进程重启即清空（接口按落库形态设计）
+- **数据库**：**记忆已落库**（`DATABASE_URL`）；会话、计划、打卡、提醒任务、cid 仍在内存，
+  进程重启即清空（接口按落库形态设计）。落库后端选择与限制见 §二之下的"落库"小节
 - **记忆检索没有向量化**：现在是"标签/词组重合 + 时间衰减"（零依赖、可解释），
   升级路径在 `app/memory/retrieval.py` 的 `score()` 一处；记忆量到几千条再换 embedding 不迟
 - **家人端**只有最小版：`family/` 里的计划确认台（生成/确认/驳回/调整/完成率/提醒追溯，见 family/README.md）；
@@ -97,6 +99,31 @@ node tools\seed-plan.mjs              # 仓库根目录执行：生成 → 家�
 node tools\seed-plan.mjs --elder e_2  # 换一位老人
 node tools\seed-plan.mjs --fresh      # 已有生效计划时重来一份
 ```
+
+### 落库（记忆持久化，P2）
+
+`server/.env` 里的 `DATABASE_URL` 决定记忆落在哪：
+
+| 值 | 效果 | 用在哪 |
+|---|---|---|
+| `memory://`（默认） | 不落库，**进程重启即清空** | 测试 / CI（必须互不污染，不能在仓库目录留库文件） |
+| `sqlite:///data/bilin.db` | 标准库 `sqlite3`，零安装、单文件、写入即持久 | 本机与小规模部署（**推荐**） |
+| `postgresql://user:pass@host:5432/bilin` | 需先 `pip install "psycopg[binary]"`；SQL 与方言差异已隔离在 `app/storage/db.py` | 正式部署 |
+
+相对路径按 `server/` 解析（即 `server/data/bilin.db`），该目录已 gitignore。
+**启动日志与 `/healthz` 的 `storage` / `storageDurable` 会明确告诉你当前到底落没落库**——
+跑了一整天以为在落库、其实 `memory://`，是这类设计最容易踩的坑。
+
+```powershell
+# 验证落库真的生效：写一条 → 重启服务 → 还在
+$body = '{"elderId":"e_1","kind":"experience","text":"老人 2023 年跟儿子去过海南"}'
+Invoke-RestMethod -Uri http://127.0.0.1:8000/v1/memories -Method Post -Body $body -ContentType 'application/json'
+# 重启服务后再查
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/v1/memories?elderId=e_1'
+```
+
+⚠️ **已知限制**：`SqlMemoryStore` 是"写穿透 + 启动加载"（读走内存缓存），适合当前单进程部署；
+多 worker 同时写会有缓存不一致——那时把读路径也改成直接查库（SQL 都集中在 `sql_store.py`）。
 
 ---
 

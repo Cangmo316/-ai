@@ -70,6 +70,10 @@ def score(entry: MemoryEntry, query_tokens: list[str], now: datetime | None = No
     """一条记忆对当前这句话的相关度。
 
     组成：标签命中（权重最高，标签是人给的，最可靠）> 正文重合 > 时间新鲜度 > 来源可信度。
+
+    ⚠️ **只蹭上一个常用字不算相关**：实测问"老家的桥"时，"老人爱听戏"曾以 0.28 分被捞出来
+    （共用了一个"老"字）。这种命中会把无关往事注进上下文，模型反而跑题——比"没想起来"更糟。
+    所以要求至少满足一条：标签命中 / 有二元组（词组级）命中 / 至少两个不同的单字命中。
     """
     moment = now or datetime.now()
     if not query_tokens:
@@ -82,13 +86,16 @@ def score(entry: MemoryEntry, query_tokens: list[str], now: datetime | None = No
     text_tokens = set(tokens_of(entry.text))
 
     tag_hit = len(query_set & tag_tokens)
-    text_hit = len(query_set & text_tokens)
-    if not tag_hit and not text_hit:
+    overlap = query_set & text_tokens
+    multi_hit = sum(1 for token in overlap if len(token) > 1)
+    single_hit = sum(1 for token in overlap if len(token) == 1)
+
+    if not tag_hit and not multi_hit and single_hit < 2:
         return 0.0
 
     # 长文本天然更容易撞词，用命中率而不是命中数，避免"话多的记忆总被选中"
-    text_rate = text_hit / max(1, len(text_tokens))
-    base = tag_hit * 0.45 + text_rate * 1.2
+    text_rate = (multi_hit * 2 + single_hit) / max(1, len(text_tokens))
+    base = tag_hit * 0.45 + min(text_rate, 1.0) * 1.2
     # 老人自己说过 / 家属填写的比自动抽取的更可信
     trust = 1.0 if entry.source != "auto" else 0.85
     return base * trust + _recency_bonus(entry.happened_at, entry.created_at, moment)

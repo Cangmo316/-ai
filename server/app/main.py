@@ -36,7 +36,16 @@ from .errors import code_for_status
 from .errors import table as error_table
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
-from .memory import MemoryStore, describe, extract_with_llm, remember_candidates, remember_from_turn, search
+from .memory import (
+    MemoryStore,
+    SqlMemoryStore,
+    describe,
+    extract_with_llm,
+    remember_candidates,
+    remember_from_turn,
+    search,
+)
+from .storage import open_database
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .models.push_client import PushClientRegistry
@@ -79,8 +88,13 @@ def create_app(
     elders = ElderStore()
     # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
     idempotency = IdempotencyStore()
-    # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）
-    memories = MemoryStore()
+    # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）。
+    # 有库就落库（默认 sqlite），DATABASE_URL=memory:// 时退回纯内存（测试/CI）
+    database = open_database(config.database_url, base_dir=Path(__file__).resolve().parents[1])
+    if database.enabled:
+        memories = SqlMemoryStore(database)
+    else:
+        memories = MemoryStore()
 
     if knowledge is None:
         try:
@@ -192,6 +206,10 @@ def create_app(
         )
         if not config.uses_real_model:
             logger.warning("当前使用假模型（未配置 LLM_API_KEY）—— 端侧能连通，但回复是固定话术")
+        # 落库后端也要喊出来：跑了一整天以为在落库、其实 DATABASE_URL=memory:// 最坑
+        logger.info("记忆存储：%s", database.describe())
+        if not database.enabled:
+            logger.warning("记忆未落库（DATABASE_URL=memory://）—— 进程重启后记忆会清空")
         # 接口是不是裸的，这件事必须喊出来（见 app/auth.py 的"能防/不能防"表）
         warn_if_open(config)
         if config.scheduler_enabled:
@@ -207,6 +225,8 @@ def create_app(
             logger.warning("提醒调度未启用（SCHEDULER_ENABLED=false）—— 不会自动投递提醒")
         yield
         await scheduler.stop()
+        # 关连接前 SQLite 会自己 checkpoint（WAL 模式下不关会留 -wal 文件）
+        database.close()
 
     app = FastAPI(
         title="比邻AI agent 服务",
@@ -228,6 +248,7 @@ def create_app(
     app.state.push_clients = push_clients
     app.state.idempotency = idempotency
     app.state.memories = memories
+    app.state.database = database
     # 全局时间源：调度器与各路由都用它取"现在"，避免出现"路由按真实时间、调度按注入时间"
     # 这种只有测试才会暴露的分裂（踩过一次：手动 tick 到 15 点，打卡却按真实日期去找提醒）
     app.state.clock = scheduler.now
@@ -308,6 +329,8 @@ def create_app(
             },
             "idempotency": idempotency.counts(),
             "memory": memories.counts(),
+            "storage": database.describe(),
+            "storageDurable": database.enabled,
             "endpoints": [
                 "POST /v1/chat/stream",
                 "POST /v1/chat/send",

@@ -285,6 +285,13 @@ class PromptTests(unittest.TestCase):
         self.assertIn("海南", with_memory)
         self.assertIn("别硬提、别罗列", with_memory)
         self.assertIn("绝不要编", with_memory)
+        # 反"补细节"（实测模型会把记录扩写成一段场景："那会儿你天天发照片"），
+        # 但**同时**要求把记录里写到的照实说（否则模型矫枉过正，连"海南"都不肯说），
+        # 并且追问细节时不许下结论（实测会说"那是你自己去的"，与记录矛盾）
+        self.assertIn("一律不许补、也不许猜", with_memory)
+        self.assertIn("照实说", with_memory)
+        self.assertIn("邀请", with_memory)
+        self.assertNotIn("一律不许补", plain, "没有记忆时不该出现这段规则")
 
 
 class ServiceInjectionTests(unittest.TestCase):

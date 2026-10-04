@@ -39,6 +39,14 @@ server/.env
 server/.env.*
 !server/.env.example
 
+# ===== 落库产物（P2 三层记忆默认走 sqlite，见 server/.env.example）=====
+# 数据库是**运行时数据**，不是源码：含老人的经历与偏好，绝不进仓库
+server/data/
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
 # ===== 模型权重与大数据文件（CosyVoice 2 / WhisperX 等，不进仓库）=====
 # 需要提交的少量测试样本请用 git add -f 强制加入
 server/models/
