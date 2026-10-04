@@ -253,7 +253,8 @@ def main():
         print("MOUTH_FAIL 找不到主网格")
         return
     center, half_width, half_height, co, redness, seat_y, lip_line = fit_mouth_ellipse(mesh_obj)
-    center = np.array([center[0], seat_y, center[2]])
+    seat_mm = float(arg_value("--seat-mm", "3.5"))   # 口环再往头内退多少（按资产标定：女生 3.5 / 男生需要更多）
+    center = np.array([center[0], seat_y + seat_mm / 1000.0, center[2]])
     print("=" * 96)
     print("口内几何构建 : " + bpy.data.filepath)
     print(f"  嘴裂椭圆：中心 [{center[0]:.4f}, {center[1]:.4f}, {center[2]:.4f}]  "

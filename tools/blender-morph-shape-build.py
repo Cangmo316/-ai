@@ -122,7 +122,10 @@ SPECS = {
     "frown_line":        {"near": (0.014, -0.0710, 1.0930), "radius": 0.012, "dir": "normal", "both": True},
     "nasolabial":        {"seg": (NASOLABIAL_A, NASOLABIAL_B), "radius": 0.010, "dir": "normal", "both": True},
     "crow_feet":         {"near": (0.0460, -0.0520, 1.0700), "radius": 0.013, "dir": "normal", "both": True},
-    "mouth_line":        {"seg": (MOUTH_LINE_L, MOUTH_LINE_R), "radius": 0.009, "dir": "normal", "both": True},
+    # ⚠️ mouth_line 用"按资产尺度"的嘴角线段：固定坐标在男生上偏了 10mm（场为空）。
+    #    这里取 70%~95% 头宽、z 取 25%/15% 头高作为嘴角内外两端的兜底线段。
+    "mouth_line":        {"seg": ((0.0210, -0.0700, 1.0290), (0.0301, -0.0566, 1.0391)),
+                          "radius": 0.010, "dir": "normal", "both": True},
     "neck_wrinkle":      {"box": ((0, 0.050), (-0.06, -0.01), (0.925, 0.975)), "dir": "normal"},
     "age_overall":       {"vg": "head", "dir": "normal"},
     # ── J 体型 ──

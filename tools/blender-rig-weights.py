@@ -12,6 +12,9 @@
 方法论位置：骨相骨骼（第 1 步，已完成）→ **权重（本脚本）** → 皮相 blendshape → RBF → 质检
 
 三种模式（实测对比后的结论）：
+  · `--dark-threshold`：头发遮罩的 albedo 亮度阈值（**按资产标定**：女生 0.16 / 男生 0.09）。
+    实测教训：固定 0.16 用在男生身上会把 **76%** 的贴图判成头发（他的贴图整体偏暗、
+    块中位 0.12~0.14），结果全部顶点只有 root 有权重。
   · `heat`    —— 全部机能骨用 Blender bone heat。**实测不可用**：这个资产是"全身封闭壳 +
                 头发大块 + 口腔薄腔"，bone heat 会把 `jaw`/`tongue`/`neck` 的权重糊到
                 相邻表面上（实测相邻两顶点一组是 head+neck、另一组是 jaw+tongue，各 ~0.35），
@@ -485,6 +488,7 @@ def main():
     hair_rounds = int(arg_value("--hair-rounds", "2"))
     hair_factor = float(arg_value("--hair-factor", "0.5"))
     hair_hard_level = float(arg_value("--hair-hard-level", "0.6"))
+    dark_threshold = float(arg_value("--dark-threshold", "0.16"))
     no_hair_relax = has_flag("--no-hair-relax")
     want_report = has_flag("--report")
     want_gradient = not has_flag("--no-gradient")
@@ -519,7 +523,10 @@ def main():
               "vertices": count, "groups": len(group_names),
               "structural_bones": structural_names}
 
-    vertex_hair, hair_note = hair_mask(mesh_obj)
+    if has_flag("--no-hair-mask"):
+        vertex_hair, hair_note = None, "已关闭（--no-hair-mask）"
+    else:
+        vertex_hair, hair_note = hair_mask(mesh_obj, dark_threshold=dark_threshold)
     report["hair_mask"] = hair_note
     if vertex_hair is None:
         vertex_hair = np.zeros(count, dtype=bool)

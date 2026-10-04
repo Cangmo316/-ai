@@ -107,6 +107,20 @@ def main() -> None:
                 except Exception as error:  # noqa: BLE001
                     print(f"  ⚠️ 贴图缩放失败 {image.name}: {error}")
 
+    # ── 清掉辅助物（骨架步骤留下的 mk_* 定位标记球 + MarkerMat）──
+    # 实测教训：男生的交付件里混进 33 个 mk_*（各 24 顶点）+ MarkerMat，
+    # 白占 1,800 tri 把交付预算顶超（60,178 > 60,000），而且脸上会多出一堆小球。
+    removed_markers = 0
+    for obj in list(bpy.data.objects):
+        if obj.name.startswith("mk_") or obj.name.startswith("survey_"):
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed_markers += 1
+    if removed_markers:
+        print(f"  清理辅助物：{removed_markers} 个（mk_* / survey_*）")
+    marker_material = bpy.data.materials.get("MarkerMat")
+    if marker_material is not None:
+        bpy.data.materials.remove(marker_material)
+        print("  清理材质：MarkerMat")
     # ── 形变键命名空间过滤（编辑期只留 shape_*，交付期只留 vis_*/expr_*）──
     keep_prefix = arg_value("--keep-morph-prefix")
     if keep_prefix:
