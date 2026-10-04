@@ -25,6 +25,8 @@ function makeElement(id) {
     innerHTML: '',
     textContent: '',
     value: '',
+    /** 复选框状态：记忆区的"从聊天自动整理"开关要用（真实浏览器里由 checked 决定） */
+    checked: false,
     dataset: {},
     listeners: {},
     addEventListener(type, handler) {
@@ -45,6 +47,7 @@ const document = {
   }
 }
 
+// confirm/prompt 的返回值可以在用例里改：清空要验"二次确认点取消不生效"
 const dialogs = { confirm: true, prompt: '早上太早' }
 const window = {
   confirm: () => dialogs.confirm,
@@ -90,6 +93,11 @@ const pendingId = pendingBefore[0].id
 // 真正加载页面脚本（会自己 connect + 首次渲染）
 await import('../family/app.js')
 assert.ok(await waitFor('conn-hint', '已连接'), '页面应该自动连上并刷新：' + document.getElementById('conn-hint').textContent)
+
+// 记忆区的前置：mock 种子里有一条待复核（mem_4），复核用例要指名点它
+const pendingMemories = await seed.pendingMemories('e_1')
+assert.equal(pendingMemories.length, 1, '前置：mock 种子里应有一条待复核记忆')
+const memoryPendingId = pendingMemories[0].id
 
 /* ------------------------------------------------------------ 断言 */
 
@@ -169,6 +177,163 @@ await testAsync('出错时提示是人话（不是 undefined / [object Object]�
   const hint = document.getElementById('conn-hint').textContent
   assert.ok(!hint.includes('undefined'), hint)
   assert.ok(!hint.includes('[object Object]'), hint)
+})
+
+group('③ 记忆区（渲染与点击）')
+
+await testAsync('首屏：记忆列表渲染，且自动整理的（source=auto）一条都不出现', async () => {
+  const html = document.getElementById('memory-list').innerHTML
+  assert.ok(html.length > 0, '不该是空白')
+  assert.match(html, /badge--kind/, '每条要显示种类标签')
+  assert.match(html, /badge--source/, '每条要显示来源')
+  assert.match(html, /badge--visible/, '每条要显示可见性')
+  assert.match(html, /家里人填写|老人自己说的/, '来源要是中文')
+  assert.ok(!html.includes('从聊天里整理'), 'i.e. 自动整理的记忆不许出现在家人列表')
+  assert.match(html, /data-action="memory-delete"/, '每条要给删除按钮')
+  assert.match(document.getElementById('memory-count').textContent, /^[0-9]+$/)
+  assert.ok(Number(document.getElementById('memory-count').textContent) >= 2)
+})
+
+await testAsync('待复核区：显示复核按钮与说明（默认不进主列表）', async () => {
+  const html = document.getElementById('memory-pending-list').innerHTML
+  assert.match(html, /data-action="memory-approve"/, '缺通过按钮')
+  assert.match(html, /data-action="memory-reject"/, '缺否决按钮')
+  assert.match(html, /没经你确认前不会用来主动关心/, '要有一句人话说明为什么扣在这里')
+  assert.match(html, /从聊天里整理/, '待复核的必然是自动整理出来的')
+  assert.match(document.getElementById('memory-pending-count').textContent, /1/)
+  assert.ok(
+    !document.getElementById('memory-list').innerHTML.includes('data-action="memory-approve"'),
+    '复核按钮只能在待复核区'
+  )
+})
+
+await testAsync('自动整理开关：渲染成"默认关"，说明里点出要告知老人', async () => {
+  assert.equal(document.getElementById('memory-auto-extract').checked, false)
+  const hint = document.getElementById('memory-settings-hint').textContent
+  assert.match(hint, /默认/)
+  assert.match(hint, /告知/)
+})
+
+await testAsync('录入空内容：给中文提示，且不多出一条', async () => {
+  document.getElementById('memory-text').value = '   '
+  const before = Number(document.getElementById('memory-count').textContent)
+  document.getElementById('btn-memory-add').listeners.click()
+  assert.ok(await waitFor('memory-hint', '不能是空的'), '空内容要有中文提示')
+  assert.equal(Number(document.getElementById('memory-count').textContent), before, '空提交不该多出一条')
+})
+
+await testAsync('录入提交：列表多一条，表单清空', async () => {
+  const before = Number(document.getElementById('memory-count').textContent)
+  document.getElementById('memory-kind').value = 'preference'
+  document.getElementById('memory-text').value = '老人爱听评剧（界面自检写入）'
+  document.getElementById('memory-tags').value = '戏曲, 评剧'
+  document.getElementById('memory-happened-at').value = '2023年'
+  document.getElementById('btn-memory-add').listeners.click()
+  assert.ok(await waitFor('memory-list', '老人爱听评剧'), '提交后应出现在列表里')
+  assert.equal(Number(document.getElementById('memory-count').textContent), before + 1)
+  const html = document.getElementById('memory-list').innerHTML
+  assert.match(html, /喜好/, '种类标签应跟着下拉框走')
+  assert.match(html, /戏曲、评剧/, '标签要按中文顿号展示')
+  assert.match(html, /2023年/)
+  assert.equal(document.getElementById('memory-text').value, '', '提交成功要清空表单')
+
+  // 清掉这条，免得影响后面的计数断言
+  const created = (await seed.listMemories('e_1')).find((row) => row.text.includes('评剧（界面自检'))
+  assert.ok(created, '应该能在接口里找到刚写进去的那条')
+  await seed.deleteMemory(created.id)
+  await document.getElementById('btn-refresh').listeners.click()
+  assert.ok(await waitFor('memory-count', String(before)), '刷新后计数应回到提交前')
+})
+
+await testAsync('点「通过，可以用」→ 待复核少一条', async () => {
+  const before = Number(document.getElementById('memory-pending-count').textContent)
+  assert.ok(before >= 1, '前置：应有待复核条目')
+  document.getElementById('memory-pending-list').listeners.click({
+    target: {
+      closest: (selector) =>
+        selector.includes('button') ? { dataset: { action: 'memory-approve', id: memoryPendingId } } : null
+    }
+  })
+  assert.ok(await waitFor('memory-pending-count', String(before - 1)), '通过后待复核数应减一')
+})
+
+await testAsync('点「删掉这条」→ 列表少一条', async () => {
+  const created = await seed.addMemory('e_1', { text: '界面自检：马上要删掉的一条' })
+  await document.getElementById('btn-refresh').listeners.click()
+  assert.ok(await waitFor('memory-list', '马上要删掉的一条'), '刷新后应能看到它')
+  const before = Number(document.getElementById('memory-count').textContent)
+  document.getElementById('memory-list').listeners.click({
+    target: {
+      closest: (selector) =>
+        selector.includes('button') ? { dataset: { action: 'memory-delete', id: created.memory.id } } : null
+    }
+  })
+  assert.ok(await waitFor('memory-count', String(before - 1)), '删除后列表应少一条')
+})
+
+await testAsync('一键清空：二次确认点取消 → 不清', async () => {
+  const before = Number(document.getElementById('memory-count').textContent)
+  assert.ok(before >= 1)
+  dialogs.confirm = false
+  document.getElementById('btn-memory-clear').listeners.click()
+  assert.ok(await waitFor('memory-hint', '已取消'), '取消要有反馈')
+  assert.equal(Number(document.getElementById('memory-count').textContent), before, '取消了就不该清')
+})
+
+await testAsync('一键清空：确认后列表为空，开关状态不跟着被清', async () => {
+  dialogs.confirm = true
+  // 先打开开关：清空之后它必须还在（"忘掉内容"≠"撤回告知"）
+  await seed.saveMemorySettings('e_1', true)
+  await document.getElementById('btn-refresh').listeners.click()
+  assert.ok(await waitFor('memory-settings-hint', '已开启'), '前置：开关应是开启状态')
+
+  document.getElementById('btn-memory-clear').listeners.click()
+  assert.ok(await waitFor('memory-hint', '已清空'), '清空要有反馈')
+  assert.equal(Number(document.getElementById('memory-count').textContent), 0)
+  assert.equal(Number(document.getElementById('memory-pending-count').textContent), 0)
+  assert.equal(document.getElementById('memory-auto-extract').checked, true, '清空是忘掉内容，不是撤回告知')
+  assert.equal((await seed.listMemories('e_1')).length, 0, '服务端也要真的空')
+  const settings = await seed.memorySettings('e_1')
+  assert.equal(settings.autoExtract, true)
+  assert.ok(settings.consentedAt, '同意时间也要留着')
+})
+
+await testAsync('自动整理开关：打开会二次确认，并显示"已记录同意时间"', async () => {
+  // 上一条用例刚把记忆清空，这里先打开开关（confirm 仍为 true）
+  document.getElementById('memory-auto-extract').listeners.change({ target: { checked: true } })
+  assert.ok(await waitFor('memory-hint', '已记录同意时间'), '开启要给出同意时间凭证')
+  assert.equal(document.getElementById('memory-auto-extract').checked, true)
+  assert.match(document.getElementById('memory-settings-hint').textContent, /已开启/)
+  const settings = await seed.memorySettings('e_1')
+  assert.equal(settings.autoExtract, true)
+  assert.ok(settings.consentedAt)
+
+  // 再点一次打开（模拟"关掉又打开"）：确认框点取消 → 开关保持原状，且服务端没被改
+  dialogs.confirm = false
+  document.getElementById('memory-auto-extract').listeners.change({ target: { checked: true } })
+  assert.ok(await waitFor('memory-hint', '已取消这次改动'), '取消开启要有中文反馈')
+  assert.equal(document.getElementById('memory-auto-extract').checked, true, '取消后勾选状态要跟着服务端')
+  assert.equal((await seed.memorySettings('e_1')).autoExtract, true, '取消不该改服务端')
+  dialogs.confirm = true
+})
+
+await testAsync('开关已经开着时点取消：不能把界面猜成"关着"', async () => {
+  // 服务端是唯一事实来源：取消只取消"这次改动"，不该顺手把已开启的开关显示成关闭
+  assert.equal((await seed.memorySettings('e_1')).autoExtract, true, '前置：服务端应还开着')
+  dialogs.confirm = false
+  document.getElementById('memory-auto-extract').listeners.change({ target: { checked: true } })
+  assert.ok(await waitFor('memory-hint', '还是开着的'), '取消后要说清开关的真实状态')
+  assert.equal(document.getElementById('memory-auto-extract').checked, true, '已开启的开关不能被取消动作关掉')
+  dialogs.confirm = true
+  // 收尾：关掉它，避免影响别的用例/别的老人
+  await seed.saveMemorySettings('e_1', false)
+})
+
+await testAsync('记忆区出错时提示也是人话（不出现 undefined / [object Object]）', async () => {
+  const hint = document.getElementById('memory-hint').textContent
+  assert.ok(!hint.includes('undefined'), hint)
+  assert.ok(!hint.includes('[object Object]'), hint)
+  assert.ok(!/[A-Za-z]{6,}/.test(hint), hint)
 })
 
 await mock.close()

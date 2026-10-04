@@ -11,7 +11,9 @@
     <h1>比邻AI · 家人端</h1>
     <p class="topbar__note">
       这里是给子女/康复师用的确认台：<strong>计划要经你确认才会生效</strong>。
-      按默认授权，这里只显示计划与完成情况，<strong>看不到聊天内容</strong>。
+      按默认授权，这里只显示计划、完成情况与<strong>记忆条目</strong>，
+      <strong>看不到聊天内容</strong>（智能体从聊天里整理出的东西只会进「待复核」，
+      而且默认根本不会整理——需要你先明确告知老人再开启）。
     </p>
   </header>
 
@@ -65,6 +67,55 @@
       <button id="btn-tick" class="btn">手动推进一次调度（联调）</button>
       <span class="hint" id="scheduler-hint"></span>
     </div>
+  </section>
+
+  <section class="panel" id="panel-memory">
+    <h2>记忆 <span class="count" id="memory-count">0</span>
+      <span class="hint-inline">（智能体对这位老人的了解：经历 / 喜好 / 习惯）</span>
+    </h2>
+
+    <div class="memory-settings">
+      <label class="switch">
+        <input type="checkbox" id="memory-auto-extract" />
+        <span>从聊天里自动整理记忆（默认关）</span>
+      </label>
+      <p class="hint" id="memory-settings-hint">正在读取开关状态…</p>
+    </div>
+
+    <div id="memory-list" class="list"></div>
+
+    <h3 class="sub">待家里人复核 <span class="count" id="memory-pending-count">0</span></h3>
+    <p class="hint">
+      这些是智能体从聊天里自己整理出来的，把握不足，**没经你确认前不会用来主动关心老人**。
+      这里看到的是整理出的那句话本身，不是聊天原文。
+    </p>
+    <div id="memory-pending-list" class="list"></div>
+
+    <h3 class="sub">录入一条</h3>
+    <div class="panel__row">
+      <label for="memory-kind">种类</label>
+      <select id="memory-kind">
+        <option value="experience">经历（某年去过哪、做过什么）</option>
+        <option value="preference">喜好（爱听什么、爱吃什么）</option>
+        <option value="profile">习惯（怎么称呼、作息）</option>
+      </select>
+      <label for="memory-text">内容</label>
+      <input id="memory-text" type="text" placeholder="例如：老人 2023 年跟儿子去过海南" />
+      <label for="memory-tags">标签</label>
+      <input id="memory-tags" type="text" placeholder="逗号分隔，如：儿子, 旅行" />
+      <label for="memory-happened-at">年份</label>
+      <input id="memory-happened-at" type="text" placeholder="如 2023年（不确定可留空）" />
+      <button id="btn-memory-add" class="btn btn--primary">记下来</button>
+    </div>
+    <p class="hint">
+      录进来的记忆家属可见，智能体会在合适的时机自然用上（不会硬提往事）。
+    </p>
+
+    <div class="panel__row panel__row--danger">
+      <button id="btn-memory-clear" class="btn btn--danger">清空这位老人的全部记忆</button>
+      <span class="hint">一键清空要再确认一次；老人说"把这些忘掉"时用它。</span>
+    </div>
+    <p class="hint" id="memory-hint"></p>
   </section>
 
   <footer class="footer">

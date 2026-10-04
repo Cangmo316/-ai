@@ -54,12 +54,17 @@ export {
   unregisterPushClient
 } from './push.js'
 
+// ⚠️ 记忆的写接口（createMemory / reviewMemory / updateMemorySettings）
+// 只导出给**家人端**用：老人端页面不许调用，否则就绕过了"家属确认"这道闸门。
 export {
   clearMemories,
+  createMemory,
   deleteMemory,
   fetchMemories,
   fetchMemorySettings,
-  fetchMemoryTopics
+  fetchMemoryTopics,
+  reviewMemory,
+  updateMemorySettings
 } from './memory.js'
 
 /** 当前运行端与是否具备真流式能力（设置页/自检页展示用） */

@@ -33,6 +33,12 @@ class MemoryCreate(BaseModel):
     elder_id: str = Field(default=DEFAULT_ELDER_ID, alias="elderId")
     kind: str = "experience"
     tags: list[str] = Field(default_factory=list)
+    # ⚠️ 只允许 family / elder：**不许客户端自行声明 source=auto**（在路由里显式校验，
+    # 为了给人话错误体而不是 Pydantic 的英文 422）。
+    # 理由（实测过的洞）：auto 表示"从聊天自动整理"，而自动整理的记忆默认家属不可见。
+    # 若允许客户端声明 auto + visibleToFamily=true，就能从接口层把聊天转述的内容
+    # 送进家人视野——"家人端默认看不到聊天原文"这条边界就被绕开了。
+    # auto 只能由对话整理流程（app/memory/extractor.py）写入，那里用的是 store，不走这个接口。
     source: str = "family"
     happened_at: str = Field(default="", alias="happenedAt")
     visible_to_family: bool | None = Field(default=None, alias="visibleToFamily")
@@ -123,6 +129,14 @@ async def create_memory(payload: MemoryCreate, request: Request):
     """家属端录入一条记忆（默认 source=family、家属可见、直接可用）"""
     if not (payload.text or "").strip():
         return api_error("memory_empty")
+    # 见 MemoryCreate 上方的说明：客户端**不许**声明 source=auto
+    # （否则能把聊天转述的内容标成家属可见，绕开"家人端默认看不到聊天原文"）
+    if payload.source not in ("family", "elder"):
+        return api_error(
+            "invalid_request",
+            "source 只能是 family（家里人填写）或 elder（老人自己说的）；"
+            "从聊天自动整理的记忆由服务端生成，不能手工声明",
+        )
     try:
         entry = _store(request).add(
             elder_id=payload.elder_id,

@@ -144,7 +144,10 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'content-type, accept',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    // Allow-Methods 必须把 PATCH/PUT 列全：浏览器的 CORS 预检是按方法名严格匹配的，
+    // 少一个方法，家人端的"改记忆可见性（PATCH）/ 自动整理开关（PUT）"在真浏览器里直接发不出去
+    // （node 侧的 fetch 不做预检，所以只有这条会静默漏掉）
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Max-Age': '86400'
   }
 }
@@ -538,10 +541,15 @@ function bigrams(text) {
   return out.length ? out : [clean]
 }
 
+/** 自动整理的置信度门槛，与 server/app/memory/models.py 的 AUTO_MIN_CONFIDENCE 对齐 */
+const AUTO_MIN_CONFIDENCE = 0.75
+
 const memoryState = {
   seq: 4,
-  autoExtract: false,
-  consentedAt: '',
+  // 自动整理的开关与同意时间**按老人各存一份**：真服务是 MemoryStore._settings[elder_id]
+  // （server/app/memory/models.py:settings_for）。mock 早先是全局一个 bool，
+  // 那会导致"给 e_1 开了开关，e_2 也变成开着"——对隐私开关来说这是错的一侧
+  settings: {},
   entries: [
     {
       id: 'mem_1', elderId: 'e_1', kind: 'experience', kindLabel: '经历',
@@ -568,6 +576,14 @@ const memoryState = {
       visibleToFamily: false, happenedAt: ''
     }
   ]
+}
+
+/** 每位老人一份设置（默认关），口径对齐 server/app/memory/models.py 的 settings_for */
+function memorySettingsOf(elderId) {
+  if (!memoryState.settings[elderId]) {
+    memoryState.settings[elderId] = { autoExtract: false, consentedAt: '' }
+  }
+  return memoryState.settings[elderId]
 }
 
   const server = createServer(async (req, res) => {
@@ -963,6 +979,25 @@ const memoryState = {
           return
         }
         const source = (body && body.source) || 'family'
+        // 与真服务同口径：**不许客户端声明 source=auto**（见 server/app/api/memories.py）。
+        // 否则客户端能把"从聊天整理"的内容标成 visibleToFamily=true，从接口层绕开
+        // "家人端默认看不到聊天原文"（真服务上实测过这个洞，已堵）
+        if (source !== 'family' && source !== 'elder') {
+          sendJSON(res, 422, {
+            error: {
+              code: 'invalid_request',
+              message: 'source 只能是 family 或 elder；从聊天自动整理的记忆由服务端生成，不能手工声明',
+              retryable: false
+            }
+          })
+          return
+        }
+        // 复核状态与家属可见性**不写死**：真服务在 MemoryStore.add 里按 source/confidence 推导
+        //   confidence < 0.75 → review=pending（source=auto 时 auto 由服务端生成，接口发不出来）
+        // mock 早先一律 approved + visible，于是"自动整理的低置信内容会被当成可用且家属可见"，
+        // 这正是两条隐私硬约束要拦的东西。推导口径必须跟 server/app/memory/models.py 一致
+        const confidence =
+          body && typeof body.confidence === 'number' ? body.confidence : 1
         const entry = {
           id: 'mem_' + (++memoryState.seq),
           elderId: (body && body.elderId) || 'e_1',
@@ -972,9 +1007,15 @@ const memoryState = {
           tags: Array.isArray(body && body.tags) ? body.tags : [],
           source,
           sourceLabel: { family: '家里人填写', elder: '老人自己说的', auto: '从聊天里整理' }[source] || source,
-          confidence: 1,
-          review: 'approved',
-          visibleToFamily: source !== 'auto',
+          confidence,
+          review:
+            body && body.review
+              ? body.review
+              : confidence < AUTO_MIN_CONFIDENCE
+                ? 'pending'
+                : 'approved',
+          visibleToFamily:
+            body && body.visibleToFamily !== undefined ? !!body.visibleToFamily : true,
           happenedAt: (body && body.happenedAt) || ''
         }
         memoryState.entries.push(entry)
@@ -992,28 +1033,6 @@ const memoryState = {
       }
       memoryState.entries.splice(index, 1)
       sendJSON(res, 200, { ok: true, notice: '已删除，对话里不会再提到它' })
-      return
-    }
-
-    if (url.pathname.startsWith('/v1/memories/') && req.method === 'PATCH') {
-      const id = decodeURIComponent(url.pathname.replace('/v1/memories/', ''))
-      readBody(req).then((body) => {
-        const entry = memoryState.entries.find((row) => row.id === id)
-        if (!entry) {
-          sendJSON(res, 404, { error: { code: 'memory_not_found', message: '没找到这条记忆', retryable: false } })
-          return
-        }
-        const text = body && body.text !== undefined ? String(body.text).trim() : null
-        if (text !== null && !text) {
-          sendJSON(res, 400, { error: { code: 'memory_empty', message: '要记的内容不能是空的', retryable: false } })
-          return
-        }
-        if (text) entry.text = text
-        if (body && Array.isArray(body.tags)) entry.tags = body.tags
-        if (body && body.visibleToFamily !== undefined) entry.visibleToFamily = !!body.visibleToFamily
-        if (body && body.happenedAt !== undefined) entry.happenedAt = body.happenedAt
-        sendJSON(res, 200, { memory: entry })
-      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
       return
     }
 
@@ -1045,11 +1064,13 @@ const memoryState = {
     }
 
     if (url.pathname === '/v1/memories/settings' && req.method === 'GET') {
+      const elderId = url.searchParams.get('elderId') || 'e_1'
+      const settings = memorySettingsOf(elderId)
       sendJSON(res, 200, {
         settings: {
-          elderId: url.searchParams.get('elderId') || 'e_1',
-          autoExtract: memoryState.autoExtract,
-          consentedAt: memoryState.consentedAt,
+          elderId,
+          autoExtract: settings.autoExtract,
+          consentedAt: settings.consentedAt,
           notice: '从聊天自动整理记忆需要先明确告知本人并在这里开启；关闭后不再新增，已入库的仍可单条删除或一键清空'
         }
       })
@@ -1058,15 +1079,18 @@ const memoryState = {
 
     if (url.pathname === '/v1/memories/settings' && req.method === 'PUT') {
       readBody(req).then((body) => {
+        const elderId = (body && body.elderId) || 'e_1'
+        const settings = memorySettingsOf(elderId)
         if (body && body.autoExtract !== undefined) {
-          memoryState.autoExtract = !!body.autoExtract
-          if (memoryState.autoExtract && !memoryState.consentedAt) memoryState.consentedAt = localStamp(new Date())
+          settings.autoExtract = !!body.autoExtract
+          // 同意时间只在**第一次开启**时记，且关掉也不清（它是"曾明确告知过"的凭证）
+          if (settings.autoExtract && !settings.consentedAt) settings.consentedAt = localStamp(new Date())
         }
         sendJSON(res, 200, {
           settings: {
-            elderId: (body && body.elderId) || 'e_1',
-            autoExtract: memoryState.autoExtract,
-            consentedAt: memoryState.consentedAt
+            elderId,
+            autoExtract: settings.autoExtract,
+            consentedAt: settings.consentedAt
           }
         })
       }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
@@ -1090,6 +1114,31 @@ const memoryState = {
         })
       const topics = Array.from(weights.values()).sort((a, b) => b.weight - a.weight).slice(0, limit)
       sendJSON(res, 200, { elderId, topics })
+      return
+    }
+
+    // ⚠️ 路径参数路由（`/v1/memories/{id}`）必须放在所有**字面量路径**之后：
+    // FastAPI 是按注册顺序匹配的，字面量先注册；mock 早先把它放在前面，
+    // 于是 `PATCH /v1/memories/settings` 会被当成"改 id 叫 settings 的记忆"→ 404 没找到这条记忆
+    if (url.pathname.startsWith('/v1/memories/') && req.method === 'PATCH') {
+      const id = decodeURIComponent(url.pathname.replace('/v1/memories/', ''))
+      readBody(req).then((body) => {
+        const entry = memoryState.entries.find((row) => row.id === id)
+        if (!entry) {
+          sendJSON(res, 404, { error: { code: 'memory_not_found', message: '没找到这条记忆', retryable: false } })
+          return
+        }
+        const text = body && body.text !== undefined ? String(body.text).trim() : null
+        if (text !== null && !text) {
+          sendJSON(res, 400, { error: { code: 'memory_empty', message: '要记的内容不能是空的', retryable: false } })
+          return
+        }
+        if (text) entry.text = text
+        if (body && Array.isArray(body.tags)) entry.tags = body.tags
+        if (body && body.visibleToFamily !== undefined) entry.visibleToFamily = !!body.visibleToFamily
+        if (body && body.happenedAt !== undefined) entry.happenedAt = body.happenedAt
+        sendJSON(res, 200, { memory: entry })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
       return
     }
 

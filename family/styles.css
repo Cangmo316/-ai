@@ -152,3 +152,52 @@ input[type="text"], input[type="password"], select {
 
 .footer { max-width: 1000px; margin: 20px auto 0; padding: 0 20px; color: var(--ink-3); font-size: 12.5px; }
 code { padding: 1px 5px; border-radius: 4px; background: #f1f2f4; font-size: 12.5px; }
+
+/* ---------------------------------------------------------------- 记忆区
+ *
+ * 记忆条目的视觉重点跟计划项不同：家属在这里要看的是"这条是从哪来的、能不能用"，
+ * 所以**来源与可见性做成标签**（badge），正文反而要克制——正文越像在"读聊天"，
+ * 越容易让人忘记这一层是"智能体整理出的摘要"。
+ */
+
+.panel h3.sub {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  color: var(--ink-2);
+  border-top: 1px dashed var(--line);
+  padding-top: 14px;
+}
+.panel__row--danger { margin-top: 14px; }
+
+.memory-settings {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.switch input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+.memory-settings .hint { margin-top: 6px; }
+
+.memory {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--primary);
+  border-radius: 10px;
+  background: #fcfdfc;
+}
+/* 待复核的用警示色左边框：跟"已经在用的记忆"一眼分开 */
+.memory--pending { border-left-color: var(--warn); background: #fffdfd; }
+.memory__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.memory__text { margin: 8px 0 0; font-size: 14.5px; }
+.memory__tags { margin: 4px 0 0; color: var(--ink-3); font-size: 12.5px; }
+.memory__when { color: var(--ink-3); font-size: 12.5px; }
+.memory__actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+
+.badge--kind { background: #eef3ff; color: #2b5fd9; }
+.badge--source { background: #f1f2f4; color: var(--ink-2); }
+.badge--visible { background: var(--ok-bg); color: var(--primary-dark); }
+
+.btn--danger { border-color: var(--line); color: var(--warn); }
+.btn--danger:hover { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }

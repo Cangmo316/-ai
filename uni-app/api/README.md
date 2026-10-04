@@ -457,7 +457,7 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
 | `api/plans.js` | 计划接口（老人端只用 today / checkin） |
 | `api/reminders.js` | 提醒收件箱与回执 |
 | `api/push.js` | 推送标识登记 |
-| `api/memory.js` | 三层记忆（**只读**：列表中查、检索、单条删除、一键清空） |
+| `api/memory.js` | 三层记忆（老人端只读；写接口仅供家人端 `family/`） |
 | `stores/plan.js` | 今日计划：乐观打卡、三级兜底 |
 | `stores/reminder.js` | 前台轮询、提醒条、震动、去重 |
 | `stores/push.js` | cid 登记、本地通知预排、推送消息监听 |
@@ -488,6 +488,20 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
 端侧文件：`api/memory.js`；`api/config.js` 里对应 `ENDPOINTS.memories` / `memoryClear` /
 `memoryReview` / `memorySettings` / `memoryTopics`。
 
+**谁调哪些**（同一份客户端，两端共用）：
+
+| 函数 | 老人端 `pages/**` | 家人端 `family/` |
+|---|---|---|
+| `fetchMemories` / `fetchMemoryTopics` / `fetchMemorySettings` | ✅ 只读 | ✅ |
+| `createMemory` / `reviewMemory` / `updateMemorySettings` | ❌ **不许调用** | ✅ |
+| `deleteMemory` / `clearMemories` | ✅（老人自己要求"忘掉"时） | ✅ |
+
+⚠️ **`source=auto` 不能由客户端声明**：`POST /v1/memories` 只接受 `family` / `elder`，
+传 `auto` 返回 422 `invalid_request`。原因：`auto` 表示"从聊天自动整理"，而这类记忆默认家属
+不可见；若允许客户端声明 `auto` + `visibleToFamily=true`，就能从接口层把聊天转述的内容
+送进家人视野——"家人端默认看不到聊天原文"这条边界会被绕开（真服务上实测过这个洞，已堵）。
+自动整理只能由对话流程写入。
+
 ### 3.5.2 三条口径（端侧不许绕过）
 
 1. **`source` 决定可见性**：`family`（家人录入）/ `elder`（老人自述）/ `auto`（从聊天整理）。
@@ -498,8 +512,8 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
 3. **自动整理默认关**：`autoExtract=false`。开启时服务端记 `consentedAt`；
    关闭只影响新增，已入库的仍可单条删除或一键清空
 
-⚠️ 端侧**不提供写入入口**：记忆能被 App 直接改，就绕过了"家属确认"这道产品闸门。
-老人端只做只读展示（`scope=all` 自查）。
+⚠️ 老人端**页面**不提供写入入口：记忆能被 App 直接改，就绕过了"家属确认"这道产品闸门。
+老人端只做只读展示（`scope=all` 自查）；写接口在同一份客户端里，**只给家人端 `family/` 用**。
 
 ### 3.5.3 请求/响应示例
 
@@ -526,6 +540,8 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
 | 检索打分 | 标签命中 + 词组/单字命中率 + 时间新鲜度 + 来源可信度；**只蹭上一个常用字不算相关**（否则"老家的桥"会捞出"老人爱听戏"） | 字符二元组命中数（**只求量级一致**，天然更严） |
 | 种子数据 | 无（空库起步） | 预置 4 条（含一条 `auto`+`pending`，用来验证两处隐私口径） |
 | 存储 | 看 `DATABASE_URL`：默认 `memory://`（重启即空）或 `sqlite:///data/bilin.db`（持久） | 内存 |
+| 自动整理开关 | **按老人各一份**（`MemoryStore._settings[elder_id]`） | 同左（第一版写成全局一个 bool，等于"给 e_1 开了，e_2 也开着"——隐私开关错的那一侧，已修） |
+| CORS | `allow_methods=["*"]` | 需显式列全（缺 PATCH/PUT 时**真浏览器**的预检会挡掉改可见性/开关，而 node fetch 不做预检、静默漏掉） |
 
 两边**隐私口径与错误码必须一致**（`tools/test-memory-store.mjs` 同一套用例跑两边）。
 

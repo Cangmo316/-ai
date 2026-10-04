@@ -6,13 +6,18 @@
  *   BILIN_TEST_BASE_URL=http://127.0.0.1:8000 BILIN_TEST_API_TOKEN=xxx node tools/test-family-flows.mjs
  *
  * 这里测的是家人端的**业务层**（family/flows.js），不是 DOM：
- * 确认闸门、驳回、调整、完成率文案、依据是否露出。
+ * 确认闸门、驳回、调整、完成率文案、依据是否露出、记忆的录入与复核。
  *
- * 另外守两条容易被人"顺手改坏"的约束：
+ * 另外守几条容易被人"顺手改坏"的约束：
  * 1. **隐私边界**：家人端默认不可见聊天原文（设计方案 §3.4）——所以这里有一条
  *    "flows.js 里不许出现任何会话接口"的回归用例。想加"看聊天"，得先有老人授权与 consent 记录
- * 2. **静态托管**：mock/服务端要能把 family/ 与 uni-app/api/ 发出来，
+ * 2. **记忆的两道闸门**：`source=auto`（从聊天自动整理）默认家属不可见；
+ *    待复核（`review=pending`）只进待复核区，不进主列表
+ * 3. **静态托管**：mock/服务端要能把 family/ 与 uni-app/api/ 发出来，
  *    且不能顺着 ../ 把整个仓库读走
+ *
+ * ⚠️ 删/清空类用例**不许用 `e_1`**（AGENTS 硬规则）：打真服务时 `e_1` 很可能是演示数据，
+ * 被自检清掉就没了。这里统一用 `MEM_ELDER`（`e_mem_test`），它只属于自检。
  */
 
 import assert from 'node:assert/strict'
@@ -33,6 +38,15 @@ console.log('联调目标: ' + baseURL + (externalBase ? '（外部后端）' : 
 
 const family = await import('../family/flows.js')
 const flows = family.createFamilyFlows({ baseURL, token })
+/** 记忆自检专用老人 id：删除/清空只许动它，别动 e_1 */
+const MEM_ELDER = 'e_mem_test'
+/**
+ * 开关用例专用 id：**每次都换一个从没出现过的老人 id**。
+ * 原因：打真服务时 `e_mem_test` 的开关状态是上一轮自检留下的（开启过就会留着同意时间），
+ * "默认关 / 没有同意时间"这类断言只有在**全新的 key**上才成立。
+ * 这里不可能"清空"设置来复位——契约刻意不给撤回告知的接口（consentedAt 是凭证）。
+ */
+const SETTINGS_ELDER = 'e_mem_switch_' + Date.now()
 
 group('① 待确认 → 确认 → 生效（家属确认闸门）')
 
@@ -213,7 +227,7 @@ await testAsync('nextReminderAt：默认推进到下一个提醒时间（演示�
   assert.match(tomorrow, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/)
 })
 
-group('④ 两条硬约束')
+group('④ 三条硬约束')
 
 await testAsync('隐私：家人端流程里没有任何会话接口（默认看不到聊天原文）', async () => {
   const source = await readFile(new URL('../family/flows.js', import.meta.url), 'utf8')
@@ -240,6 +254,220 @@ await testAsync('静态托管可用，且挡得住目录穿越', async () => {
 
   const escape = await fetch(baseURL + '/family/..%2f..%2fAGENTS.md')
   assert.ok(escape.status === 403 || escape.status === 404, '不该把仓库文件读出去：' + escape.status)
+})
+
+group('⑤ 记忆（P2 三层记忆的家人侧）')
+
+await testAsync('列表默认只看家属可见的：服务端两道闸门都得生效', async () => {
+  const list = await flows.listMemories('e_1')
+  for (const item of list) {
+    assert.notEqual(item.source, 'auto', '从聊天自动整理的记忆不该出现在家人列表：' + item.text)
+    assert.notEqual(item.review, 'pending', '待复核的不该出现在家人列表：' + item.text)
+    assert.equal(item.visibleToFamily, true, '家人列表里不允许出现家属不可见的条目')
+    const described = family.describeMemory(item)
+    assert.ok(described.kindText && described.sourceText, '种类与来源都要有中文标签')
+    assert.equal(described.pending, false)
+    assert.equal(described.autoExtracted, false)
+  }
+})
+
+await testAsync('待复核默认只进「待复核区」，不进主列表（仅内置 mock 有种子）', async () => {
+  // 契约里**没有"手工造一条待复核条目"的写入口**（这正是刻意的隐私口径：
+  // source=auto + pending 只能由对话自动整理产生），真服务上库里可能一条都没有，
+  // 所以"必须有"只在 mock 上断言；两种情况下"不得出现在主列表"这条都要成立
+  const pending = await flows.pendingMemories('e_1')
+  if (mock) assert.ok(pending.length >= 1, 'mock 种子里应有一条待复核的，用来验这条口径')
+  const ids = new Set((await flows.listMemories('e_1')).map((item) => item.id))
+  for (const item of pending) {
+    assert.equal(item.review, 'pending')
+    assert.ok(!ids.has(item.id), '待复核的绝不能同时出现在主列表：' + item.text)
+    const described = family.describeMemory(item)
+    assert.equal(described.pending, true)
+    assert.equal(described.source, 'auto', '待复核的必然是自动整理出来的')
+  }
+})
+
+await testAsync('录入空内容被拦：人话提示，且不白跑一趟服务端', async () => {
+  const before = (await flows.listMemories(MEM_ELDER)).length
+  let error = null
+  try {
+    await flows.addMemory(MEM_ELDER, { kind: 'experience', text: '   ' })
+  } catch (e) {
+    error = e
+  }
+  assert.ok(error, '空内容必须被拦住')
+  assert.equal(error.code, 'memory_empty')
+  assert.ok(!/[A-Za-z]{6,}/.test(error.message), '提示不该出现英文：' + error.message)
+  assert.match(error.message, /不能是空/)
+  assert.equal((await flows.listMemories(MEM_ELDER)).length, before, '空提交不该多出一条')
+})
+
+await testAsync('录入一条：进列表、带中文来源与种类', async () => {
+  const before = (await flows.listMemories(MEM_ELDER)).length
+  const created = await flows.addMemory(MEM_ELDER, {
+    kind: 'preference',
+    text: '老人爱在下午听评剧（家人端自检写入）',
+    tags: ['戏曲', '评剧'],
+    happenedAt: '2024年'
+  })
+  assert.ok(created.memory.id)
+  assert.equal(created.memory.source, 'family')
+  assert.equal(created.memory.visibleToFamily, true)
+  assert.equal(created.memory.review, 'approved', '家人录入的直接可用（不需要复核）')
+  const list = await flows.listMemories(MEM_ELDER)
+  assert.equal(list.length, before + 1)
+  const item = family.describeMemory(list.find((row) => row.id === created.memory.id))
+  assert.equal(item.kindText, '喜好')
+  assert.equal(item.sourceText, '家里人填写')
+  assert.equal(item.happenedAt, '2024年')
+  assert.equal(item.tagText, '戏曲、评剧')
+  assert.equal(item.pending, false)
+  assert.equal(item.autoExtracted, false)
+})
+
+await testAsync('describeMemory：服务端没给标签时也不出 undefined / 英文枚举', async () => {
+  const full = family.describeMemory({
+    id: 'mem_x', kind: 'experience', kindLabel: '经历', text: '去过海南',
+    tags: ['儿子'], source: 'elder', sourceLabel: '老人自己说的',
+    review: 'approved', visibleToFamily: true, happenedAt: '2023年'
+  })
+  assert.equal(full.kindText, '经历')
+  assert.equal(full.sourceText, '老人自己说的')
+  assert.match(full.reviewText, /可用/)
+
+  // 真服务上 source≠auto 的条目可能没有 sourceLabel（mock 有），兜底必须还在
+  const bare = family.describeMemory({ id: 'm', kind: 'profile', text: '不吃辣', source: 'elder' })
+  assert.equal(bare.kindText, '习惯')
+  assert.equal(bare.sourceText, '老人自己说的')
+  assert.equal(bare.tagText, '')
+  assert.equal(bare.happenedAt, '')
+  assert.ok(!JSON.stringify(bare).includes('undefined'), '不能把 undefined 渲染到页面上')
+  // 自动整理的要能认出来（页面据此显示"从聊天里整理"）
+  assert.equal(family.describeMemory({ source: 'auto' }).autoExtracted, true)
+  // 全空也不能炸
+  const empty = family.describeMemory(null)
+  assert.equal(empty.text, '')
+  assert.ok(empty.kindText && empty.sourceText && empty.reviewText)
+})
+
+await testAsync('复核通过：可用了，但自动整理的仍然不进家人列表', async () => {
+  // 只有 mock 有种子待复核条目 → 放在 mock 分支里断言完整流程
+  const pending = await flows.pendingMemories('e_1')
+  if (mock) {
+    assert.ok(pending.length >= 1, '需要一条待复核的来验复核流程')
+    const target = pending[0]
+    const before = await flows.pendingMemoryCount('e_1')
+    const result = await flows.reviewMemory(target.id, true)
+    assert.equal(result.memory.review, 'approved')
+    assert.ok(result.notice)
+    const after = await flows.pendingMemories('e_1')
+    assert.equal(after.length, pending.length - 1, '通过后不该再出现在待复核区')
+    assert.equal(await flows.pendingMemoryCount('e_1'), before - 1, '服务端的待复核计数要跟着降')
+    assert.ok(
+      !(await flows.listMemories('e_1')).some((item) => item.id === target.id),
+      'source=auto 的即使复核通过也不进家人列表：家属看到的是"整理出的那句话"，不是聊天原文'
+    )
+  } else {
+    // 真服务：库先清干净，用"复核一条不存在的"验证错误口径（人话、不给重试）
+    await flows.clearMemories(MEM_ELDER)
+    await assert.rejects(
+      () => flows.reviewMemory('mem_不存在', true),
+      (error) => {
+        assert.equal(error.code, 'memory_not_found')
+        assert.equal(error.statusCode, 404)
+        assert.equal(error.retryable, false, '没找到就别让端侧给重试按钮')
+        assert.ok(!/[A-Za-z]{6,}/.test(error.message), '提示不该出现英文：' + error.message)
+        return true
+      }
+    )
+  }
+})
+
+await testAsync('复核否决：待复核区不再出现，也不会被检索用上', async () => {
+  if (mock) {
+    // 上一条用例把种子里的待复核条目消费掉了，而契约刻意不给"手工造一条 pending"的写入口
+    // （source=auto + pending 只能由对话自动整理产生），所以这里先断言"待复核区已经干净"，
+    // 再用一条不存在的 id 验证否决的失败口径：绝不能被当成"否决成功"
+    assert.equal((await flows.pendingMemories('e_1')).length, 0)
+  }
+  await assert.rejects(
+    () => flows.reviewMemory('mem_不存在', false),
+    (error) => {
+      assert.equal(error.code, 'memory_not_found')
+      assert.equal(error.statusCode, 404)
+      assert.equal(error.retryable, false, '没找到就别让端侧给重试按钮')
+      assert.ok(!/[A-Za-z]{6,}/.test(error.message), '提示不该出现英文：' + error.message)
+      return true
+    }
+  )
+})
+
+await testAsync('开关默认关，开启后记录同意时间', async () => {
+  // 用全新老人 id（见 SETTINGS_ELDER 的注释：老 id 上可能留着上一轮的同意时间）
+  const off = await flows.memorySettings(SETTINGS_ELDER)
+  assert.equal(off.autoExtract, false, '默认必须是关的')
+  assert.equal(off.consentedAt, '', '没开启过就不该有同意时间')
+  const state = family.describeMemorySettings(off)
+  assert.equal(state.autoExtract, false)
+  assert.match(state.label, /关闭/)
+  assert.match(state.hint, /告知/)
+
+  const on = await flows.saveMemorySettings(SETTINGS_ELDER, true)
+  assert.equal(on.autoExtract, true)
+  assert.ok(on.consentedAt, '开启时该记下同意时间')
+  const onState = family.describeMemorySettings(on)
+  assert.equal(onState.autoExtract, true)
+  assert.match(onState.hint, /已记录同意时间/)
+
+  // 关掉只影响新增，同意时间作为"曾明确告知过"的凭证保留
+  const back = await flows.saveMemorySettings(SETTINGS_ELDER, false)
+  assert.equal(back.autoExtract, false)
+  assert.ok(back.consentedAt, '关掉不该抹掉同意记录')
+  assert.match(family.describeMemorySettings(back).label, /关闭/)
+})
+
+await testAsync('开关按老人各存一份（别把一位老人的同意算到另一位头上）', async () => {
+  // 开关是隐私开关：给一位老人开了，绝不等于另一位也同意过。
+  // 同样用全新 id，否则打真服务时会撞上"上一条用例刚把开关改过"的残留状态
+  const other = await flows.memorySettings('e_mem_other_' + Date.now())
+  assert.equal(other.autoExtract, false, '没开过就必须是关的')
+  assert.equal(other.consentedAt, '', '不该继承别人的同意时间')
+})
+
+await testAsync('单条删除', async () => {
+  const created = await flows.addMemory(MEM_ELDER, { text: '这条马上要删掉（家人端自检）' })
+  const id = created.memory.id
+  assert.ok((await flows.listMemories(MEM_ELDER)).some((item) => item.id === id))
+  const removed = await flows.deleteMemory(id)
+  assert.equal(removed.ok, true)
+  assert.ok(!(await flows.listMemories(MEM_ELDER)).some((item) => item.id === id), '删掉就不该还在列表里')
+})
+
+await testAsync('一键清空：列表与待复核区都空，设置保留', async () => {
+  // 先确保有内容可清（用例可以单独重跑，不依赖别的用例留下的痕迹）
+  await flows.addMemory(MEM_ELDER, { text: '清空前先放一条（家人端自检）' })
+  // 并确保"同意时间"确实存在：它是"清空≠撤回告知"这条断言的依据，
+  // 不能指望别的用例先把它设上（用例顺序会变，打真服务时还可能是上一轮的残留）
+  const beforeClear = await flows.saveMemorySettings(MEM_ELDER, true)
+  assert.ok(beforeClear.consentedAt, '前置：开启后应有同意时间')
+
+  const cleared = await flows.clearMemories(MEM_ELDER)
+  assert.ok(cleared.removed >= 1, '至少清掉一条')
+  assert.equal((await flows.listMemories(MEM_ELDER)).length, 0)
+  assert.equal((await flows.pendingMemories(MEM_ELDER)).length, 0)
+  assert.ok(
+    !(await flows.listMemories(MEM_ELDER)).some((item) => item.text.includes('清空前先放一条')),
+    '清空之后正文不该还留在库里'
+  )
+  const settings = await flows.memorySettings(MEM_ELDER)
+  assert.equal(settings.autoExtract, true, '清空是"忘掉内容"，不是"改开关"')
+  assert.ok(settings.consentedAt, '同意时间当初记下了就该留着')
+  // 清空之后录入仍然可用：不能把"清空"做成一次性状态
+  const again = await flows.addMemory(MEM_ELDER, { text: '清空后重新记一条（家人端自检）' })
+  assert.equal((await flows.listMemories(MEM_ELDER)).length, 1)
+  await flows.deleteMemory(again.memory.id)
+  // 收尾：开关关回去（同意时间按契约保留，这正是它的意义）
+  await flows.saveMemorySettings(MEM_ELDER, false)
 })
 
 if (mock) {

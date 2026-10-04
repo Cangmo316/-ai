@@ -463,6 +463,39 @@ class MemoryApiTests(unittest.TestCase):
         body = self.client.get("/v1/memories/topics", params={"elderId": "e_1"}).json()
         self.assertEqual(body["topics"][0]["topic"], "戏曲")
 
+    def test_client_cannot_declare_auto_source(self) -> None:
+        """**实测过的洞**：客户端若能声明 source=auto（还能自带 visibleToFamily=true），
+        就能把"从聊天整理"的内容标成家属可见——"家人端默认看不到聊天原文"这条边界
+        会被接口层绕开。所以 auto 只许对话整理流程写，接口一律拒。
+        """
+        response = self.client.post(
+            "/v1/memories",
+            json={
+                "elderId": "e_1",
+                "source": "auto",
+                "text": "聊天里听来的事",
+                "visibleToFamily": True,
+            },
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["error"]["code"], "invalid_request")
+        listed = self.client.get("/v1/memories", params={"elderId": "e_1", "scope": "all"}).json()
+        self.assertEqual(listed["count"], 0, "被拒的条目不该入库")
+
+    def test_elder_and_family_sources_allowed(self) -> None:
+        elder_one = self.client.post(
+            "/v1/memories", json={"elderId": "e_1", "source": "elder", "text": "老人自己说爱听戏"}
+        )
+        self.assertEqual(elder_one.status_code, 200, elder_one.text)
+        self.assertEqual(elder_one.json()["memory"]["source"], "elder")
+        self.assertEqual(elder_one.json()["memory"]["visibleToFamily"], True)
+
+        family_one = self.client.post(
+            "/v1/memories", json={"elderId": "e_1", "text": "家里人填的：2023 年去过海南"}
+        )
+        self.assertEqual(family_one.status_code, 200, family_one.text)
+        self.assertEqual(family_one.json()["memory"]["source"], "family")
+
     def test_error_table_and_healthz_include_memory(self) -> None:
         codes = [row["code"] for row in self.client.get("/v1/errors").json()["codes"]]
         self.assertIn("memory_not_found", codes)

@@ -172,6 +172,35 @@ await testAsync('单条删除生效，再删报"没找到"', async () => {
   )
 })
 
+await testAsync('客户端不许自行声明 source=auto（否则能把聊天内容标成家属可见）', async () => {
+  const request = await import('../uni-app/api/request.js')
+  await assert.rejects(
+    async () => {
+      await request.request({
+        url: config.resolveURL(config.ENDPOINTS.memories),
+        method: 'POST',
+        data: {
+          elderId: MEM_ELDER,
+          source: 'auto',
+          text: '想混进来的聊天转述',
+          visibleToFamily: true
+        }
+      })
+    },
+    (err) => {
+      assert.equal(err.code, 'invalid_request')
+      assert.equal(err.statusCode, 422)
+      return true
+    },
+    'source=auto 必须被拒'
+  )
+  const listed = await api.fetchMemories({ elderId: MEM_ELDER, scope: 'all' })
+  assert.ok(
+    !(listed.memories || []).some((item) => item.text.includes('想混进来的')),
+    '被拒的条目不该入库'
+  )
+})
+
 group('④ 开关（默认关）与一键清空')
 
 await testAsync('自动整理默认关闭，开启后记录同意时间', async () => {
