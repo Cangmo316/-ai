@@ -100,13 +100,19 @@ def build_eyeball(side, armature, radius, segments, rings, material):
     bm.to_mesh(mesh)
     bm.free()
     obj.location = center
-    # UV：Blender 的 UV 球是"整球铺满 0~1"，而虹膜图的图案只占**中央约 0.56 直径**
-    # （v1 实测虹膜 UV 为 u[0.125,0.875]，即图案直径 0.75）。要让脸正前方那一块正好
-    # 落在虹膜图案上，就得把 UV 往中心压：uv = (uv-0.5)*k+0.5，k≈1.6。
+    # UV：Blender 的 UV 球是"整球铺满 0~1"。虹膜图的图案只占**中央一小块**，
+    # 要让脸正前方那一块正好落在虹膜图案上，就得把 UV 往中心压：uv = (uv-0.5)*k+0.5。
+    #
+    # ⚠️ **k 不能太大、而且必须夹到 [0,1]**（本工具第二版的坑）：
+    #    k=3.43 时 UV 变成 [-1.215, 2.215]，贴图默认 REPEAT → **平铺 3 次多**，
+    #    渲染出来眼白是"灰格纹"（其实是贴图径向渐变被高频重复）。
+    #    正解：夹到 [0,1]（球面近正视，投影失真很小），眼白自然取到贴图边上的纯白。
     uv_layer = mesh.uv_layers.active or mesh.uv_layers.new(name="UVMap")
     for loop in mesh.loops:
         u, v = uv_layer.data[loop.index].uv
-        uv_layer.data[loop.index].uv = ((u - 0.5) * UV_ZOOM + 0.5, (v - 0.5) * UV_ZOOM + 0.5)
+        u = (u - 0.5) * UV_ZOOM + 0.5
+        v = (v - 0.5) * UV_ZOOM + 0.5
+        uv_layer.data[loop.index].uv = (min(max(u, 0.0), 1.0), min(max(v, 0.0), 1.0))
     # 权重：100% 给 eye.<side>
     group = obj.vertex_groups.new(name="eye.%s" % side)
     group.add([v.index for v in mesh.vertices], 1.0, "REPLACE")

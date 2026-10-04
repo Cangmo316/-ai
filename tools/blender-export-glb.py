@@ -107,6 +107,26 @@ def main() -> None:
                 except Exception as error:  # noqa: BLE001
                     print(f"  ⚠️ 贴图缩放失败 {image.name}: {error}")
 
+    # ── 把**未 pack** 的贴图打进 .blend / GLB ──
+    # ⚠️ 实测教训（§8.22.5）：`bpy.data.images.load()` 加载的图**默认不 pack**，
+    #    导出器看到 `packed: false` 且文件路径不可解析时，**不会把像素写进 GLB**——
+    #    结果是运行期材质拿不到贴图，眼球变成一颗纯反光的球（"眼睛里很诡异"的真凶）。
+    #    这里在导出前统一 pack 一遍，任何来源的图都不会漏。
+    packed_now = 0
+    for image in bpy.data.images:
+        if image.name in ("Render Result", "Viewer Node", "Dirty"):
+            continue
+        if image.packed_file is not None:
+            continue
+        try:
+            if image.has_data or image.size[0]:
+                image.pack()
+                packed_now += 1
+        except Exception as error:  # noqa: BLE001
+            print(f"  ⚠️ pack 失败 {image.name}: {error}（请确认文件路径存在）")
+    if packed_now:
+        print(f"  导出前 pack 未打包贴图: {packed_now} 张")
+
     # ── 清掉辅助物（骨架步骤留下的 mk_* 定位标记球 + MarkerMat）──
     # 实测教训：男生的交付件里混进 33 个 mk_*（各 24 顶点）+ MarkerMat，
     # 白占 1,800 tri 把交付预算顶超（60,178 > 60,000），而且脸上会多出一堆小球。
