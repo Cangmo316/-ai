@@ -5,6 +5,10 @@
 用法：
     blender --background <文件.blend> --python tools/blender-render-eye.py -- \
         --out <前缀> --center x,y,z [--scale 0.05] [--views front,front34,side,top] [--solid]
+        [--shape <形态键名=值> ...] [--texture]
+
+`--shape` 用于**验收形态键**（口型/表情）：`--shape vis_AA=1 --shape expr_blink_L=1`，
+渲染前把对应 `key_block.value` 置上（其余保持 0），从而看到 morph 的实际效果。
 
 为什么需要它：`blender-preview.py` 的 eye 模式靠"eyeball 对象"定位，
 而原始高模**没有眼球对象**；而且判断"凸起还是凹陷"必须开 **cavity（空腔）着色**
@@ -85,6 +89,33 @@ VIEWS = {
 }
 
 
+def apply_shapes(specs):
+    """把 `形态键=值` 应用到网格的 shape_keys（其余键保持 0）
+
+    用于验收形态键：口型/表情必须能**单独看到**，不能和骨骼姿态混在一起
+    （同一区域骨骼 + morph 双驱动是规格 §4.3 明令禁止的形态）。
+    """
+    applied = []
+    for spec in specs:
+        if "=" not in spec:
+            continue
+        name, raw = spec.split("=", 1)
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        for obj in bpy.data.objects:
+            if obj.type != "MESH" or obj.data.shape_keys is None:
+                continue
+            block = obj.data.shape_keys.key_blocks.get(name)
+            if block is None:
+                continue
+            block.value = value
+            applied.append(f"{obj.name}.{name}={value}")
+    bpy.context.view_layer.update()
+    return applied
+
+
 def main():
     out = arg_value("--out", "macro.png")
     center = parse_center(arg_value("--center", "0,0,0"))
@@ -92,11 +123,17 @@ def main():
     views = (arg_value("--views", "front,side34,top") or "front,side34,top").split(",")
     solid = "--solid" in sys.argv
     poses = []
+    shapes = []
     for index, value in enumerate(sys.argv):
         if value == "--pose" and index + 1 < len(sys.argv):
             poses.append(sys.argv[index + 1])
+        if value == "--shape" and index + 1 < len(sys.argv):
+            shapes.append(sys.argv[index + 1])
     if poses:
         print("MACRO_POSE " + ", ".join(apply_poses(poses)))
+    if shapes:
+        applied = apply_shapes(shapes)
+        print("MACRO_SHAPE " + (", ".join(applied) if applied else "（没有命中任何形态键）"))
 
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_WORKBENCH"
