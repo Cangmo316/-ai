@@ -75,23 +75,24 @@ def main():
     #    外圈不能压成灰褐；角膜缘只要一条细深环（原 12% 太宽）。
     fiber = 0.5 + 0.5 * np.sin(angle * 34.0 + np.sin(angle * 7.0) * 1.2)
     fiber = mix(0.78, 1.0, fiber * 0.5 + 0.35)
-    amber_inner = np.array([0.90, 0.62, 0.24])     # 蜂蜜（亮）
-    amber_outer = np.array([0.62, 0.34, 0.11])     # 琥珀（饱和）
+    # 目标来自原型图实测：虹膜饱和度 0.434、瞳孔亮度 0.135（我的曾只有 0.334 / 0.243）
+    amber_inner = np.array([0.93, 0.60, 0.19])     # 蜂蜜（亮，提饱和）
+    amber_outer = np.array([0.52, 0.24, 0.06])     # 琥珀（深，提饱和）
     t_radial = smoothstep(radial * 1.05)
     iris = np.zeros((size, size, 3))
     for channel in range(3):
         iris[:, :, channel] = mix(amber_inner[channel], amber_outer[channel], t_radial)
     iris *= fiber[:, :, None]
     # 角膜缘环：只压最外 6%，且不全黑
-    limbal = smoothstep((radial - 0.94) / 0.06)
+    limbal = smoothstep((radial - 0.90) / 0.10)
     iris *= (1.0 - 0.42 * limbal[:, :, None])
     # 瞳孔：深棕近黑（原型图瞳孔占虹膜约 1/3）
     pupil_ratio = pupil_r / max(iris_r, 1e-6)
     pupil = radial <= pupil_ratio
     pupil_soft = smoothstep((radial - pupil_ratio) / 0.05)
-    for channel, value in enumerate((0.055, 0.04, 0.035)):
+    for channel, value in enumerate((0.035, 0.022, 0.015)):   # 更深的瞳孔（原型 0.135）
         iris[:, :, channel] = mix(value, iris[:, :, channel], pupil_soft)
-    iris = np.where(pupil[:, :, None], np.array([0.055, 0.04, 0.035])[None, None, :], iris)
+    iris = np.where(pupil[:, :, None], np.array([0.035, 0.022, 0.015])[None, None, :], iris)
 
     color = np.where(inside[:, :, None], iris, color)
 
