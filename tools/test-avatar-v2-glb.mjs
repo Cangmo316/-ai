@@ -29,7 +29,9 @@ const role = roleIndex >= 0 ? args[roleIndex + 1] : 'edit'
 const positional = args.filter((a, i) => !a.startsWith('--') && i !== roleIndex + 1)
 
 const target = positional[0] ||
-  join(repo, '3D建模', '_rig_work', 'staging', 'BilinAI_FemaleRig_v2_60k.glb')
+  join(repo, '3D建模', '_rig_work', 'staging',
+       role === 'edit' ? 'BilinAI_FemaleFaceRig_60k_edit.glb'
+                       : 'BilinAI_FemaleRig_v2_60k.glb')
 
 function readGlbJson(path) {
   const buffer = readFileSync(path)
@@ -80,7 +82,10 @@ console.log(`  ${sizeMB} MB / ${Math.round(tris)} tri / ${joints} joints / ${nam
 console.log(`  vis_* ${vis.length} / expr_* ${expr.length} / shape_* ${shape.length}`)
 
 const blockers = []
-if (tris > 60000) blockers.push(`三角面 ${Math.round(tris)} > 60000（交付预算）`)
+const triBudget = role === 'edit' ? 60000 * 1.05 : 60000  // 编辑期件含口内几何，容 5%
+if (tris > triBudget) {
+  blockers.push(`三角面 ${Math.round(tris)} > ${Math.round(triBudget)}（交付预算）`)
+}
 if (joints > boneLimit) blockers.push(`骨数 ${joints} > ${boneLimit}（${role} 期上限）`)
 if (role === 'edit' && shape.length === 0) {
   blockers.push('没有 shape_* 形态键 → 覆盖 _edit.glb 会让捏脸页 102 条滑杆全部失效'
@@ -89,15 +94,25 @@ if (role === 'edit' && shape.length === 0) {
 if (role === 'delivery' && shape.length > 0) {
   blockers.push(`交付件不该带 shape_*（实测 ${shape.length} 个）`)
 }
-if (vis.length !== 15) blockers.push(`vis_* 数量 ${vis.length} ≠ 15`)
-if (expr.length !== 8) blockers.push(`expr_* 数量 ${expr.length} ≠ 8`)
+// 编辑期件只带 shape_*；vis_*/expr_* 属于交付件（交付规范 §4.4 命名空间分离）
+if (role === 'delivery') {
+  if (vis.length !== 15) blockers.push(`vis_* 数量 ${vis.length} ≠ 15`)
+  if (expr.length !== 8) blockers.push(`expr_* 数量 ${expr.length} ≠ 8`)
+}
+if (role === 'edit' && shape.length > 0 && shape.length !== 113) {
+  blockers.push(`shape_* 数量 ${shape.length} ≠ 113（捏脸契约要求 113 个 target）`)
+}
 
-const need = ['vis_silence', 'vis_AA', 'vis_E', 'vis_I', 'vis_O', 'vis_U', 'vis_MBP',
-  'vis_FV', 'vis_L', 'vis_TH', 'vis_WQ', 'vis_RR', 'vis_SS', 'vis_KK', 'vis_NN',
-  'expr_blink_L', 'expr_blink_R', 'expr_smile', 'expr_frown', 'expr_surprise',
-  'expr_squint', 'expr_brow_up', 'expr_brow_down']
+const need = role === 'edit'
+  ? (JSON.parse(readFileSync(join(repo, '3D建模', '03_doc', 'shape-namespace-map.json'), 'utf8'))
+      .params.flatMap((p) => (p.target_dn && p.reverseRatio > 0
+        ? [p.target_up, p.target_dn] : [p.target_up])))
+  : ['vis_silence', 'vis_AA', 'vis_E', 'vis_I', 'vis_O', 'vis_U', 'vis_MBP',
+     'vis_FV', 'vis_L', 'vis_TH', 'vis_WQ', 'vis_RR', 'vis_SS', 'vis_KK', 'vis_NN',
+     'expr_blink_L', 'expr_blink_R', 'expr_smile', 'expr_frown', 'expr_surprise',
+     'expr_squint', 'expr_brow_up', 'expr_brow_down']
 const missing = need.filter((n) => !names.includes(n))
-if (missing.length) blockers.push(`缺形态键：${missing.join(', ')}`)
+if (missing.length) blockers.push(`缺形态键（${missing.length} 个）：${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`)
 
 if (blockers.length === 0) {
   console.log(`\nSWAP_READY —— 可以替换 uni-app/static/avatar/ 里对应 role=${role} 的那个 GLB`)

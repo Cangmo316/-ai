@@ -6,13 +6,18 @@
 
 用法：
     blender --background <文件.blend> --python tools/blender-export-glb.py -- \
-        --out <输出.glb> [--stats]
+        --out <输出.glb> [--stats] [--keep-morph-prefix shape_|vis_,expr_]
 
 注意：
   · **不能** apply 修改器里的 Armature（那会把蒙皮烘死）——导出器本身会跳过 Armature 修改器，
     这里显式用 export_apply=False 保证安全
   · 导出后建议用 `node tools/glb-inspect.mjs` 复核：joints 数、形变键数量与命名、
     内嵌贴图是否齐全（与本轮修复前的基线对照）
+  · `--keep-morph-prefix`：**编辑期件与交付件带不同的形变键命名空间**（交付规范 §4.4）——
+    `_edit.glb` 只带 `shape_*`（捏脸页读它），交付件带 `vis_*` / `expr_*`（口型与表情）。
+    实测教训：把 136 个键（113 shape + 15 vis + 8 expr）一起塞进 `_edit.glb`，
+    `node tools/test-face-params.mjs` 的"形变键覆盖率 ≥95%"会掉到 83.1% 而失败。
+    传 `--keep-morph-prefix shape_` 即只留捏脸键。
 """
 
 import json
@@ -101,6 +106,30 @@ def main() -> None:
                     print(f"  贴图缩放 {image.name}: {width}x{height} → {max_size}x{max_size}")
                 except Exception as error:  # noqa: BLE001
                     print(f"  ⚠️ 贴图缩放失败 {image.name}: {error}")
+
+    # ── 形变键命名空间过滤（编辑期只留 shape_*，交付期只留 vis_*/expr_*）──
+    keep_prefix = arg_value("--keep-morph-prefix")
+    if keep_prefix:
+        wanted = tuple(p.strip() for p in keep_prefix.split(",") if p.strip())
+        removed = 0
+        for obj in list(bpy.data.objects):
+            if obj.type != "MESH" or not obj.data.shape_keys:
+                continue
+            keys = obj.data.shape_keys
+            # ⚠️ `keys.key_blocks` 没有 `remove()`；要用操作符，且必须先把对象设为活动+选中
+            #    （`blender --background` 下没有 UI 上下文，漏了这一步会报
+            #    "context is incorrect" 或此处遇到的属性不存在）。
+            bpy.context.view_layer.objects.active = obj
+            obj.select_set(True)
+            for block in list(keys.key_blocks):
+                if block.name == "Basis":
+                    continue
+                if not block.name.startswith(wanted):
+                    obj.active_shape_key_index = keys.key_blocks.find(block.name)
+                    bpy.ops.object.shape_key_remove()
+                    removed += 1
+            obj.select_set(False)
+        print(f"  形变键过滤：保留前缀 {wanted}，移除 {removed} 个键")
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     bpy.ops.export_scene.gltf(
