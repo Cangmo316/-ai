@@ -14,10 +14,12 @@ from .models import (
     PlanItem,
 )
 from .store import PlanStore
+from .sql_store import SqlPlanStore
 
 __all__ = [
     "PlanEngine",
     "PlanStore",
+    "SqlPlanStore",
     "CarePlan",
     "PlanItem",
     "PlanCheckin",

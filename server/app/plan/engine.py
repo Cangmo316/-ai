@@ -16,6 +16,10 @@
 - 生成出来的是 **draft**，要经过 `submit()` → `pending_confirm` 才算"等家属确认"
 - `confirm()` 才把它变成 `active`，**并且在那一刻才结束旧计划**（过渡期旧计划继续执行）
 - 今日计划 / 对话卡片只从 `PlanStore.active()` 取数，未确认的草稿产生不了任何提醒
+
+⚠️ **每处状态流转后面都跟着一句 `self.store.save(plan)`，别删**：内存版看不出差别
+（改的是同一个对象），落库版漏一行，重启后"已确认"就会退回"等确认"——闸门失效。
+理由与口径见 `store.py` 的 `PlanStore.save()`。
 """
 
 from __future__ import annotations
@@ -227,7 +231,7 @@ class PlanEngine:
         self._require(plan, STATUS_DRAFT, "提交确认")
         plan.status = STATUS_PENDING
         plan.log("submit", "已提交家属确认")
-        return plan
+        return self.store.save(plan)
 
     def confirm(self, plan: CarePlan, actor: str = "家属") -> CarePlan:
         """家属确认 → 生效。**在生效这一刻才结束旧计划**，过渡期不留提醒真空。"""
@@ -236,39 +240,41 @@ class PlanEngine:
         if previous and previous.id != plan.id:
             previous.status = STATUS_ENDED
             previous.log("ended", "新计划已生效，旧计划结束", actor)
+            # 旧计划的状态改了也要落库：不然重启后它又是 active，一份老人会有两份生效计划
+            self.store.save(previous)
             logger.info("旧计划 %s 结束（新计划 %s 生效）", previous.id, plan.id)
         plan.status = STATUS_ACTIVE
         plan.confirmed_at = now_iso()
         plan.confirmed_by = actor
         plan.log("confirm", "家属确认，计划生效", actor)
-        return plan
+        return self.store.save(plan)
 
     def reject(self, plan: CarePlan, reason: str = "", actor: str = "家属") -> CarePlan:
         self._require(plan, STATUS_PENDING, "驳回")
         plan.status = STATUS_REJECTED
         plan.rejected_reason = reason
         plan.log("reject", reason or "家属驳回", actor)
-        return plan
+        return self.store.save(plan)
 
     def mark_adjusting(self, plan: CarePlan, reason: str) -> CarePlan:
         """完成率触发调整建议 → adjusting，等待家属确认（**不自动改计划**）"""
         self._require(plan, STATUS_ACTIVE, "转入调整")
         plan.status = STATUS_ADJUSTING
         plan.log("adjusting", reason)
-        return plan
+        return self.store.save(plan)
 
     def adopt_adjustment(self, plan: CarePlan, actor: str = "家属") -> CarePlan:
         self._require(plan, STATUS_ADJUSTING, "采纳调整")
         plan.status = STATUS_ACTIVE
         plan.log("adopt", "家属确认调整，计划继续执行", actor)
-        return plan
+        return self.store.save(plan)
 
     def end(self, plan: CarePlan, reason: str = "", actor: str = "家属") -> CarePlan:
         if plan.status == STATUS_ENDED:
             return plan
         plan.status = STATUS_ENDED
         plan.log("ended", reason or "手动结束", actor)
-        return plan
+        return self.store.save(plan)
 
     @staticmethod
     def _require(plan: CarePlan, expected: str, action: str) -> None:

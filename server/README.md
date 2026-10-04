@@ -39,6 +39,8 @@
 | **P2 三层记忆**（L1 档案 + L2 经历 + L3 偏好）：按相关性取 Top-K 注入 prompt、L3 话题权重 | `app/memory/`、`app/api/memories.py` |
 | **记忆自动整理**（从聊天里抽 L2/L3）：默认关、低置信只入待复核、自动整理内容家属不可见 | `app/memory/extractor.py` |
 | **记忆落库**（SQLite 默认零安装；`DATABASE_URL` 换 PostgreSQL 走同一套 SQL） | `app/storage/db.py`、`app/memory/sql_store.py` |
+| **会话 / 计划 / 打卡落库**（同一套"写穿透 + 启动加载"；JSON 载荷表见 `json_store.py` 的取舍说明） | `app/storage/json_store.py`、`app/models/sql_store.py`、`app/plan/sql_store.py` |
+| **家人端记忆页**（录入 / 待复核通过·否决 / 单条删除 / 一键清空 / 自动整理开关） | `family/`（契约见 `uni-app/api/README.md` §三点五） |
 
 **未实现 / 待你操作**（不藏着，避免误判进度）
 
@@ -50,8 +52,10 @@
   真正的做法（P2 随家人端做）见 `app/auth.py` 的"能防/不能防"表
 - **`CORS_ORIGINS=*`** 默认全放（HBuilderX 预览跨域方便），上线前要收紧成具体域名
 
-- **数据库**：**记忆已落库**（`DATABASE_URL`）；会话、计划、打卡、提醒任务、cid 仍在内存，
-  进程重启即清空（接口按落库形态设计）。落库后端选择与限制见 §二之下的"落库"小节
+- **数据库**：**记忆 / 会话 / 计划 / 打卡已落库**（`DATABASE_URL`）；**提醒任务与推送 cid 仍在内存**
+  （重启后"已投递"的提醒历史与 read/ack 状态会断——不会重复轰炸老人，但家属端"提醒送到没有"
+  那段追溯会缺一段）。提醒任务是由 active 计划派生的（调度器启动时重建），cid 由端侧每次开 App
+  重新登记，所以这两类没落库的代价可控；要补齐照 `storage/json_store.py` 那套模式加即可
 - **记忆检索没有向量化**：现在是"标签/词组重合 + 时间衰减"（零依赖、可解释），
   升级路径在 `app/memory/retrieval.py` 的 `score()` 一处；记忆量到几千条再换 embedding 不迟
 - **家人端**只有最小版：`family/` 里的计划确认台（生成/确认/驳回/调整/完成率/提醒追溯，见 family/README.md）；
@@ -100,7 +104,7 @@ node tools\seed-plan.mjs --elder e_2  # 换一位老人
 node tools\seed-plan.mjs --fresh      # 已有生效计划时重来一份
 ```
 
-### 落库（记忆持久化，P2）
+### 落库（记忆 / 会话 / 计划 / 打卡，P2）
 
 `server/.env` 里的 `DATABASE_URL` 决定记忆落在哪：
 
@@ -112,7 +116,20 @@ node tools\seed-plan.mjs --fresh      # 已有生效计划时重来一份
 
 相对路径按 `server/` 解析（即 `server/data/bilin.db`），该目录已 gitignore。
 **启动日志与 `/healthz` 的 `storage` / `storageDurable` 会明确告诉你当前到底落没落库**——
-跑了一整天以为在落库、其实 `memory://`，是这类设计最容易踩的坑。
+跑了一整天以为在落库、其实 `memory://`，是这类设计最容易踩的坑。映射到库的是四类数据：
+记忆、会话消息、康养计划、打卡。
+
+⚠️ **端口**：如果 8000 上已经有一个实例在跑（尤其是用 `server/data/bilin.db` 的演示实例），
+照文档原样再起一个会 `bind` 失败（`[Errno 10048]`），而健康检查打到的还是旧实例——
+看起来"像在用演示库"其实是你没起起来。启动前确认端口空闲，或用 `PORT=8010` 另指一个。
+
+⚠️ **改 `app/plan/engine.py` 的状态流转后必须确认末尾有 `self.store.save(plan)`**：
+状态流转是直接改对象字段的（`plan.status = ACTIVE` 这种），内存版与调用方拿的是同一个对象
+所以看不出差别，**落库版漏一行，重启后"已确认"就会退回"等确认"**——`active()` 返回 None，
+而 `GET /v1/plans/today` 与所有提醒都只认 active，等于**家属确认闸门静默失效**。
+
+📌 口径说明：`PlanItem.weight` **不在 `to_dict()` 里**（端侧契约没有这个字段），
+所以从库里读回来 `weight=0`。它只在生成计划时给知识库条目排序用，不影响落库后的语义。
 
 ```powershell
 # 验证落库真的生效：写一条 → 重启服务 → 还在
@@ -179,9 +196,11 @@ server/
 │   │   ├── channels.py     投递通道（站内消息 / uni-push / 日志兜底）
 │   │   └── scheduler.py    一次 tick 的五件事 + 后台循环
 │   ├── plan/
-│   │   ├── models.py       CarePlan / PlanItem / PlanCheckin + 状态机常量
+│   │   ├── models.py       CarePlan / PlanItem / PlanCheckin + 状态机常量（含 from_dict）
 │   │   ├── engine.py       条目匹配、生成、确认闸门、频率窗口、完成率、话术改写
-│   │   └── store.py        计划与打卡的内存存储
+│   │   │                   ⚠️ 每处状态流转末尾的 self.store.save(plan) 别删（落库版靠它）
+│   │   ├── store.py        计划与打卡的内存存储（落库版见 sql_store.py）
+│   │   └── sql_store.py    SqlPlanStore：plans 与 plan_checkins 两张表
 │   ├── knowledge/
 │   │   ├── guidelines.yaml 康养条目（25 条草稿 / 3 个来源）
 │   │   ├── loader.py       读取 + 结构校验（缺字段就拒绝加载）
@@ -198,12 +217,16 @@ server/
 │   │   └── compliance.py   越界话术扫描（用药/诊断/客服用语）
 │   └── models/
 │       ├── message.py      消息模型 + 内存会话存储
+│       ├── sql_store.py    SqlConversationStore（会话消息落库）
 │       ├── push_client.py  推送标识（cid）登记表
 │       └── elder.py        老人档案（L1，开发期 3 个模拟档案）
 ├── deploy/
 │   └── unipush-cloudfunction/  uni-push 2.0 发送云函数（参考实现，需部署到你的 uniCloud）
-└── tests/                  202 项单测（标准库 unittest，零测试依赖）
+└── tests/                  286 项单测（标准库 unittest，零测试依赖）
 ```
+
+> 另有 `app/memory/`（三层记忆：L1 档案、L2 经历、L3 偏好 + 自动整理 + 落库）
+> 与 `app/storage/`（落库管道：`db.py` 连接与方言、`json_store.py` 通用 JSON 载荷表）。
 
 ---
 
@@ -214,7 +237,7 @@ cd server
 .\.venv\Scripts\python.exe -m unittest discover -s tests -t . -v
 ```
 
-202 项，按主题分十一块：
+286 项，按主题分十五块：
 
 | 文件 | 守什么 |
 |---|---|
@@ -230,8 +253,12 @@ cd server
 | `tests/test_errors.py` | 错误码表完整性、文案里不出现英文异常名、未登记码有兜底、各路由错误体形状一致 |
 | `tests/test_auth.py` | 三档鉴权模式、公开路径、Bearer/X-API-Token、required 缺 token 启动失败、健康检查不回显 token |
 | `tests/test_idempotency.py` | 回放不重复调模型、不重复落库、in-flight 冲突、**失败不污染缓存**、记录上限 |
+| `tests/test_memory.py` | 记忆 CRUD 与三条隐私硬约束（待复核不进检索、自动整理家属不可见、开关默认关）、提示词注入、自动整理开关 |
+| `tests/test_memory_backends.py` | 记忆落库一致性：**同一套行为断言跑内存版与 SQL 版**、重启后数据与设置还在、建表幂等、URL 解析、应用级重启 |
+| `tests/test_store_persistence.py` | 会话与计划落库：`to_dict`↔`from_dict` 严格互逆、重启后 `active()` 还在（**确认闸门**）、打卡幂等与完成率口径不变、会话顺序（同秒多条靠 `seq`） |
 
-（上表 9 个文件、共 159 项。）
+（上表 15 个文件、共 286 项。跑完不该有 `ResourceWarning`：`app/main.py` 末尾那个模块级
+`create_app()` 会在 import 时连库，`Database.connect()` 已注册 `atexit` 兜底关闭。）
 
 **跨语言端到端**（最有价值的一种回归）：让端侧测试直接打这个服务——用同一套端侧断言，
 验证「uni-app api 层 → Python 服务 → SSE → 端侧状态机」整条链。

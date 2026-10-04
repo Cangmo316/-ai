@@ -32,6 +32,21 @@ class PlanStore:
         self._plans[plan.id] = plan
         return plan
 
+    def save(self, plan: CarePlan) -> CarePlan:
+        """把计划的**最新状态**写回存储。
+
+        为什么需要这个方法（内存版看着多余，落库版缺它不行）：
+        状态流转（`submit` / `confirm` / `reject` / `mark_adjusting` / `adopt_adjustment` /
+        `end`）都是**直接改对象字段**的，存储层不参与。内存版与调用方拿的是同一个对象，
+        天然看得到改动；落库版必须在每次流转后显式保存一次，否则重启后"已确认"会退回
+        "等确认"——`active()` 返回 None、提醒全部不投递，**家属确认闸门等于失效**，
+        这是产品硬约束级别的错误，不是性能问题。
+
+        语义与 `add` 一致（同一个 id 覆盖），所以调用方可以无条件地调它。
+        """
+        self._plans[plan.id] = plan
+        return plan
+
     def get(self, plan_id: str) -> CarePlan | None:
         return self._plans.get(plan_id)
 

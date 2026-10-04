@@ -194,6 +194,37 @@ prompt 已加两层约束（往事段"照实说 + 不许补不许猜"，以及�
 --------------------------------------------------------------------------------
 - PowerShell heredoc 里写中文时，ASCII 双引号会截断字符串（连踩两次）——写文件用 write 工具
 - 控制台显示 UTF-8 中文会乱码；**要判定内容就写文件再读**，别靠控制台肉眼
-- Node 测试收尾不要 `process.exit()`（Windows 上撞 libuv 的 UV_HANDLE_CLOSING 断言），
+- Node 测试收尾不要 `process.exit()`（Windows 上撞 libuv的 UV_HANDLE_CLOSING 断言），
   用 `await mock.close()` + `finish()`（只设 process.exitCode）
 - 记忆相关测试**一律用专用老人 id**：清空类用例会真删数据
+
+8.5 进行中 / 下一步（同日晚，两个并行子任务 —— **均已完成**）
+--------------------------------------------------------------------------------
+(1) **家人端记忆页** ✅ 完成：family/ 里的记忆录入 / 待复核（通过·否决）/ 单条删除 /
+    一键清空 / 自动整理开关；uni-app/api/memory.js 补了家人端专用写接口。
+    家人端测试 17+8 → **28+20**；端侧合计 143 → **167 项**。
+    截图（真跑出来的界面）见 _shots/family-memory-tall2.png：家属可见 2 条、
+    待复核 1 条（"把握 40%、没经你确认前不会用来主动关心老人"+ 通过/否决），
+    而 source=auto 且家属不可见的那条**确实没出现在家属列表里** ✓
+    子代理顺带修了 4 处 mock 与真服务不一致：PATCH 路由被字面量路径吃掉、
+    开关写成全局一个 bool（隐私开关错的那一侧）、POST 把 review/visibleToFamily 写死、
+    CORS 缺 PATCH/PUT（真浏览器预检会挡掉，node fetch 静默漏掉）。
+(2) **会话与计划落库** ✅ 完成：ConversationStore / PlanStore 同款"写穿透 + 启动加载"，
+    `Message`/`CarePlan`/`PlanCheckin` 补 `from_dict()`；计划拆 care_plans / plan_checkins 两张表；
+    会话多一列 `seq`（`created_at` 只到秒，同秒多条会让**重启后对话顺序乱掉**）。
+    服务端 252 → **286 项**。真重启 3 次验过：确认过的计划 planId 不变且仍 active；
+    未确认草稿重启后 /plans/today 仍 0 项（**确认闸门在落库版成立**）；
+    打卡幂等与完成率不变；会话 5 条顺序与角色不变。
+(3) **本轮又抓到并堵掉一个真洞**：`POST /v1/memories` 允许客户端声明 `source=auto`
+    + `visibleToFamily=true` → 能把"从聊天整理"的内容标成家属可见，**从接口层绕开
+    "家人端默认看不到聊天原文"**。已改成只收 family/elder（传 auto 返回 422），
+    两个后端都加了回归用例。
+(4) **一个隐蔽的副作用**：`app/main.py` 末尾有模块级 `app = create_app()`（给 uvicorn 用），
+    落库改造后它变成"import 就打开演示库"，于是任何 import app.main 的测试都留一条
+    未关闭的 sqlite 连接（`ResourceWarning`）。已在 `Database.connect()` 注册 `atexit` 兜底关闭。
+    教训：**改了"装配期副作用"要回头看谁在 import 时触发它**。
+(5) 提醒任务（ReminderStore）与推送 cid **仍未落库**（本轮范围外）：提醒任务是由 active 计划
+    派生的（调度器启动时重建）、cid 由端侧每次开 App 重新登记，所以代价可控；
+    但"提醒送到没有"的追溯历史重启后会断一段。要补齐照 `storage/json_store.py` 那套模式加即可。
+(6) 记忆编造的收敛：见 §8.3 的四个选项，需要你选一个（我倾向 (a) 记忆卡片）。
+(7) 真机：等手机侧无线调试的配对信息（`adb pair` + `adb connect`）。

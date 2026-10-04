@@ -1,4 +1,4 @@
-"""数据结构与存储（P0 内存实现，P1 起换成 PostgreSQL + 向量库）"""
+"""数据结构与存储（内存实现 + `DATABASE_URL` 打开时的落库实现）"""
 
 from .message import (
     ROLE_AGENT,
@@ -9,6 +9,7 @@ from .message import (
     new_id,
     now_iso,
 )
+from .sql_store import SqlConversationStore
 
 __all__ = [
     "ROLE_AGENT",
@@ -16,6 +17,7 @@ __all__ = [
     "ROLE_SYSTEM",
     "ConversationStore",
     "Message",
+    "SqlConversationStore",
     "new_id",
     "now_iso",
 ]

@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from ..models.message import new_id, now_iso
+from ..models.message import as_dicts, as_float, as_text, new_id, now_iso
 
 STATUS_DRAFT = "draft"
 STATUS_PENDING = "pending_confirm"
@@ -103,6 +103,39 @@ class PlanItem:
             },
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "PlanItem":
+        """`to_dict()` 的逆运算。
+
+        两处专有的映射口径（改 to_dict 时必须同步改这里）：
+        - 五个依据字段是**扁平的 dataclass 字段，到了线上被收进 `basis` 子对象**
+          （家属端要把它当一块整体展示），所以这里要从 `basis` 里摊回来
+        - `basis.text` 是 `basis_text()` 拼出来的**派生态**，不是数据，读回来直接丢弃
+          （留着反而会出现"文案与字段不一致"的脏数据）
+
+        ⚠️ `weight` 不在 `to_dict()` 里（端侧契约 `uni-app/api/README.md` 没有这个字段），
+        所以从线上形状读回来的权重一律是 0。这是可接受的：`weight` 只在**生成计划时**
+        用来给知识库条目排序，计划一旦生成，它的语义已经落在 title/time/freq 上了。
+        这里仍然接受 `weight` 键，是为了兼容"直接把 dataclass 存成 JSON"的调用方。
+        """
+        basis = data.get("basis")
+        basis = basis if isinstance(basis, dict) else {}
+        return cls(
+            id=as_text(data.get("id")),
+            time=as_text(data.get("time")),
+            type=as_text(data.get("type")),
+            title=as_text(data.get("title")),
+            detail=as_text(data.get("detail")),
+            freq=as_text(data.get("freq")) or "每日",
+            strong_remind=bool(data.get("strongRemind")),
+            weight=as_float(data.get("weight")),
+            entry_id=as_text(basis.get("entryId")),
+            source=as_text(basis.get("source")),
+            source_name=as_text(basis.get("sourceName")),
+            version=as_text(basis.get("version")),
+            boundary=as_text(basis.get("boundary")),
+        )
+
 
 @dataclass
 class CarePlan:
@@ -153,6 +186,43 @@ class CarePlan:
             "history": self.history,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "CarePlan":
+        """`to_dict()` 的逆运算（落库读回来时用）。
+
+        两个要留意的口径：
+        - `statusLabel` 是 `status` 派生的中文标签，**只用于展示**；读回来一律以 `status`
+          为准（否则库里一改状态、标签没跟上，老人端就会看到"正在执行"却拿不到提醒）
+        - `items` 里的每一项走 `PlanItem.from_dict()`（那里有 basis 的字段名映射）；
+          `sources` / `history` 是"结构不固定"的留痕，只保证是 dict 列表
+
+        可选字段全部给了兜底值，与 dataclass 的默认值一致——遇到老版本载荷（少几个键）
+        时，读回来的计划不该变成一个字段为 None 的"半成品"。
+        """
+        items = data.get("items")
+        return cls(
+            id=as_text(data.get("id")),
+            elder_id=as_text(data.get("elderId")),
+            status=as_text(data.get("status")) or STATUS_DRAFT,
+            items=[
+                PlanItem.from_dict(item)
+                for item in (items if isinstance(items, list) else [])
+                if isinstance(item, dict)
+            ],
+            goal=as_text(data.get("goal")),
+            start_date=as_text(data.get("startDate")),
+            end_date=as_text(data.get("endDate")),
+            created_at=as_text(data.get("createdAt")) or now_iso(),
+            created_by=as_text(data.get("createdBy")) or "agent",
+            confirmed_at=as_text(data.get("confirmedAt")),
+            confirmed_by=as_text(data.get("confirmedBy")),
+            rejected_reason=as_text(data.get("rejectedReason")),
+            knowledge_version=as_text(data.get("knowledgeVersion")),
+            sources=as_dicts(data.get("sources")),
+            note=as_text(data.get("note")),
+            history=as_dicts(data.get("history")),
+        )
+
 
 @dataclass
 class PlanCheckin:
@@ -174,6 +244,24 @@ class PlanCheckin:
             "doneAt": self.done_at,
             "source": self.source,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PlanCheckin":
+        """`to_dict()` 的逆运算。
+
+        打卡记录是**完成率的唯一凭据**（家属端要拿它算"这几天做了几项"），
+        所以这里宁可留一条字段缺失的记录，也不做"看起来不合法就丢掉"的判断——
+        丢一条就等于把老人真做过的事抹掉。
+        """
+        return cls(
+            id=as_text(data.get("id")),
+            plan_id=as_text(data.get("planId")),
+            plan_item_id=as_text(data.get("planItemId")),
+            elder_id=as_text(data.get("elderId")),
+            date=as_text(data.get("date")),
+            done_at=as_text(data.get("doneAt")) or now_iso(),
+            source=as_text(data.get("source")) or "elder",
+        )
 
 
 def new_plan_id() -> str:

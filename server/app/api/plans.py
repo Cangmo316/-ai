@@ -133,7 +133,11 @@ async def create_draft(payload: DraftRequest, request: Request):
             provider = getattr(request.app.state, "provider", None)
             plan.items, stats = await engine.polish_items(plan.items, elder, provider)
         if payload.submit:
+            # submit 内部会 save 一次，改写后的话术跟着一起落库
             engine.submit(plan)
+        else:
+            # 停在 draft 的路径没有别的 save 点：不补这一句，重启后草稿会退回知识库原文
+            engine.store.save(plan)
     except PlanStateError as exc:
         return api_error("plan_state", exc.message)
 

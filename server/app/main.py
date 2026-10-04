@@ -49,11 +49,13 @@ from .storage import open_database
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .models.push_client import PushClientRegistry
+from .models.sql_store import SqlConversationStore
 from .orchestration.idempotency import IdempotencyStore
 from .orchestration.service import ChatService
 from .persona.prompts import PersonaRegistry
 from .plan.engine import PlanEngine
 from .plan.models import STATUS_ACTIVE, STATUS_PENDING
+from .plan.sql_store import SqlPlanStore
 from .plan.store import PlanStore
 from .schedule import (
     ChannelRegistry,
@@ -83,18 +85,17 @@ def create_app(
             "或把 AUTH_MODE 改成 auto/off（仅限本机开发）"
         )
     llm = provider or build_provider(config)
-    conversations = ConversationStore()
+    # P2 落库：有库就落库（默认 sqlite），DATABASE_URL=memory:// 时退回纯内存（测试/CI）。
+    # 建库放在最前面：会话 / 记忆 / 计划三个 store 都要在装配期挂到同一条库上
+    database = open_database(config.database_url, base_dir=Path(__file__).resolve().parents[1])
+    # 会话与计划跟记忆同一套模式：写穿透 + 启动加载，接口与内存版逐字一致
+    conversations = SqlConversationStore(database) if database.enabled else ConversationStore()
     personas = PersonaRegistry(default_id=config.default_persona_id)
     elders = ElderStore()
     # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
     idempotency = IdempotencyStore()
-    # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）。
-    # 有库就落库（默认 sqlite），DATABASE_URL=memory:// 时退回纯内存（测试/CI）
-    database = open_database(config.database_url, base_dir=Path(__file__).resolve().parents[1])
-    if database.enabled:
-        memories = SqlMemoryStore(database)
-    else:
-        memories = MemoryStore()
+    # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）
+    memories = SqlMemoryStore(database) if database.enabled else MemoryStore()
 
     if knowledge is None:
         try:
@@ -103,7 +104,13 @@ def create_app(
             # 计划引擎的每一条依据都来自知识库，读不出来就不该硬撑着启动
             logger.error("知识库加载失败：%s", exc)
             raise
-    engine = plan_engine or PlanEngine(knowledge, PlanStore(), elders, config)
+    if plan_engine is not None:
+        engine = plan_engine
+    else:
+        # 计划与打卡也要落库：不落的话重启后 active() 会返回 None，
+        # 老人端「今日计划」整个空掉（家属确认过的计划白确认了）
+        plan_store = SqlPlanStore(database) if database.enabled else PlanStore()
+        engine = PlanEngine(knowledge, plan_store, elders, config)
 
     if scheduler is None:
         # 通道顺序有意义：先站内消息（当前一定送得到），再 uni-push（配好了才真的发），最后日志兜底
@@ -207,9 +214,11 @@ def create_app(
         if not config.uses_real_model:
             logger.warning("当前使用假模型（未配置 LLM_API_KEY）—— 端侧能连通，但回复是固定话术")
         # 落库后端也要喊出来：跑了一整天以为在落库、其实 DATABASE_URL=memory:// 最坑
-        logger.info("记忆存储：%s", database.describe())
+        logger.info("存储后端：%s（记忆 / 会话 / 计划 / 打卡）", database.describe())
         if not database.enabled:
-            logger.warning("记忆未落库（DATABASE_URL=memory://）—— 进程重启后记忆会清空")
+            logger.warning(
+                "未落库（DATABASE_URL=memory://）—— 进程重启后记忆、会话、计划与打卡都会清空"
+            )
         # 接口是不是裸的，这件事必须喊出来（见 app/auth.py 的"能防/不能防"表）
         warn_if_open(config)
         if config.scheduler_enabled:

@@ -23,6 +23,7 @@ sqlite3 能进 CI、psycopg 不一定能。真要上 ORM，等表结构复杂到
 
 from __future__ import annotations
 
+import atexit
 import logging
 import sqlite3
 import threading
@@ -116,6 +117,11 @@ class Database:
                     "DATABASE_URL 指向 PostgreSQL，但没装驱动：pip install \"psycopg[binary]\""
                 ) from exc
             self._conn = psycopg.connect(self.url)
+        # 进程退出兜底关一次。为什么需要：`app/main.py` 末尾有个模块级
+        # `app = create_app()`（给 uvicorn 用），**import 时就会连库**；测试与脚本
+        # 只是 import 一下就会留下一句 `ResourceWarning: unclosed database`。
+        # 正常服务的 lifespan 会先 close（close 幂等，重复调用无害）
+        atexit.register(self.close)
         return self._conn
 
     def init_schema(self, statements: list[str]) -> None:
