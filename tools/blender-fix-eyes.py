@@ -216,30 +216,42 @@ def main() -> None:
             bpy.ops.object.mode_set(mode="OBJECT")
 
         # ── 眼裂环吸附到球面 ────────────────────────────
-        # ⚠️ 关键：Blender 的形变键存的是**绝对坐标**，只改 Basis 会让导出后的 delta 变化
-        #    （等于"权重 1 时把眼裂拉回原来的坏位置"）。所以同一批顶点的位移必须
-        #    **同步应用到所有形变键**，这样 delta（target − basis）保持不变，
-        #    眼区形变键的语义与幅度才不被破坏。
+        # ⚠️⚠️ 这里是最容易搞坏资产的地方，必须记住 Blender 形态键的三条事实：
+        #   1) 形态键存的是**绝对坐标**，不是 delta；glTF 导出时才换算成 delta
+        #   2) **Basis（key_blocks[0]）才是静息态**；mesh.vertices 在带形态键的网格上
+        #      是另一份数据，改它不等于改静息态
+        #   3) 想让某个形态键的 delta 保持不变，必须让 **Basis 与该键位移相同**
+        #      （delta = key − basis；只动 key 不动 basis，delta 就会被平白加上这段位移）
+        # 上一版就是因为只改了 mesh.vertices + 其它键、漏了 basis：
+        # shape_face_width_up 的边长拉伸从 1.4× 涨到 3.05×，全部 _up 键叠加从 3.76× 涨到 152.9×，
+        # 表现就是"滑杆一拖整张脸完全扭曲"。
         keys = head.data.shape_keys
+        basis = keys.key_blocks[0] if keys else None
         blocks = list(keys.key_blocks[1:]) if keys else []
         displacements = {}
         for index in rim:
-            old_local = head.data.vertices[index].co.copy()
+            source = basis.data[index].co if basis else head.data.vertices[index].co
+            old_local = source.copy()
             world = matrix @ old_local
             direction = world - fit_center
             if direction.length < 1e-9:
                 continue
             snapped = fit_center + direction.normalized() * target_radius
             new_local = matrix.inverted() @ snapped
+            delta = new_local - old_local
+            if basis:
+                basis.data[index].co = new_local
             head.data.vertices[index].co = new_local
-            displacements[index] = new_local - old_local
+            displacements[index] = delta
+        # 其余形态键同步位移同样的量 → 各自 delta 不变（语义与幅度都不被破坏）
         for block in blocks:
             for index, delta in displacements.items():
                 block.data[index].co = block.data[index].co + delta
         head.data.update()
         report.setdefault("shape_key_vertices_propagated", {})[eyeball.name] = len(displacements)
+        report.setdefault("basis_updated", {})[eyeball.name] = bool(basis) and len(displacements)
 
-        after_points = [matrix @ head.data.vertices[i].co for i in rim]
+        after_points = [matrix @ (basis.data[i].co if basis else head.data.vertices[i].co) for i in rim]
         after = deviation(after_points, fit_center, target_radius)
         shape_keys = eye_region_shape_keys(head, rim)
         report["eyes"].append(

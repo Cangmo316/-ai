@@ -1,0 +1,313 @@
+================================================================================
+比邻AI · Android 模拟器环境 + 3D 捏脸 App 端验证 —— 进度报告
+生成时间：2026-10-03 20:30（Asia/Shanghai）
+目的：可直接作为新对话的交接材料（本对话已很长，建议新开对话先读本文件）
+================================================================================
+
+--------------------------------------------------------------------------------
+一、结论摘要
+--------------------------------------------------------------------------------
+1) Android 模拟器环境已从零建好，装在 E 盘，两台 AVD，硬件加速已验证可用。
+2) 修掉了 1 个真实代码缺陷：App 端构建失败（renderjs 块不认 @/ 别名）。
+   —— 这 2 行改动**尚未提交**，见 §2.3。
+3) App 仍**未**在模拟器上跑通。卡点是 DCloud 标准基座与模拟器 ABI 的兼容性，
+   已定位到两层根因，**两层都不是比邻AI 项目代码的问题**，见 §2.4。
+4) 需要你决策下一步走哪条路，见 §4 / §6。
+
+--------------------------------------------------------------------------------
+二、已完成（可复现）
+--------------------------------------------------------------------------------
+
+2.1 Android SDK —— 全新安装，全部在 E 盘
+    根目录：E:\Android\Sdk   合计约 5.6 GB
+    已装组件：
+      cmdline-tools;latest        19.0
+      platform-tools              37.0.1
+      emulator                    37.2.12
+      platforms;android-34        Android 14 平台
+      platforms;android-30        Android 11 平台
+      system-images;android-34;google_apis;x86_64   （64 位镜像）
+      system-images;android-30;google_apis;x86      （32 位镜像）
+    已持久化的用户级环境变量：
+      ANDROID_HOME           = E:\Android\Sdk
+      ANDROID_SDK_ROOT       = E:\Android\Sdk
+      ANDROID_USER_HOME      = E:\Android\user
+      ANDROID_AVD_HOME       = E:\Android\user\avd
+      用户 PATH 追加           = E:\Android\Sdk\platform-tools ; E:\Android\Sdk\emulator
+    硬件加速校验：
+      emulator -accel-check  ->  WHPX(10.0.26200) is installed and usable
+    伴随发现：
+      dl-ssl.google.com:443 在本机不可达；dl.google.com 可用（实测 12 MB/s）。
+      两者容易被混淆，SDK 组件都走 dl.google.com，故不受影响。
+    下载工具结论：curl.exe 与 JVM 均可正常下载；
+      唯一一次"下载挂住"是 dl.google.com 当时解析到 120.233.71.225 的瞬时抖动，
+      且 sdkmanager 未设读超时因而不会自行失败。重试即恢复（1222 MB / 30 s）。
+
+2.2 两台 AVD（都在 E:\Android\user\avd）
+    名称           系统                    机型       配置
+    bilin_api34    Android 14 (API 34)     pixel_6    RAM 4096 / 6 核 / host GPU / 数据分区 6144M
+                   google_apis x86_64
+    bilin_x86      Android 11 (API 30)     Nexus 5X   RAM 2048 / 4 核 / host GPU / 数据分区 4096M
+                   google_apis x86 (32位)
+    启动命令（建议后台常驻，否则会被工具会话清理带走）：
+      E:\Android\Sdk\emulator\emulator.exe -avd bilin_x86 -gpu host -no-boot-anim -no-snapshot-save
+      E:\Android\Sdk\emulator\emulator.exe -avd bilin_api34 -gpu host -no-boot-anim -no-snapshot-save
+    停止：E:\Android\Sdk\platform-tools\adb.exe emu kill
+    为什么要有 32 位那台：见 §2.4 第一层根因。
+
+2.3 修复的真实代码缺陷（重要 —— 尚未提交）
+    文件：uni-app/pages/face/face.vue   （567 行，仅改动 2 行）
+    改动内容（renderjs 块内，第 310/311 行）：
+      - import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
+      - import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
+      + import { mountFaceStage, unmountFaceStage } from '../../common/face-gl/face-three.js'
+      + import { DEFAULT_GENDER } from '../../common/face-gl/assets.js'
+    为什么必须改：
+      HBuilderX 的 uni:app-vue-renderjs 插件把 renderjs 块当作**独立入口**编译，
+      该编译链**不解析 @/ 别名**；H5 端走的是另一条链所以没暴露。
+      原始报错（App 端构建直接失败）：
+        X [ERROR] Could not resolve "@/common/face-gl/face-three.js"
+        X [ERROR] Could not resolve "@/common/face-gl/assets.js"
+        [plugin:uni:app-vue-renderjs] Build failed with 2 errors
+        at pages/face/face.vue:1:0
+      改成相对路径后：项目 uni-app 编译成功 / ready。（已实测）
+    注意：<script setup> 里的 @/ 保持不动（第 96/99/101/106 行），只动 renderjs 块。
+    完整性核验：git diff --stat 结果为 1 file changed, 2 insertions(+), 2 deletions(-)。
+    待办：改了 pages/ 之后按仓库规则应跑 npm test（112 项），**这次没跑**。
+
+2.4 关键诊断结论 —— App 端跑不起来的两层根因（本轮最有价值的产出）
+    【第一层】基座 APK 的 ABI 与 x86_64 模拟器不匹配
+      - HBuilderX 标准基座 android_base.apk 只带 arm64-v8a / armeabi-v7a / x86，
+        没有 x86_64（已用 zip 条目核对：arm64-v8a 51 个、armeabi-v7a 51 个、x86 48 个）。
+      - API 34 x86_64 镜像的 abilist = x86_64,arm64-v8a，且 abilist32 为空，
+        原生桥为 libndk_translation.so；于是安装器只能挑 arm64-v8a，走 ARM 翻译层。
+      - 后果：weex（uni-app 逻辑层 JS 引擎）的多进程 IPC 在翻译层下起不来：
+          E/WeexCore: WeexJSConnection catch: spinWaitPeer timeout
+          E/WeexCore: IPCException server spinWaitPeer timeout
+          E/WeexCore: script_side_in_multi_process.cpp:43,InitFramework sender is null
+          E/weex: [WXBridgeManager] invokeInitFramework ExecuteJavaScript fail
+          E/weex: framework.js uninitialized
+        → 应用永远停在 HBuilder splash（PullDebugActivity），60fps 只是 splash 转圈动画。
+      - 排除项（都已验证过，不是原因）：
+          资源同步成功（apps/HBuilder = 35 MB，说明 wgt 与 32 MB GLB 都进了设备）
+          无 UnsatisfiedLinkError
+          manifest.json 的 appid 为空**不是**阻塞（基座用 appID:"HBuilder" 兜底）
+          网络正常、磁盘充足
+
+    【第二层】换 32 位 x86 镜像后，基座自身解压崩溃
+      - 换 android-30 x86 镜像后：abilist = x86,armeabi-v7a,armeabi（纯 32 位），
+        基座 primaryCpuAbi = x86 ✅，编译成功、基座安装成功；
+      - 但在"同步手机端程序文件"阶段 SIGSEGV 崩溃：
+          pid: 5743, tid: 5782  >>> io.dcloud.HBuilder <<<
+          signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x3f25b7
+          net.lingala.zip4j.io.inputstream.ZipStandardSplitFileInputStream.read
+          net.lingala.zip4j.ZipFile.extractAll
+          io.dcloud.common.util.Zip4JUtil.upZipFileWithPassword
+          io.dcloud.debug.FileUtil.decompress  <- io.dcloud.debug.FileUtil.save
+          io.dcloud.debug.NetUtil.download
+          io.dcloud.debug.PullManager$OperationHandler.handleMessage
+        HBuilderX 自己存了崩溃日志：
+          E:\比邻AI\uni-app\dist\logs\android\20261003_200745_026_io.dcloud.HBuilder_crash.log
+      - 崩溃发生在 **DCloud 基座自己的解压代码**里，与比邻AI 的业务代码无关。
+      - 崩溃帧落在 [anon:dalvik-classesN.dex] 的 JIT 代码里，怀疑与 32 位 ART JIT 有关
+        （假设，未验证）。
+
+    【被中断的那一步】针对第二层，当时正要试的规避手段：
+      在 x86 镜像上关闭 ART JIT（adb root 后 setprop dalvik.vm.usejit false）
+      + 重启 framework（stop/start）使其生效，然后重跑 cli launch。
+      已做完"关闭 + force-stop"，**"重启框架并重跑"被中断，未验证**。
+
+    【顺带确认的好消息】上一轮 H5 侧的验证是有效的，可继续依赖：
+      3D 渲染器用无头 Edge 直连同一份 common/face-gl/face-three.js 验过：
+        女性：20 骨 / 7 mesh / 137 morph 槽 / 56077 三角面 / warnings=0
+        男性：20 骨 / 6 mesh / 131 morph 槽 / 55742 三角面 / warnings=0
+        同实例 女→男 切换：isReady=true，槽位/材质/网格按资产替换，构图重算，warnings=0
+        滑杆链路：3 个 weight / 113 target 全命中 / influence 0→1 / adapter 零 warning
+      仓库测试：npm test 112 项全绿。
+
+--------------------------------------------------------------------------------
+三、未完成清单
+--------------------------------------------------------------------------------
+[ ] 1. App 端在模拟器上真正跑通并确认：face 页 3D 实时预览、默认女性可切男性、
+       三滑杆生效、renderjs 宿主黏合（ownerInstance.callMethod / :change: 派发 /
+       this.gl 生命周期 / mountFaceStage 收到的是 renderjs 的 $el）。
+[ ] 2. §2.3 那 2 行渲染器 import 的改动尚未 git commit；也尚未跑 npm test（112 项）。
+[ ] 3. ART JIT 规避实验未验证（见 §2.4 最后一段）。
+[ ] 4. 模拟器窗口当时以 -WindowStyle Hidden 启动，是否可见未确认；
+       若要你自己操作模拟器，需以可见窗口重启。
+[ ] 5. 上一轮遗留、仍待你回复的两个小问题：
+       (a) 是否要出"男女形变量完全相同"的对照报告（建模侧疑点，见 §7）
+       (b) 145 MB 的 .blend 与全尺寸贴图是否走 Git LFS
+
+--------------------------------------------------------------------------------
+四、下一步选项（含代价，供你选）
+--------------------------------------------------------------------------------
+A. 用真机（arm64）—— 最可靠，**我推荐这条**
+   一台 Android 手机开 USB 调试即可。基座 arm64 原生运行，无翻译层、无解压崩溃，
+   也顺带覆盖 renderjs 宿主黏合。
+   命令：
+     E:\download\HBuilderX.5.26.2026091802\HBuilderX\cli.exe launch app-android ^
+       --project "E:\比邻AI\uni-app" --deviceId <手机序列号> --pagePath pages/face/face
+   成本：0 下载；需要你有一台手机。
+
+B. 换更低版本 x86 镜像（android-28 或 android-29 的 x86）—— 中等成本
+   赌不同 ART 版本不复现该解压崩溃。成本：每次约 1 GB 下载 + 建 AVD + 1 次冷启动。
+
+C. 继续在现有 x86 镜像上试规避 —— 低成本，成功率不确定
+   即被中断的那一步：关 JIT（已关）/ 重启框架 / 或试 -accel off（纯软件，很慢）/
+   或换 -gpu swiftshader_indirect。
+
+D. 第三方模拟器（MuMu 12 / 雷电）—— 约 1 GB 安装
+   x86 内核，社群反馈用它跑 uni-app 标准基座较常见。本机还有 MuMu 的虚拟化残留
+   （C:\Program Files\MuMuVMMVbox），但主程序已不在。
+
+E. 只停在 H5 验证 —— 成本 0，但**覆盖不到 renderjs 宿主黏合**，
+   而这正是你最想确认的那件事（原生 switch/slider 渲染 + renderjs 是否真能挂上 WebGL）。
+
+建议顺序：A > B > D > C。若你没有安卓真机，我建议先 B 再 D。
+
+--------------------------------------------------------------------------------
+五、现场残留（可能需要清理）
+--------------------------------------------------------------------------------
+供参考，我中断时的实际状态：
+  adb 设备        emulator-5554 device（即 bilin_x86，Android 11 32 位）
+  模拟器进程      emulator#30288, qemu-system-x86_64#27860（仍在运行）
+  残留 cli 进程   cli#26948（HBuilderX 的 launch 进程，仍在运行）
+  注意：adb 当前是 root 模式（为改 JIT 属性执行过 adb root），
+        且 dalvik.vm.usejit=false 已生效于下次框架/进程启动。
+清理建议：
+  停模拟器     E:\Android\Sdk\platform-tools\adb.exe emu kill
+  停 cli       Stop-Process -Name cli -Force
+日志与产物位置：
+  E:\Android\logs\                      emu*.log / launch*.log / sdk*.log（诊断日志）
+  E:\Android\_dl\                        cmdline-tools 安装包 136 MB（可删）
+  E:\Android\Sdk\                          SDK 本体
+  E:\比邻AI\uni-app\dist\logs\android\    应用崩溃日志
+  C:\Users\余云飞\.codex\visualizations\2026\09\23\01a0ced0-703c-7013-a114-f49e7efa0727\
+                                        emu_boot.png / emu_face*.png 等截图
+
+--------------------------------------------------------------------------------
+六、待你决策（3 条）
+--------------------------------------------------------------------------------
+1) 走 §4 的哪条路？（我的建议：A 真机；没有真机则 B）
+2) §2.3 那 2 行 import 修复是否现在提交？
+   （我建议提交 —— 它是真实缺陷，App 端构建本来就靠它才能过；
+     并按仓库规则补跑 npm test 112 项）
+3) 是否要我把本报告追加进《比邻AI_项目设计方案.md》或单独存为任务笔记？
+
+--------------------------------------------------------------------------------
+七、附：上一轮已确认、与本次无关但值得转给建模侧的发现
+--------------------------------------------------------------------------------
+用 Node 字节级解析 GLB 得到（女性 edit vs 男性 edit）：
+  文件大小    10,073,348 B      9,265,136 B
+  骨/三角面   20 / 56077        20 / 55742
+  target 总数 137               131
+  底模顶点    44157（node_0）   38996（node_0）
+疑点：131 个共享 target 的最大位移量逐条**精确相同**（到 0.001 mm），
+      但底模顶点数不同 —— 看起来是把女性资产的形变量配方套在男性底模上，
+      02_male_60s_v1\_m8_gains.json 的调参可能没进 edit 资产。建议建模侧复核。
+另一关注点：位移量级偏小，131 条里最大仅 5 mm（shape_shoulder_width_up）；
+      捏脸页暴露的三条为 face_width 3.0 mm / eye_size 2.028 mm / age_overall 2.028 mm。
+      视觉上是否"够看"建议在真机上亲自确认。
+================================================================================
+报告结束
+================================================================================
+================================================================================
+八、追加：x86 规避路线的三次尝试与最终结论
+    （2026-10-03 21:00 追加，接 §4 选项 C）
+================================================================================
+应要求继续在 x86 上试规避。共实验三种配置，全部失败，但拿到了决定性证据。
+
+【配置1】Android 14 (API 34) google_apis x86_64        [AVD: bilin_api34]
+  基座装到的 ABI：arm64-v8a（走 NDK 翻译）
+    原因：该镜像 abilist = x86_64,arm64-v8a，abilist32 为空，
+          基座 APK 没有 x86_64，安装器只能退到 arm64-v8a。
+  结果：weex（uni-app 逻辑层 JS 引擎）多进程 IPC 起不来，永久卡在 splash。
+  证据：
+    E/WeexCore: WeexJSConnection catch: spinWaitPeer timeout
+    E/WeexCore: script_side_in_multi_process.cpp:43,InitFramework sender is null
+    E/weex: [WXBridgeManager] invokeInitFramework ExecuteJavaScript fail
+    E/weex: framework.js uninitialized
+
+【配置2】Android 11 (API 30) google_apis x86（纯 32 位）  [AVD: bilin_x86]
+  基座装到的 ABI：x86（原生）✅
+  结果：两层失败
+    (a) 客体系统本身不稳定，出现随机段错误，连系统进程都崩：
+        F/libc: Fatal signal 11 (SIGSEGV) in tid 29042, pid 28951 (.gms.persistent)
+            ABI: 'x86'
+            #01 pc 002fbed0  boot.oat (java.util.HashSet.add+96)
+        I/Zygote: Process 28800 exited due to signal 11 (Segmentation fault)
+    (b) 基座在解压同步包时段错误：
+        pid: 5743, signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x3f25b7
+        net.lingala.zip4j.io.inputstream.ZipStandardSplitFileInputStream.read
+        net.lingala.zip4j.ZipFile.extractAll
+        io.dcloud.common.util.Zip4JUtil.upZipFileWithPassword
+        io.dcloud.debug.FileUtil.decompress / NetUtil.download / PullManager
+  规避尝试及结果：无效
+    已做：adb root；setprop dalvik.vm.usejit false / usejitprofiles false；
+          setprop dalvik.vm.jitthreshold 2147483647；adb shell stop + start 重启 framework
+    复测：仍崩溃，且崩溃点前移到"正在建立手机连接..."后约 1 秒
+          （20:31:27 检测到应用崩溃 -> 新崩溃日志 ..._203127_575_..._crash.log）
+    结论：与应用 JIT 无关，关 JIT 规避不掉。
+
+【配置3】Android 11 (API 30) google_apis x86_64        [AVD: bilin_x86_64]  <- 本次新增
+  先验证 ABI（这是关键区别）：
+    ro.product.cpu.abilist   = x86_64,x86,arm64-v8a,armeabi-v7a,armeabi
+    ro.product.cpu.abilist32 = x86,armeabi-v7a,armeabi
+    ro.product.cpu.abilist64 = x86_64,arm64-v8a
+    因为 x86 排在 arm64-v8a 之前，基座被正确判定为 32 位：
+      primaryCpuAbi = x86  ✅   versionName = 15.26
+    且这台客体全程无随机段错误 ✅（说明这个镜像本身是稳定可用的）
+  结果：编译成功、基座安装成功、基座进程也真的起来了，但基座在
+        初始化 WebView 时崩溃。手动启动基座观察到的完整过程：
+      D/dcloud.HBuilde: onRuntimePreCreate appid=Main_App
+      D/splash: WebAppActivity.onCreateSplash().appid=null this.appid=Main_App
+      D/WebAppActivity: onCreateSplash ... cmp=io.dcloud.HBuilder/io.dcloud.PandoraEntryActivity
+      E/dcloud.HBuilde: Invalid ID 0x00000000.
+      E/chromium: mkdir /data/user/0/io.dcloud.HBuilder/cache/WebView/Crashpad:
+                  No such file or directory (2)
+      I/WindowManager: WIN DEATH: Window{... io.dcloud.HBuilder/io.dcloud.PandoraEntry}
+      I/Zygote: Process 5846 exited due to signal 11 (Segmentation fault)
+    HBuilderX 侧现象："手机无响应？请检查：1. 基座是否已成功安装并在手机上启动
+                      2. ADB 反向代理是否创建成功 3. 手机和电脑是否处于同一网络"
+      （adb reverse 实测是正常的：host-14 tcp:8000 -> tcp:8000、tcp:8001 -> tcp:8001）
+
+--------------------------------------------------------------------------------
+最终结论
+--------------------------------------------------------------------------------
+HBuilderX 标准基座 android_base.apk 带三套原生库（arm64-v8a / armeabi-v7a / x86），
+在本机 "Windows + WHPX + 官方 Android 模拟器" 上，三条 ABI 路径全部不可用：
+    arm64 路径 -> 只能靠 libndk_translation 翻译，weex 多进程 IPC 挂掉
+    x86   路径 -> 32 位客体不稳定；且基座在解压同步包 / 初始化 WebView 时段错误
+这不是比邻AI 项目代码的问题：改动前后现象一致，所有崩溃都落在 io.dcloud.* 的代码里。
+继续在官方模拟器上"规避"的收益已经很低，建议改走真机。
+
+推荐（依据比 §4 更充分）
+  A. 真机（arm64）—— 首选。基座走 arm64 原生路径，是该基座最主流、测试最充分的路径，
+     同时正好覆盖你最想确认的 renderjs 宿主黏合。成本：一台安卓手机，0 下载。
+  B. 第三方模拟器（MuMu 12 / 雷电）—— 约 1 GB 安装，自带镜像，社群反馈跑 uni-app 基座较常见。
+  C. 继续折腾官方模拟器（换 android-28/29 的 x86/x86_64，或 -accel off 纯软件模拟）—— 收益低。
+
+顺带得到的、可留用的结论
+  1) 官方模拟器环境本身已经建好且可用：API 30 x86_64 这台（bilin_x86_64）客体稳定、
+     硬件加速正常（WHPX）、adb / 截图 / logcat / adb reverse 链路都通。
+     将来换真机或换第三方模拟器，这套 SDK 与 AVD 环境都可直接复用。
+  2) §2.3 那 2 行 renderjs import 修复在任何 Android 设备上都是必需前提
+     （App 端编译必须靠它才能过），与本次模拟器选型无关，建议无论如何先提交。
+  3) 结论明确：App 端跑不通的原因**在 DCloud 基座与 x86 模拟器的兼容性**，
+     不在比邻AI 的代码，也不是 renderjs 写法问题。
+
+--------------------------------------------------------------------------------
+追加时的现场残留
+--------------------------------------------------------------------------------
+  模拟器进程     emulator + qemu-system-x86_64（bilin_x86_64，Android 11 x86_64）仍在运行
+  设备           emulator-5554 device
+  残留 cli 进程  可能仍有 cli.exe（HBuilderX 的 launch 进程）
+  基座           已安装（primaryCpuAbi=x86），但启动即崩，未在运行
+  清理命令       E:\Android\Sdk\platform-tools\adb.exe emu kill
+                 Stop-Process -Name cli -Force
+  新增可用 AVD   bilin_x86_64（Android 11 / x86_64，客体稳定，推荐后续复用）
+
+================================================================================
+追加结束
+================================================================================
