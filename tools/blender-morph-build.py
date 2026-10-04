@@ -66,6 +66,15 @@ VISEME_LIP = {
 #   `chin`（与 `lip_lower`）必须**同向跟随** jaw —— 见任务笔记 §8.16。
 JAW_FOLLOWERS = {"chin": 1.0, "lip_lower": 1.0}
 
+# ⚠️⚠️ **下颌角必须取负号才是"张嘴"**（本轮实测的判定性结论，见任务笔记 §8.20.5）：
+#   探针实测（中线上下唇行的平均 Δz 之差 = 可见开口增量）：
+#     jaw **+**8°  → 上下唇**一起向上**走（Δz 都为正的 −5.7/−6.3mm），开口增量 **−0.53mm（嘴在闭）**
+#     jaw **−**8°  → 上下唇一起向下走，开口增量 **为正（嘴在开）**；−20° 时 +1.83mm（原权重）
+#   原因：`rotation_euler` 是**骨骼局部轴**，不是世界轴（jaw 骨从枢轴指向下巴，是斜的），
+#   局部 +X 旋转在世界里表现为"把下巴往上收"。
+#   另外 `jaw + chin + lip_lower 三者同向` 的绝对值比单转 jaw 大得多（−20° 时 22.8mm vs 单转的 1mm 级）。
+JAW_SIGN = -1.0
+
 EXPR_NAMES = ["expr_blink_L", "expr_blink_R", "expr_smile", "expr_frown",
               "expr_surprise", "expr_squint", "expr_brow_up", "expr_brow_down"]
 
@@ -456,7 +465,7 @@ def main():
         coeff = VISEME_LIP[name]
         delta = np.zeros((count, 3), dtype=np.float64)
         if abs(degrees) > 1e-6:
-            angle = degrees * jaw_scale
+            angle = JAW_SIGN * degrees * jaw_scale
             poses = {"jaw": angle}
             for follower, ratio in JAW_FOLLOWERS.items():
                 if follower in weights:
@@ -471,7 +480,7 @@ def main():
         moved = write_key(name, delta)
         max_mm = float(np.linalg.norm(delta, axis=1).max() * 1000)
         report["morphs"][name] = {"moved": moved, "max_mm": round(max_mm, 3),
-                                  "jaw_deg": round(degrees * jaw_scale, 2)}
+                                  "jaw_deg": round(JAW_SIGN * degrees * jaw_scale, 2)}
 
     # ── 2) expr_* ──
     # 眨眼（左右独立）
@@ -496,7 +505,7 @@ def main():
                                   "max_mm": round(float(np.linalg.norm(delta, axis=1).max() * 1000), 3)}
 
     # 惊讶 = 下颌开 + 眉抬 + 唇撮
-    surprise_jaw = 8.0 * jaw_scale
+    surprise_jaw = JAW_SIGN * 8.0 * jaw_scale
     posed = posed_delta(mesh_obj, armature, {"jaw": surprise_jaw})
     delta = posed - co
     clear_pose(armature)

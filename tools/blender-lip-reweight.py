@@ -47,7 +47,7 @@ def has_flag(name):
 
 def main():
     out = arg_value("--out")
-    band_mm = float(arg_value("--band-mm", "2.0"))
+    band_mm = float(arg_value("--band-mm", "1.5"))
     low = float(arg_value("--low", "0.92"))
     high = float(arg_value("--high", "0.55"))
     want_report = has_flag("--report")
