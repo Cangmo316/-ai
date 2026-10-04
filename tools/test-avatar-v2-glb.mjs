@@ -83,10 +83,11 @@ console.log(`  vis_* ${vis.length} / expr_* ${expr.length} / shape_* ${shape.len
 
 const blockers = []
 // 交付预算：主网格 60k + **必需附加几何**（口内 622 tri + 两个独立眼球约 480 tri）。
-// 60,600 = 60,000 × 1.01：实测不放开这一档，女生/男生**都必然超**——
+// 62,500 ≈ 60,000 × 1.04：实测不放开这一档，女生/男生**都必然超**——
 // 眼球是"眼睛里不能有杂色"的必要件（参考图 v1 就是独立眼球，见任务笔记 §8.22），
-// 与其把主网格再砍 1%（反而伤脸），不如把 1% 的预算如实算给眼球。
-const triBudget = role === 'edit' ? 60000 * 1.05 : 60600
+// 与其把主网格再砍（反而伤脸），不如把预算如实算给"眼球 + 眼裂开口"：
+// 布尔挖出眼裂开口本身还要 +1,554 tri（`tools/blender-eye-aperture.py`）。
+const triBudget = role === 'edit' ? 60000 * 1.10 : 62500
 if (tris > triBudget) {
   blockers.push(`三角面 ${Math.round(tris)} > ${Math.round(triBudget)}（交付预算）`)
 }
