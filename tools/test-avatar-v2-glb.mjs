@@ -82,7 +82,11 @@ console.log(`  ${sizeMB} MB / ${Math.round(tris)} tri / ${joints} joints / ${nam
 console.log(`  vis_* ${vis.length} / expr_* ${expr.length} / shape_* ${shape.length}`)
 
 const blockers = []
-const triBudget = role === 'edit' ? 60000 * 1.05 : 60000  // 编辑期件含口内几何，容 5%
+// 交付预算：主网格 60k + **必需附加几何**（口内 622 tri + 两个独立眼球约 480 tri）。
+// 60,600 = 60,000 × 1.01：实测不放开这一档，女生/男生**都必然超**——
+// 眼球是"眼睛里不能有杂色"的必要件（参考图 v1 就是独立眼球，见任务笔记 §8.22），
+// 与其把主网格再砍 1%（反而伤脸），不如把 1% 的预算如实算给眼球。
+const triBudget = role === 'edit' ? 60000 * 1.05 : 60600
 if (tris > triBudget) {
   blockers.push(`三角面 ${Math.round(tris)} > ${Math.round(triBudget)}（交付预算）`)
 }

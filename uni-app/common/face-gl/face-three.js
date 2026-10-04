@@ -163,6 +163,11 @@ export function createFaceStage(opt) {
   /** 正在加载中 / 当前已加载的性别，用于 load() 的幂等判定。 */
   let loading = false
   let currentGender = null
+  // §7 排查用：把"正在加载哪个性别 / 哪个资产地址 / 最近一次错误"记下来，
+  // 由 stats() 暴露。没有这几个字段时，"UI 选了男性但模型没换"只能靠肉眼猜。
+  let loadingGender = null
+  let lastAssetUrl = ''
+  let lastError = ''
   /** 构图基准距离（applyFraming 算出），滚轮缩放在它上面做比例。 */
   let baseDist = 2
   /** 最近一次构图实测值（焦点盒 / 全身盒 / 距离 / 画布），供 stats() 暴露给验收诊断。 */
@@ -428,7 +433,15 @@ export function createFaceStage(opt) {
     if (canvas.parentNode) canvas.parentNode.removeChild(canvas)
   }
 
-  /** 加载（或切换）形象资产。切性别时复用同一舞台，只换模型。 */
+  /**
+   * 加载（或切换）形象资产。切性别时复用同一舞台，只换模型。
+   *
+   * ⚠️ 两个实测过的坑（§7 排查）：
+   *   1. **失败必须把 `loading`/`ready` 复位**：否则一次加载失败后，
+   *      后面所有 `load()` 都会被"幂等守卫"挡掉（切性别永远不生效、也不报错）。
+   *   2. 状态要能被外部观测：`stats()` 里带 `gender` / `asset` / `lastError`，
+   *      否则"UI 选了男性但模型没换"这种问题只能靠肉眼猜。
+   */
   async function load(gender) {
     const g = AVATAR_ASSET[gender] ? gender : DEFAULT_GENDER
     // 幂等：H5 的 onMounted 与 App 的 renderjs mounted 都可能触发首次加载，
@@ -438,27 +451,37 @@ export function createFaceStage(opt) {
     const url = resolveAssetUrl(AVATAR_ASSET[g])
     loading = true
     ready = false
+    loadingGender = g
+    lastAssetUrl = url
+    lastError = ''
     if (o.onStatus) o.onStatus('正在加载' + (g === 'female' ? '女性' : '男性') + '形象…')
     const t0 = Date.now()
-    const gltf = await loader.loadAsync(url)
-    // 换模型：先拆旧的再挂新的，避免两套骨骼同时参与渲染
-    if (root) { spinGroup.remove(root); disposeObject(root, renderer) }
-    root = gltf.scene
-    spinGroup.add(root)
-    bound = bindThree(root)
-    morphOwners = collectMorphOwners(root)
-    lastLoadMs = Date.now() - t0
-    computeFocus()
-    resize()
-    applyFraming()
-    applyWeights(weights)
-    rotate(yaw, pitch)
-    ready = true
-    currentGender = g
-    loading = false
-    if (o.onReady) o.onReady({ gender: g, stats: stats() })
-    schedule()
-    return stats()
+    try {
+      const gltf = await loader.loadAsync(url)
+      // 换模型：先拆旧的再挂新的，避免两套骨骼同时参与渲染
+      if (root) { spinGroup.remove(root); disposeObject(root, renderer) }
+      root = gltf.scene
+      spinGroup.add(root)
+      bound = bindThree(root)
+      morphOwners = collectMorphOwners(root)
+      lastLoadMs = Date.now() - t0
+      computeFocus()
+      resize()
+      applyFraming()
+      applyWeights(weights)
+      rotate(yaw, pitch)
+      ready = true
+      currentGender = g
+      if (o.onReady) o.onReady({ gender: g, stats: stats() })
+      schedule()
+      return stats()
+    } catch (error) {
+      lastError = String((error && error.message) || error)
+      if (o.onStatus) o.onStatus('形象加载失败：' + lastError)
+      throw error
+    } finally {
+      loading = false
+    }
   }
 
   function stats() {
@@ -475,6 +498,8 @@ export function createFaceStage(opt) {
       morphSlots: s.morphNames, morphNames: morphOwners.size,
       triangles: Math.round(tris), loadMs: lastLoadMs, warnings: lastCmdWarnings,
       canvas: measure(), frame: frameInfo,
+      // §7 排查用的可观测状态：性别 / 资产地址 / 是否正在加载 / 最近一次错误
+      gender: currentGender, loadingGender, loading, asset: lastAssetUrl, lastError,
     }
   }
 
