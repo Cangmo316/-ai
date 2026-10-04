@@ -457,12 +457,77 @@ active 计划 → 调度器登记 ReminderTask（幂等：同一项同一天同�
 | `api/plans.js` | 计划接口（老人端只用 today / checkin） |
 | `api/reminders.js` | 提醒收件箱与回执 |
 | `api/push.js` | 推送标识登记 |
+| `api/memory.js` | 三层记忆（**只读**：列表中查、检索、单条删除、一键清空） |
 | `stores/plan.js` | 今日计划：乐观打卡、三级兜底 |
 | `stores/reminder.js` | 前台轮询、提醒条、震动、去重 |
 | `stores/push.js` | cid 登记、本地通知预排、推送消息监听 |
 | `pages/plans/plans.vue` | 日程页（Tab 2） |
 | `components/bl-plan-check/` | 计划项 + 大字打卡 |
 | `components/bl-reminder-bar/` | 顶部提醒条 |
+
+---
+
+## 三点五、三层记忆接口（P2）
+
+三层记忆里 **L1 是健康档案**（`GET /v1/elders`，一直在注入 system prompt），
+这里说的是 **L2 经历事件**（"2023 年儿子带我去过海南"）与 **L3 兴趣偏好**（"爱听戏""喜欢下棋"）。
+
+### 3.5.1 接口一览
+
+| 方法 | 路径 | 谁用 | 说明 |
+|---|---|---|---|
+| `GET` | `/v1/memories?elderId=&kind=&q=&scope=&includePending=&limit=` | 老人端 / 家人端 | 列表；带 `q` 时走相关性检索（结果多一个 `score`） |
+| `POST` | `/v1/memories` | 家人端 | 录入一条（`source` 默认 `family`） |
+| `PATCH` | `/v1/memories/{id}` | 家人端 | 改内容 / 标签 / 可见性 |
+| `DELETE` | `/v1/memories/{id}` | 两端 | **单条删除**（产品要求） |
+| `POST` | `/v1/memories/clear` | 家人端 | **一键清空**（产品要求） |
+| `POST` | `/v1/memories/review` | 家人端 | 复核自动整理的条目（`approve` true/false） |
+| `GET`/`PUT` | `/v1/memories/settings` | 两端 | 自动整理开关（默认 **关**） |
+| `GET` | `/v1/memories/topics` | 家人端 / 主动关怀 | L3 汇总出的"能聊什么"，按权重排序 |
+
+端侧文件：`api/memory.js`；`api/config.js` 里对应 `ENDPOINTS.memories` / `memoryClear` /
+`memoryReview` / `memorySettings` / `memoryTopics`。
+
+### 3.5.2 三条口径（端侧不许绕过）
+
+1. **`source` 决定可见性**：`family`（家人录入）/ `elder`（老人自述）/ `auto`（从聊天整理）。
+   `auto` 的记忆 **`visibleToFamily=false`**，`scope=family` 时不会返回——
+   否则"家人端默认看不到聊天原文"会被记忆绕过去（设计方案 §3.4）
+2. **`review=pending` 不参与检索**：自动整理里置信度低于 `0.75` 的先入待复核，
+   `GET /v1/memories` 默认不返回，`q=` 检索也取不到；家属 `review` 通过后才可用
+3. **自动整理默认关**：`autoExtract=false`。开启时服务端记 `consentedAt`；
+   关闭只影响新增，已入库的仍可单条删除或一键清空
+
+⚠️ 端侧**不提供写入入口**：记忆能被 App 直接改，就绕过了"家属确认"这道产品闸门。
+老人端只做只读展示（`scope=all` 自查）。
+
+### 3.5.3 请求/响应示例
+
+```jsonc
+// POST /v1/memories
+{ "elderId": "e_1", "kind": "experience", "text": "老人 2023 年跟儿子去过海南",
+  "tags": ["儿子", "旅行"], "happenedAt": "2023年" }
+
+// 200（GET 列表里的一个条目）
+{ "id": "mem_1", "elderId": "e_1", "kind": "experience", "kindLabel": "经历",
+  "text": "老人 2023 年跟儿子去过海南", "tags": ["儿子", "旅行"],
+  "source": "family", "sourceLabel": "家里人填写", "confidence": 1,
+  "review": "approved", "visibleToFamily": true, "happenedAt": "2023年",
+  "createdAt": "2026-10-04T02:31:07+08:00", "updatedAt": "2026-10-04T02:31:07+08:00" }
+
+// 404
+{ "error": { "code": "memory_not_found", "message": "没找到这条记忆", "retryable": false } }
+```
+
+### 3.5.4 mock 与真实后端的差异
+
+| 项 | 真服务 | mock |
+|---|---|---|
+| 检索打分 | 标签命中 + 正文命中率 + 时间新鲜度 + 来源可信度 | 字符二元组命中数（**只求量级一致**） |
+| 种子数据 | 无（空库起步） | 预置 4 条（含一条 `auto`+`pending`，用来验证两处隐私口径） |
+| 存储 | 内存（进程重启即清空） | 内存 |
+
+两边**隐私口径与错误码必须一致**（`tools/test-memory-store.mjs` 同一套用例跑两边）。
 
 ## 四、话术与内容约束（服务端责任，端侧只管展示）
 
@@ -498,6 +563,21 @@ node tools/mock-server.mjs --delay 0  # 不等待，便于脚本联调
 node tools/mock-server.mjs --host 0.0.0.0   # 真机联调（手机与电脑同局域网）
 ```
 
+契约回归（每个套件同时支持内置 mock 与真实后端）：
+
+```bash
+npm test                                            # 端侧全量（内置 mock）
+node tools/test-memory-store.mjs                    # 只跑三层记忆契约
+$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-memory-store.mjs   # 打真服务
+```
+
+Android 真机/模拟器要连本机服务，用 `adb reverse` 把设备的 8787 反向映射到电脑
+（这样 App 里默认的 `127.0.0.1:8787` 不用改源码）：
+
+```bash
+adb reverse tcp:8787 tcp:8787
+```
+
 改 baseURL 的两种方式（`uni-app/api/config.js`）：
 
 ```js
@@ -529,3 +609,6 @@ mock 里预置了三个触发词方便验边界：消息含 `__error` → 走错
 - `clientMsgId` 幂等（端侧已传，服务端应据此去重，避免重试产生重复消息）
 - 限流（错误码表已就绪，见 §2.4；限流本身还没做）
 - 会话列表接口（`chats` 页除首个会话外仍是本地占位数据）
+
+> 已不再属于"待做"：鉴权（`AUTH_MODE`，端侧 `setApiToken()`）、`clientMsgId` 幂等、
+> 三层记忆接口（§三点五）都已实现，这里保留原文以对照历史。

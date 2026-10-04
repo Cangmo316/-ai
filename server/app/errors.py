@@ -73,13 +73,19 @@ PLAN: dict[str, ErrorSpec] = {
     "no_matching_entries": ErrorSpec(409, "知识库里没有适合这位老人的条目，没法生成计划", False),
 }
 
+# ── 记忆（P2 三层记忆）────────────────────────────────────────────────
+MEMORY: dict[str, ErrorSpec] = {
+    "memory_not_found": ErrorSpec(404, "没找到这条记忆", False),
+    "memory_empty": ErrorSpec(400, "要记的内容不能是空的", False),
+}
+
 # ── 提醒 / 推送 ─────────────────────────────────────────────────────────
 REMINDER: dict[str, ErrorSpec] = {
     "manual_tick_disabled": ErrorSpec(403, "手动调度已关闭", False),
     "invalid_cid": ErrorSpec(400, "推送标识不能为空", False),
 }
 
-ERROR_TABLE: dict[str, ErrorSpec] = {**GENERIC, **CHAT, **LLM, **PLAN, **REMINDER}
+ERROR_TABLE: dict[str, ErrorSpec] = {**GENERIC, **CHAT, **LLM, **PLAN, **REMINDER, **MEMORY}
 
 # 框架自带的 4xx 映射（FastAPI 抛 HTTPException 时用）
 STATUS_FALLBACK: dict[int, str] = {

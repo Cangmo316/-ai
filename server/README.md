@@ -36,6 +36,8 @@
 | **统一错误码表**（code → HTTP 状态 + 人话文案 + retryable，跨语言契约） | `app/errors.py` |
 | **接口鉴权**（三档 AUTH_MODE；中间件统一拦，新加路由不会漏） | `app/auth.py`、`app/main.py` |
 | **幂等**（`clientMsgId`：重试回放缓存、不重复调模型；失败释放记录） | `app/orchestration/idempotency.py` |
+| **P2 三层记忆**（L1 档案 + L2 经历 + L3 偏好）：按相关性取 Top-K 注入 prompt、L3 话题权重 | `app/memory/`、`app/api/memories.py` |
+| **记忆自动整理**（从聊天里抽 L2/L3）：默认关、低置信只入待复核、自动整理内容家属不可见 | `app/memory/extractor.py` |
 
 **未实现 / 待你操作**（不藏着，避免误判进度）
 
@@ -47,11 +49,14 @@
   真正的做法（P2 随家人端做）见 `app/auth.py` 的"能防/不能防"表
 - **`CORS_ORIGINS=*`** 默认全放（HBuilderX 预览跨域方便），上线前要收紧成具体域名
 
-- **数据库**：会话、计划、打卡、提醒任务、cid 全在内存，进程重启即清空（接口按落库形态设计）
+- **数据库**：会话、计划、打卡、提醒任务、cid、**记忆**全在内存，进程重启即清空（接口按落库形态设计）
+- **记忆检索没有向量化**：现在是"标签/词组重合 + 时间衰减"（零依赖、可解释），
+  升级路径在 `app/memory/retrieval.py` 的 `score()` 一处；记忆量到几千条再换 embedding 不迟
 - **家人端**只有最小版：`family/` 里的计划确认台（生成/确认/驳回/调整/完成率/提醒追溯，见 family/README.md）；
   绑定管理、形象定制、记忆录入、多子女权限等仍是二期
 - Android 通知渠道（`uni.getChannelManager`）未配：提醒暂用系统默认渠道
-- 三层记忆（L2/L3）、内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
+- **记忆的家人端界面**还没做：接口与隐私口径已就绪（§三点五），但 `family/` 里还没有"记忆录入/复核"页
+- 内容管线、语音（CosyVoice 2）、数字人驱动、限流、可观测性
 
 **默认假模型**：没配 `LLM_API_KEY` 时走 `FakeProvider`（固定话术、逐字吐字）。
 这是刻意的——端侧联调、CI、演示都不该被额度或网络卡住，且假模型也会走完整条风格后处理链路。
@@ -276,8 +281,9 @@ node tools\check-chat-quality.mjs          # 抽查脚本在仓库根目录
 1. ~~P1 剩余：调度器与推送~~ ✅ 已完成（`app/schedule/`，含 uni-push 通道与端侧本地通知）
 2. ~~鉴权 + `clientMsgId` 幂等 + 稳定错误码表~~ ✅ 已完成（`app/auth.py`、`app/errors.py`、`app/orchestration/idempotency.py`）
 3. ~~家人端页面~~ ✅ 最小版已完成（`family/` 计划确认台；绑定管理/形象定制/记忆录入仍是二期）
-4. **P2 三层记忆**：把 `app/models/elder.py` 的模拟档案换成 PostgreSQL，
-   接 L2 经历检索与 L3 兴趣权重
+4. ~~P2 三层记忆~~ ✅ 代码已完成（`app/memory/`：L2 经历 / L3 偏好 + 自动整理 + 隐私口径）。
+   还剩两件：**记忆落 PostgreSQL**（现在全内存）、**家人端的记忆录入/复核页**
 5. **真正的账号体系**：家人端手机号登录 + 短期 JWT + 老人端 scoped token + 设备级撤销
    （现在只是共享 token，见 `app/auth.py` 的"能防/不能防"）
-6. 换模型或改 prompt 后重跑 `node tools/check-chat-quality.mjs`（见 §七）
+6. **数字人驱动**：GLB 里 `vis_*` / `expr_*` 已导出，端侧缺"文字/音频 → viseme → morph 权重"这一层
+7. 换模型或改 prompt 后重跑 `node tools/check-chat-quality.mjs`（见 §七）

@@ -1,0 +1,132 @@
+================================================================================
+比邻AI · P2 三层记忆 —— 进度报告（交接材料）
+生成时间：2026-10-04 02:45（Asia/Shanghai）
+上一段交接：比邻AI_模拟器与3D捏脸验证进度报告_20261003.txt
+================================================================================
+
+--------------------------------------------------------------------------------
+一、结论摘要
+--------------------------------------------------------------------------------
+1) **P2 三层记忆的代码已完成并全绿**：L2 经历 / L3 偏好 + 从聊天自动整理 +
+   隐私口径，服务端 238 项、端侧 143 项全通过。
+2) **真模型端到端验证通过**：写入"老人 2023 年跟儿子去过海南"后提问
+   "你还记得我儿子带我去哪儿玩了吗"，模型回答"记得啊 2023年小明带你去海南了"
+   ——记忆确实进了 prompt 并影响了回答。
+3) 本轮还顺手修掉 3 个真实缺陷（都不是新代码引入的，见 §四）。
+4) 还剩两件（不是代码问题）：**记忆落 PostgreSQL**、**家人端的记忆录入/复核页**。
+
+--------------------------------------------------------------------------------
+二、这一轮做了什么
+--------------------------------------------------------------------------------
+新增（服务端，`server/app/memory/`）
+  models.py     MemoryEntry / MemorySettings / MemoryStore
+                （三种 kind：experience / preference / profile；三种 source：
+                 family / elder / auto；review：approved / pending / rejected）
+  retrieval.py  score() 唯一打分入口 = 标签命中 + 正文命中率 + 时间新鲜度 + 来源可信度
+                search() 取 Top-K（只从"已复核可用"里取）
+                topics() L3 汇总"能聊什么"（不占对话上下文）
+  extractor.py  extract_rules() 零依赖规则抽取（永远可用）
+                extract_with_llm() 模型抽取（严格 JSON，解析失败当没有）
+                remember_from_turn() 一轮对话后的入口（开关关着就什么都不做）
+
+新增（接口）`server/app/api/memories.py`
+  GET/POST/PATCH/DELETE /v1/memories，/v1/memories/clear、/review、
+  /settings（GET/PUT）、/topics
+
+改动（接线）
+  app/main.py                  建 MemoryStore、注入 memory_provider 与 after_turn、
+                               healthz 增 memory 统计、挂路由与端点清单
+  app/orchestration/service.py generate() 里注入记忆（_build_messages 多一个
+                               query_text）并在 done 前调用 after_turn
+  app/persona/prompts.py       build_system_prompt(persona, elder, memories)
+  app/errors.py                新增 MEMORY 段（memory_not_found 404 / memory_empty 400）
+
+契约三处（AGENTS 铁律：端侧实现 + mock + 文档）
+  uni-app/api/memory.js        新客户端（**只读**：列表/检索/单条删/一键清空）
+  uni-app/api/config.js        ENDPOINTS 增 5 个记忆路径
+  uni-app/api/index.js         导出记忆接口
+  tools/mock-server.mjs        同契约路由 + 4 条种子（含 auto+pending 各一条，
+                               专门用来验证两处隐私口径）
+  uni-app/api/README.md        §三点五 三层记忆接口（口径/示例/mock 差异）
+
+测试
+  server/tests/test_memory.py        35 项（存/取/删/清/复核/注入/开关/隐私/接口）
+  tools/test-memory-store.mjs        11 项（端侧契约；**同一套用例跑 mock 与真服务**）
+  计数更新：服务端 203 → 238、端侧 132 → 143（AGENTS.md 已同步）
+
+--------------------------------------------------------------------------------
+三、三条隐私硬约束（写进 AGENTS 了，别拆）
+--------------------------------------------------------------------------------
+1. `source=auto`（从聊天自动整理）的记忆 **visibleToFamily=false**：
+   `scope=family` 不返回。否则"家人端默认看不到聊天原文"会被记忆绕过去
+2. `review=pending`（置信度 < 0.75）**不参与检索、不用于主动话题**，只等家属复核
+3. `autoExtract` **默认关**（开启才记 consentedAt=已告知本人）；
+   **端侧不提供记忆写入入口**——写入只能走家人端或对话自动整理
+
+--------------------------------------------------------------------------------
+四、本轮踩到的坑 / 修掉的缺陷
+--------------------------------------------------------------------------------
+1) **service.generate() 没给 elder_id 时，L1 档案与记忆全静默丢失**
+   generate(elder_id=None) → elder_profiles.get(None)=None → prompt 里既没有档案
+   也没有记忆，表现是"智能体突然不记得我是谁"。已加 `elder_id or DEFAULT_ELDER_ID`。
+   （HTTP 层一直在传，所以线上没暴露；这是"少传一个参数就静默降级"的典型）
+
+2) **中文分词停用词规则过狠**：原实现把含停用字的二元组全砍掉，
+   于是"去过""去年"这类**承载事实的关键词**被切没了 → 经历类记忆检索不到。
+   改成"二元组只要有一个字不是停用字就保留"。
+
+3) **空文本走错错误码**：登记了 `memory_empty`(400) 却返回 `invalid_request`(422)。
+   端侧 422 的文案是"请求失败（422）"，不符合"老人看得懂"的约定。
+
+4) 测试自身的坑（已记在用例注释里）：
+   - 端侧 `request()` reject 的是 **{code,statusCode,message,retryable} 对象**（不是
+     Error），且 4xx 的 message 被端侧改写成老人话术 → 断言口径必须是 code
+   - 用例不能在收尾 `process.exit()`（Windows 上撞 libuv 的 UV_HANDLE_CLOSING 断言），
+     要 `await mock.close()` 后只调 `finish()`（它设 process.exitCode）
+   - 用例不能依赖 mock 的种子数据（真服务是空库）→ 改成"缺什么补什么"
+
+--------------------------------------------------------------------------------
+五、明确的遗留（下一步按此顺序）
+--------------------------------------------------------------------------------
+1. **记忆落 PostgreSQL**：现在全内存，进程重启即清空（会话/计划/打卡/提醒/cid 同样）
+2. **家人端的记忆录入/复核页**：接口与隐私口径已就绪，`family/` 里还没有这个页面
+3. **记忆检索向量化**：现在是"标签/词组重合 + 时间衰减"（零依赖、可解释）。
+   记忆量到几千条再换 embedding；入口只有 `retrieval.py::score()` 一处
+4. **模型的"添油加醋"要收一收**：实测回答里出现了记忆中没有的细节
+   （"那会儿你天天发照片 晒得可开心了"）。prompt 已写"绝不要编"，但还不够，
+   建议：给记忆注入加一句"只说记录里写到的事，细节不确定就不提"，
+   或加一条合规扫描（检测回答里出现记录外的具体事实）
+
+--------------------------------------------------------------------------------
+六、怎么复现这一轮
+--------------------------------------------------------------------------------
+# 服务端测试（238 项）
+cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .
+
+# 端侧全量（143 项，含记忆契约 11 项）
+npm test
+
+# 只跑记忆契约：mock 与真服务各跑一遍
+node tools/test-memory-store.mjs
+cd server; .\.venv\Scripts\python.exe run.py     # 另开一个终端
+$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-memory-store.mjs
+
+# 真模型验证记忆注入
+POST /v1/memories {"elderId":"e_1","kind":"experience","text":"老人 2023 年跟儿子去过海南"}
+POST /v1/chat/send {"conversationId":"c_son","elderId":"e_1","text":"你还记得我儿子带我去哪儿玩了吗"}
+
+--------------------------------------------------------------------------------
+七、另一条线：Android 真机（未完成，与记忆无关）
+--------------------------------------------------------------------------------
+- 模拟器：API 34 x86_64 上标准基座白屏，根因是基座按 ABI 挑了
+  `arm64-v8a/libweexjsb.so`（Android 14 的 x86_64 模拟器对外宣称支持 arm64），
+  ARM 库加载失败 → WeexCore IPCException → 逻辑层起不来。**不是项目代码问题**。
+  换 API 30 x86 后逻辑层正常，但 HBuilderX 的 CLI 不肯把运行下发到第二台设备，
+  手工 adb push 又缺 HBuilderX 同步时写的状态（基座把项目当 5+ 项目，加载报
+  "请求的页面无法打开"）。
+- 真机（荣耀 WIN RT）：USB 调试开着，但手机侧 adbd 没监听（只暴露了荣耀自家
+  HDB 通道），adb 枚举不到设备。**下一步建议走无线调试**（开发者选项 → 无线调试
+  → 使用配对码配对），我这边 `adb pair` + `adb connect` 即可接手。
+- 已就绪：Android SDK（E:\Android\Sdk）、三个 AVD、adb reverse 8787、mock 服务
+
+================================================================================

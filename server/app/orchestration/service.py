@@ -30,6 +30,7 @@ import re
 from collections.abc import AsyncIterator
 
 from ..llm.base import LLMError, LLMProvider
+from ..models.elder import DEFAULT_ELDER_ID
 from ..models.message import (
     ROLE_AGENT,
     ROLE_ELDER,
@@ -142,6 +143,8 @@ class ChatService:
         elder_profiles: dict[str, dict] | None = None,
         plan_cards=None,
         idempotency: IdempotencyStore | None = None,
+        memory_provider=None,
+        after_turn=None,
     ) -> None:
         self.provider = provider
         self.store = store
@@ -152,6 +155,12 @@ class ChatService:
         self.plan_cards = plan_cards
         # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
         self.idempotency = idempotency
+        # 记忆检索回调：(elder_id, 这一轮老人说的话) → 已格式化的记忆短句。
+        # 做成回调而不是直接依赖 memory 模块，是为了让编排层仍然只依赖接口
+        self.memory_provider = memory_provider
+        # 一轮成功产出后的钩子（自动整理记忆用）。它在 done 事件之前执行，
+        # 所以**必须很快**——慢一步老人就多等一步（模型抽取那部分由 main.py 另行后台跑）
+        self.after_turn = after_turn
 
     # ------------------------------------------------------------ 事件流
 
@@ -165,6 +174,10 @@ class ChatService:
     ) -> AsyncIterator[tuple[str, dict]]:
         """产出一轮对话的事件序列：meta → (token | sticker)* → done / error。"""
         persona = self.personas.get(persona_id)
+        # 单老人原型：调用方没给 elder_id 时落到默认档案。
+        # 不这么做的话，少传一个参数就会**静默丢掉 L1 档案与 L2/L3 记忆**——
+        # 表现是"智能体突然不记得我是谁了"，且极难排查
+        elder_id = elder_id or DEFAULT_ELDER_ID
 
         # ── 幂等闸门放在最前面 ──
         # 端侧网络抖动重试时会复用同一个 clientMsgId：命中缓存就直接回放，
@@ -212,7 +225,7 @@ class ChatService:
             "persona": persona.to_public(),
         }
 
-        messages = self._build_messages(conversation_id, persona, elder_id)
+        messages = self._build_messages(conversation_id, persona, elder_id, text)
         streamer = StyleStreamer()
         extractor = StickerExtractor()
         # 本轮产出的片段，按顺序落库：正文 / 表情（顺序与端上看到的完全一致）
@@ -296,6 +309,14 @@ class ChatService:
                     assistant_msg_id=assistant_id,
                 )
                 completed = True
+
+            # 自动整理记忆（L2/L3）：默认关着；开了也只做规则抽取，很快。
+            # 放在 done 之前是为了"这一轮说过的事"立刻可检索；模型抽取那部分另行后台跑
+            if self.after_turn is not None and elder_id and (text or "").strip():
+                try:
+                    await self.after_turn(elder_id, text)
+                except Exception:  # noqa: BLE001 —— 记忆整理失败不能影响这一轮对话
+                    logger.warning("本轮记忆整理失败，已忽略", exc_info=True)
 
             yield events.EVENT_DONE, {"assistantMsgId": assistant_id, "finishReason": "stop"}
 
@@ -421,10 +442,24 @@ class ChatService:
 
     # ---------------------------------------------------------------- 内部
 
-    def _build_messages(self, conversation_id: str, persona, elder_id: str | None) -> list[dict]:
+    def _build_messages(
+        self,
+        conversation_id: str,
+        persona,
+        elder_id: str | None,
+        query_text: str = "",
+    ) -> list[dict]:
         elder = self.elder_profiles.get(elder_id) if elder_id else None
+        # L2/L3：按这一轮老人说的话检索相关往事与偏好（取不到就什么都不注入）
+        memories: list[str] = []
+        if self.memory_provider and elder_id and query_text:
+            try:
+                memories = self.memory_provider(elder_id, query_text) or []
+            except Exception:  # noqa: BLE001 —— 记忆取不到绝不能影响对话本身
+                logger.exception("记忆检索失败，本轮不注入记忆")
+                memories = []
         messages: list[dict] = [
-            {"role": "system", "content": build_system_prompt(persona, elder)}
+            {"role": "system", "content": build_system_prompt(persona, elder, memories)}
         ]
         limit = max(2, self.settings.history_turns * 2 + 2)
         for message in self.store.history(conversation_id, limit=limit):

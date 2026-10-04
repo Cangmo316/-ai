@@ -28,7 +28,7 @@
 - 提交信息写入 UTF-8 文件后用 `git commit -F` 传入，避免控制台编码导致乱码
 - 改动 `server/app/knowledge/guidelines.yaml` 后必须跑 `node server/app/knowledge/validate.mjs`
 - **改动 `uni-app/api/`、`uni-app/stores/`、`uni-app/pages/` 或 `tools/mock-server.mjs`
-  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13 + 鉴权与错误码 10 + 家人端 25 + 捏脸参数面板 20，共 132 项）
+  后必须跑 `npm test`**（仓库根目录；零 npm 依赖，含 SSE 契约 25 + 话术规则 6 + 对话状态机 13 + 计划打卡 10 + 到点提醒 10 + 推送登记 13 + 记忆契约 11 + 鉴权与错误码 10 + 家人端 25 + 捏脸参数面板 20，共 143 项）
 - **改 `uni-app/common/face/` 或 `uni-app/pages/face/` 后另外必须跑 `npm run test:face`**：
   它直接读 `uni-app/static/avatar/*.glb`，守住「面板目录 ↔ 参数表 ↔ 适老裁剪 ↔ 真实资产」四者一致
   （参数改名、漏导出、裁剪表与参数表口径分歧都会被抓住）
@@ -47,9 +47,18 @@
 - 后端未就绪时的联调靶子：`node tools/mock-server.mjs`（实现同一份契约）；
   仓库根 `package.json` 只为 `tools/` 提供 ESM 运行环境与快捷命令，`uni-app/` 工程仍零 npm 依赖
 - **改动 `server/app/` 或 `server/tests/` 后必须跑**
-  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（203 项，零测试依赖）
+  `cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .`（238 项，零测试依赖）
 - 跨语言端到端回归：先起 `server/run.py`，再
-  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs; node tools/test-push-store.mjs; node tools/test-auth.mjs; node tools/test-family-flows.mjs`
+  `$env:BILIN_TEST_BASE_URL='http://127.0.0.1:8000'; node tools/test-chat-store.mjs; node tools/test-plan-store.mjs; node tools/test-reminder-store.mjs; node tools/test-push-store.mjs; node tools/test-memory-store.mjs; node tools/test-auth.mjs; node tools/test-family-flows.mjs`
+- **三层记忆有三条隐私硬约束**（设计方案 §3.4，改 `server/app/memory/` 或 `tools/mock-server.mjs`
+  的记忆路由后必须确认 `server/tests/test_memory.py` 与 `node tools/test-memory-store.mjs` 全绿）：
+  1. `source=auto`（从聊天自动整理）的记忆 **`visibleToFamily=false`**：`scope=family` 不返回，
+     否则"家人端默认看不到聊天原文"会被记忆绕过去
+  2. `review=pending`（置信度 < 0.75）**不参与检索、不用于主动话题**，只等家属复核
+  3. `autoExtract` **默认关**：开启才算"已告知本人"（服务端记 `consentedAt`）；
+     且**端侧不提供记忆写入入口**，写入只能走家人端或对话自动整理
+- **记忆检索的分数口径只有一个入口**：`server/app/memory/retrieval.py` 的 `score()`。
+  现在是"标签/词组重合 + 时间衰减"（零依赖、可解释），换向量检索只改这一处
 - **对外提供服务前必须开鉴权**：`server/.env` 里设 `AUTH_MODE=required` 并配 `API_TOKENS`（端侧用 `setApiToken()`）；
   否则任何能访问到端口的人都能读健康档案、改计划、发提醒
 - **模型 key 只放 `server/.env`**（已 gitignore，含 `server/.env.*`）；

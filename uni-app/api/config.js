@@ -50,7 +50,13 @@ export const ENDPOINTS = {
   // 推送标识登记（uni-push 2.0）：端侧把 cid 报给服务端，服务端才知道提醒发到哪台设备
   pushRegister: '/v1/push/register',
   pushUnregister: '/v1/push/unregister',
-  pushStatus: '/v1/push/status'
+  pushStatus: '/v1/push/status',
+  // 三层记忆（P2）：L2 经历 / L3 偏好。老人端只读，写入由家人端或对话自动整理
+  memories: '/v1/memories',
+  memoryClear: '/v1/memories/clear',
+  memoryReview: '/v1/memories/review',
+  memorySettings: '/v1/memories/settings',
+  memoryTopics: '/v1/memories/topics'
 }
 
 /** 超时（ms）：首字节超时用看门狗实现，总超时只作用于非流式接口 */

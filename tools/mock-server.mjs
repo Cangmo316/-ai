@@ -528,6 +528,48 @@ export function startMockServer(options = {}) {
   const reminders = createReminderState()
   const pushClients = new Map()
 
+// ── 三层记忆（P2）：L2 经历 / L3 偏好 ─────────────────────────────// 种子数据刻意包含一条 source=auto 且待复核的，用来验证端侧与家人端**都看不到它**：
+// 这条口径（自动整理的内容默认家属不可见、未复核不进检索）是隐私边界，mock 必须跟真服务一致
+/** 中文粗切分：字符二元组。mock 的检索只是"量级近似"，不求与真服务同分 */
+function bigrams(text) {
+  const clean = String(text || '').replace(/[\s，。！？、,.!?：:；;]/g, '')
+  const out = []
+  for (let i = 0; i < clean.length - 1; i += 1) out.push(clean.slice(i, i + 2))
+  return out.length ? out : [clean]
+}
+
+const memoryState = {
+  seq: 4,
+  autoExtract: false,
+  consentedAt: '',
+  entries: [
+    {
+      id: 'mem_1', elderId: 'e_1', kind: 'experience', kindLabel: '经历',
+      text: '老人 2023 年跟儿子去过海南', tags: ['儿子', '旅行'],
+      source: 'family', sourceLabel: '家里人填写', confidence: 1, review: 'approved',
+      visibleToFamily: true, happenedAt: '2023年'
+    },
+    {
+      id: 'mem_2', elderId: 'e_1', kind: 'preference', kindLabel: '喜好',
+      text: '老人爱听戏，尤其爱听评剧', tags: ['戏曲', '评剧'],
+      source: 'elder', sourceLabel: '老人自己说的', confidence: 0.9, review: 'approved',
+      visibleToFamily: true, happenedAt: ''
+    },
+    {
+      id: 'mem_3', elderId: 'e_1', kind: 'preference', kindLabel: '喜好',
+      text: '老人喜欢下棋', tags: ['下棋'],
+      source: 'auto', sourceLabel: '从聊天里整理', confidence: 0.88, review: 'approved',
+      visibleToFamily: false, happenedAt: ''
+    },
+    {
+      id: 'mem_4', elderId: 'e_1', kind: 'experience', kindLabel: '经历',
+      text: '老人好像提过老家有座石桥', tags: ['老家'],
+      source: 'auto', sourceLabel: '从聊天里整理', confidence: 0.4, review: 'pending',
+      visibleToFamily: false, happenedAt: ''
+    }
+  ]
+}
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'))
     state.requests += 1
@@ -857,6 +899,197 @@ export function startMockServer(options = {}) {
         totals: { clients: pushClients.size, enabled: pushClients.size, elders: clients.length ? 1 : 0 },
         note: 'mock 只登记 cid，不真的发推送'
       })
+      return
+    }
+
+    // ── 三层记忆（P2）──────────────────────────────────────────────
+    // 与真服务同一份口径：默认只回家属可见的；待复核的默认不出现也不参与检索
+    if (url.pathname === '/v1/memories' && req.method === 'GET') {
+      const elderId = url.searchParams.get('elderId') || 'e_1'
+      const kind = url.searchParams.get('kind')
+      const q = url.searchParams.get('q')
+      const scope = url.searchParams.get('scope') || 'family'
+      const includePending = url.searchParams.get('includePending') === 'true'
+      const limit = Number(url.searchParams.get('limit') || 50)
+
+      const mine = memoryState.entries.filter((entry) => entry.elderId === elderId)
+      const pendingCount = mine.filter((entry) => entry.review === 'pending').length
+
+      if (q) {
+        // mock 用"字符二元组命中数"近似真服务的相关性检索，只求量级一致，不求同分
+        const grams = bigrams(q)
+        const ranked = mine
+          .filter((entry) => entry.review === 'approved')
+          .map((entry) => {
+            const hay = entry.text + ' ' + (entry.tags || []).join(' ')
+            let hits = 0
+            grams.forEach((gram) => { if (hay.includes(gram)) hits += 1 })
+            return { entry, score: hits ? Number((hits / Math.max(1, grams.length)).toFixed(3)) : 0 }
+          })
+          .filter((row) => row.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit)
+        sendJSON(res, 200, {
+          elderId, query: q, scope, count: ranked.length,
+          memories: ranked.map((row) => Object.assign({}, row.entry, { score: row.score }))
+        })
+        return
+      }
+
+      let entries =
+        scope === 'all'
+          ? mine.slice()
+          : mine.filter((entry) => entry.review === 'approved' && entry.visibleToFamily)
+      if (!includePending) entries = entries.filter((entry) => entry.review !== 'pending')
+      if (kind) entries = entries.filter((entry) => entry.kind === kind)
+      sendJSON(res, 200, {
+        elderId, scope, count: entries.slice(0, limit).length,
+        memories: entries.slice(0, limit),
+        pendingCount
+      })
+      return
+    }
+
+    if (url.pathname === '/v1/memories' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const text = String((body && body.text) || '').trim()
+        if (!text) {
+          sendJSON(res, 400, { error: { code: 'memory_empty', message: '要记的内容不能是空的', retryable: false } })
+          return
+        }
+        const kind = (body && body.kind) || 'experience'
+        if (!['experience', 'preference', 'profile'].includes(kind)) {
+          sendJSON(res, 422, { error: { code: 'invalid_request', message: '记忆种类不合法', retryable: false } })
+          return
+        }
+        const source = (body && body.source) || 'family'
+        const entry = {
+          id: 'mem_' + (++memoryState.seq),
+          elderId: (body && body.elderId) || 'e_1',
+          kind,
+          kindLabel: { experience: '经历', preference: '喜好', profile: '习惯' }[kind],
+          text,
+          tags: Array.isArray(body && body.tags) ? body.tags : [],
+          source,
+          sourceLabel: { family: '家里人填写', elder: '老人自己说的', auto: '从聊天里整理' }[source] || source,
+          confidence: 1,
+          review: 'approved',
+          visibleToFamily: source !== 'auto',
+          happenedAt: (body && body.happenedAt) || ''
+        }
+        memoryState.entries.push(entry)
+        sendJSON(res, 200, { memory: entry, notice: '已记住，之后对话里会自然用到' })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname.startsWith('/v1/memories/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.replace('/v1/memories/', ''))
+      const index = memoryState.entries.findIndex((entry) => entry.id === id)
+      if (index < 0) {
+        sendJSON(res, 404, { error: { code: 'memory_not_found', message: '没找到这条记忆', retryable: false } })
+        return
+      }
+      memoryState.entries.splice(index, 1)
+      sendJSON(res, 200, { ok: true, notice: '已删除，对话里不会再提到它' })
+      return
+    }
+
+    if (url.pathname.startsWith('/v1/memories/') && req.method === 'PATCH') {
+      const id = decodeURIComponent(url.pathname.replace('/v1/memories/', ''))
+      readBody(req).then((body) => {
+        const entry = memoryState.entries.find((row) => row.id === id)
+        if (!entry) {
+          sendJSON(res, 404, { error: { code: 'memory_not_found', message: '没找到这条记忆', retryable: false } })
+          return
+        }
+        const text = body && body.text !== undefined ? String(body.text).trim() : null
+        if (text !== null && !text) {
+          sendJSON(res, 400, { error: { code: 'memory_empty', message: '要记的内容不能是空的', retryable: false } })
+          return
+        }
+        if (text) entry.text = text
+        if (body && Array.isArray(body.tags)) entry.tags = body.tags
+        if (body && body.visibleToFamily !== undefined) entry.visibleToFamily = !!body.visibleToFamily
+        if (body && body.happenedAt !== undefined) entry.happenedAt = body.happenedAt
+        sendJSON(res, 200, { memory: entry })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/memories/clear' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const elderId = (body && body.elderId) || 'e_1'
+        const before = memoryState.entries.length
+        memoryState.entries = memoryState.entries.filter((entry) => entry.elderId !== elderId)
+        sendJSON(res, 200, { ok: true, removed: before - memoryState.entries.length, notice: '这位老人的记忆已清空' })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/memories/review' && req.method === 'POST') {
+      readBody(req).then((body) => {
+        const entry = memoryState.entries.find((row) => row.id === ((body && body.id) || ''))
+        if (!entry) {
+          sendJSON(res, 404, { error: { code: 'memory_not_found', message: '没找到这条记忆', retryable: false } })
+          return
+        }
+        const approve = !(body && body.approve === false)
+        entry.review = approve ? 'approved' : 'rejected'
+        sendJSON(res, 200, {
+          memory: entry,
+          notice: approve ? '已通过，之后可以用它主动关心' : '已否决，不会再使用'
+        })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/memories/settings' && req.method === 'GET') {
+      sendJSON(res, 200, {
+        settings: {
+          elderId: url.searchParams.get('elderId') || 'e_1',
+          autoExtract: memoryState.autoExtract,
+          consentedAt: memoryState.consentedAt,
+          notice: '从聊天自动整理记忆需要先明确告知本人并在这里开启；关闭后不再新增，已入库的仍可单条删除或一键清空'
+        }
+      })
+      return
+    }
+
+    if (url.pathname === '/v1/memories/settings' && req.method === 'PUT') {
+      readBody(req).then((body) => {
+        if (body && body.autoExtract !== undefined) {
+          memoryState.autoExtract = !!body.autoExtract
+          if (memoryState.autoExtract && !memoryState.consentedAt) memoryState.consentedAt = localStamp(new Date())
+        }
+        sendJSON(res, 200, {
+          settings: {
+            elderId: (body && body.elderId) || 'e_1',
+            autoExtract: memoryState.autoExtract,
+            consentedAt: memoryState.consentedAt
+          }
+        })
+      }).catch((err) => sendJSON(res, 400, { error: { code: 'bad_request', message: err.message } }))
+      return
+    }
+
+    if (url.pathname === '/v1/memories/topics' && req.method === 'GET') {
+      const elderId = url.searchParams.get('elderId') || 'e_1'
+      const limit = Number(url.searchParams.get('limit') || 5)
+      const weights = new Map()
+      memoryState.entries
+        .filter((entry) => entry.elderId === elderId && entry.review === 'approved')
+        .forEach((entry) => {
+          const boost = (entry.source !== 'auto' ? 1 : 0.7) + (entry.kind === 'preference' ? 0.3 : 0)
+          ;(entry.tags.length ? entry.tags : [entry.text.slice(0, 8)]).forEach((tag) => {
+            const row = weights.get(tag) || { topic: tag, weight: 0, from: [] }
+            row.weight = Number((row.weight + boost).toFixed(2))
+            if (row.from.length < 3) row.from.push(entry.text)
+            weights.set(tag, row)
+          })
+        })
+      const topics = Array.from(weights.values()).sort((a, b) => b.weight - a.weight).slice(0, limit)
+      sendJSON(res, 200, { elderId, topics })
       return
     }
 

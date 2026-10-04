@@ -102,8 +102,18 @@ class PersonaRegistry:
         return list(self._personas.values())
 
 
-def build_system_prompt(persona: Persona, elder: dict | None = None) -> str:
-    """拼 system prompt。elder 是 L1 档案（P2 接记忆系统后由 memory 模块提供）。"""
+def build_system_prompt(
+    persona: Persona,
+    elder: dict | None = None,
+    memories: list[str] | None = None,
+) -> str:
+    """拼 system prompt。
+
+    - `elder`：L1 档案（姓名/年龄/慢病/用药/称呼），每轮都注入
+    - `memories`：L2/L3 里**按相关性检索出来的几条**（已格式化好的短句，带来源），
+      由 `app/memory/retrieval.py` 的 `describe()` 生成——**不整库塞进去**，
+      否则上下文会被几十条记忆淹没，模型反而抓不住重点
+    """
     address = persona.address
     lines: list[str] = []
 
@@ -120,6 +130,13 @@ def build_system_prompt(persona: Persona, elder: dict | None = None) -> str:
             lines.append("")
             lines.append("【你记得的事】")
             lines.extend("- " + item for item in facts)
+
+    # L2/L3：本轮相关的往事与喜好。只在与当前话题相关时自然带出
+    if memories:
+        lines.append("")
+        lines.append("【你想起的往事（只在跟当前话题相关时自然带一句，别硬提、别罗列）】")
+        lines.extend("- " + item for item in memories)
+        lines.append(f"- 这些是记录，不是台词：{address}没提起就别主动翻旧账；记错了宁可不提，绝不要编")
 
     lines.append("")
     lines.append("【怎么说话】")

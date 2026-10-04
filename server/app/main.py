@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,6 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .api.chat import router as chat_router
+from .api.memories import router as memories_router
 from .api.plans import router as plans_router
 from .api.push import router as push_router
 from .api.reminders import router as reminders_router
@@ -34,6 +36,7 @@ from .errors import code_for_status
 from .errors import table as error_table
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
+from .memory import MemoryStore, describe, extract_with_llm, remember_candidates, remember_from_turn, search
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .models.push_client import PushClientRegistry
@@ -76,6 +79,8 @@ def create_app(
     elders = ElderStore()
     # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
     idempotency = IdempotencyStore()
+    # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）
+    memories = MemoryStore()
 
     if knowledge is None:
         try:
@@ -130,6 +135,38 @@ def create_app(
             )
         return cards
 
+    def memories_for(elder_id: str, query: str) -> list[str]:
+        """L2/L3：按当前这句话检索相关往事与偏好，取 Top-K 格式化成提示词用的一行行。
+
+        只取"已复核可用"的记忆；待复核的绝不进上下文（设计方案 §3.4 的硬要求）。
+        """
+        return [describe(entry) for entry, _ in search(memories, elder_id, query, limit=5)]
+
+    async def after_turn(elder_id: str, elder_text: str) -> None:
+        """一轮对话产出后的记忆整理。
+
+        两道闸门：① 开关默认关着（需明确告知本人后在家属端打开）
+                 ② 规则抽取同步做（微秒级，不拖慢这一轮）；模型抽取丢后台
+        """
+        settings = memories.settings_for(elder_id)
+        if not settings.auto_extract:
+            return
+        await remember_from_turn(memories, settings, elder_id, elder_text)
+
+        if not config.uses_real_model:
+            return
+
+        async def refine() -> None:
+            # 模型抽取要调一次 LLM（秒级），绝不能挂在 done 事件前面
+            try:
+                candidates = await extract_with_llm(llm, elder_text)
+                if candidates:
+                    remember_candidates(memories, elder_id, candidates)
+            except Exception:  # noqa: BLE001
+                logger.warning("模型整理记忆失败（不影响对话）", exc_info=True)
+
+        asyncio.create_task(refine())
+
     service = ChatService(
         llm,
         conversations,
@@ -139,6 +176,8 @@ def create_app(
         elder_profiles=elders.elders,
         plan_cards=plan_cards_for,
         idempotency=idempotency,
+        memory_provider=memories_for,
+        after_turn=after_turn,
     )
 
     @asynccontextmanager
@@ -188,6 +227,7 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.push_clients = push_clients
     app.state.idempotency = idempotency
+    app.state.memories = memories
     # 全局时间源：调度器与各路由都用它取"现在"，避免出现"路由按真实时间、调度按注入时间"
     # 这种只有测试才会暴露的分裂（踩过一次：手动 tick 到 15 点，打卡却按真实日期去找提醒）
     app.state.clock = scheduler.now
@@ -205,6 +245,7 @@ def create_app(
     app.include_router(plans_router)
     app.include_router(reminders_router)
     app.include_router(push_router)
+    app.include_router(memories_router)
 
     # 家人端最小版（静态页）：只用浏览器就能确认计划，不用装 HBuilderX。
     # 它 import 的是 /uni-app/api 那一层客户端，所以契约只有一份实现。
@@ -266,6 +307,7 @@ def create_app(
                 "note": "auto=配了 API_TOKENS 才校验；上线请用 required",
             },
             "idempotency": idempotency.counts(),
+            "memory": memories.counts(),
             "endpoints": [
                 "POST /v1/chat/stream",
                 "POST /v1/chat/send",
@@ -290,6 +332,13 @@ def create_app(
                 "POST /v1/push/unregister",
                 "GET  /v1/push/status",
                 "GET  /v1/errors",
+                "GET  /v1/memories",
+                "POST /v1/memories",
+                "PATCH/DELETE /v1/memories/{id}",
+                "POST /v1/memories/clear",
+                "POST /v1/memories/review",
+                "GET/PUT /v1/memories/settings",
+                "GET  /v1/memories/topics",
             ],
         }
 
