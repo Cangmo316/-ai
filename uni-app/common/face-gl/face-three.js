@@ -43,7 +43,7 @@ const FOV = 30
 const MAX_DPR = 2
 
 /** 构图留白系数。按包围盒算出的贴合距离再放大一点，避免头顶／下巴贴边。 */
-const FIT_MARGIN = 1.25
+const FIT_MARGIN = 2.2   // ⚠️ 实测调参：1.25 时 Q 版医生资产在横画布预览里只露出上半张脸（见任务笔记）
 
 /**
  * 取景框向下越过 head 骨的长度，单位是「头高」。露一点脖子与肩，
@@ -258,22 +258,51 @@ export function createFaceStage(opt) {
     const bodyH = body.max.y - body.min.y
     // 兜底：拿不到 head 骨时按「身高 1/7.5 是头」的经验比例推一个
     if (!(headY > body.min.y && headY < body.max.y)) headY = body.max.y - bodyH / 7.5
-    const headH = Math.max(1e-4, body.max.y - headY)
-    // ⚠️ 构图余量要**按头身比自适应**：原来固定 FOCUS_BELOW_HEAD=0.45 是按**成人 7.5 头身**调的，
-    //    换成卡通角色（约 2.5 头身、头占身高 ~40%）时，往下只留 0.45 个头高会把**半张脸切掉**
-    //    （实测：新男生资产在捏脸页预览里只露出头发与额头）。头越大，往下要留得越多。
-    const headRatio = headH / Math.max(bodyH, 1e-6)          // 头占身高的比例
+
+    // ⚠️ **不要只信 head 骨**（2026-10-05 换成 Q 版医生资产时踩到）：
+    //    head 骨在"下巴稍下"，而 Q 版角色的**头发体积很高**，于是"单头高度"被算小
+    //    （实测 headRatio 只有 0.13，而真实头身比约 0.3~0.4），取景框偏上、**下半张脸被切**。
+    //    这里改成**用几何实测头高**：取"头顶到下巴"的 z 跨度——头顶取 body 顶点最高处，
+    //    下巴用 head 骨往下一点（骨在下巴附近，往下 10% 身高兜住下巴）。
+    const chinGuess = Math.min(headY + bodyH * 0.02, body.max.y - bodyH * 0.05)
+    const headTop = body.max.y
+    const measuredHeadH = Math.max(headTop - chinGuess, bodyH * 0.15)
+    // 两个估计取**更大**的那个（宁可多留，不要切脸）
+    const headH = Math.max(Math.max(1e-4, headTop - headY), measuredHeadH)
+    // 构图余量按头身比自适应（成人 7.5 头身 → 余量小；Q 版大头 → 余量大）
+    const headRatio = headH / Math.max(bodyH, 1e-6)
     const below = FOCUS_BELOW_HEAD * Math.max(1, 0.22 / Math.max(headRatio, 1e-6))
-    const cutY = headY - below * headH
+    const cutY = headTop - headH - below * headH * 0.35
     const head = boxAbove(root, cutY)
     let box = head.isEmpty() ? body : head
-    // ⚠️ 头部包围盒要**再放宽一点**：`headY` 来自 head 骨，而 Q 版角色的**头发体积**在骨上方
-    //    很高（实测女医 headRatio 只算出 0.13，取景框偏上、把半张脸切掉）。
-    //    这里把取景盒按 1.25 倍放大并以盒中心为基准，保证整个头（含头发）都在框内。
+    // 头部包围盒再放宽一点（头发、耳朵与侧转余量）
     {
       const center0 = box.getCenter(new THREE.Vector3())
       const size0 = box.getSize(new THREE.Vector3())
-      size0.multiplyScalar(1.25)
+      size0.multiplyScalar(1.15)
+      const min = center0.clone().sub(size0.clone().multiplyScalar(0.5))
+      const max = center0.clone().add(size0.clone().multiplyScalar(0.5))
+      box = new THREE.Box3(min, max)
+    }
+    // ⚠️ 最后一步关键：把取景盒**补成与画布同纵横比**。
+    //    预览区是横的（aspect≈1.37），若盒子比画布更"方"，等比取景会按宽度对齐、
+    //    竖直方向溢出 → 脸被切。按画布 aspect 补高（或补宽）即可彻底消除这类裁切。
+    {
+      const canvas = measure()
+      const aspect = canvas.h > 0 ? canvas.w / canvas.h : 1
+      const center0 = box.getCenter(new THREE.Vector3())
+      const size0 = box.getSize(new THREE.Vector3())
+      const width = Math.max(size0.x, size0.z, 1e-4)
+      const height = Math.max(size0.y, 1e-4)
+      // 需要的世界高 = 宽 / aspect（横画布下通常要更高）
+      const neededH = width / Math.max(aspect, 1e-4)
+      const neededW = height * aspect
+      if (neededH > height) size0.y = neededH
+      if (neededW > width) {
+        const grow = neededW / width
+        size0.x *= grow
+        size0.z *= grow
+      }
       const min = center0.clone().sub(size0.clone().multiplyScalar(0.5))
       const max = center0.clone().add(size0.clone().multiplyScalar(0.5))
       box = new THREE.Box3(min, max)
@@ -620,6 +649,33 @@ export function createFaceStage(opt) {
   return {
     version: FACE_THREE_VERSION,
     canvas,
+    /** 诊断用：暴露渲染器内部状态（排"取景裁切"这类问题时不必再靠猜） */
+    debug() {
+      const info = renderer && renderer.info ? renderer.info : null
+      const size = new THREE.Vector2()
+      if (renderer) renderer.getSize(size)
+      return {
+        canvasCss: measure(),
+        rendererSize: { w: size.x, h: size.y },
+        pixelRatio: renderer ? renderer.getPixelRatio() : null,
+        camera: camera ? {
+          pos: [+camera.position.x.toFixed(4), +camera.position.y.toFixed(4), +camera.position.z.toFixed(4)],
+          fov: camera.fov, near: +camera.near.toFixed(4), far: +camera.far.toFixed(3),
+          aspect: +camera.aspect.toFixed(4),
+        } : null,
+        focus: focus ? {
+          center: [+focus.center.x.toFixed(4), +focus.center.y.toFixed(4), +focus.center.z.toFixed(4)],
+          size: [+focus.size.x.toFixed(4), +focus.size.y.toFixed(4), +focus.size.z.toFixed(4)],
+        } : null,
+        rootPos: root ? [+root.position.x.toFixed(4), +root.position.y.toFixed(4), +root.position.z.toFixed(4)] : null,
+        spin: typeof spinGroup !== 'undefined' && spinGroup ? {
+          pos: [+spinGroup.position.x.toFixed(4), +spinGroup.position.y.toFixed(4), +spinGroup.position.z.toFixed(4)],
+          rotY: +spinGroup.rotation.y.toFixed(4),
+        } : null,
+        calls: info ? info.render.calls : null,
+        triangles: info ? info.render.triangles : null,
+      }
+    },
     load: loadSafe,
     resize,
     rotate,
