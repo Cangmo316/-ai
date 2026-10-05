@@ -79,6 +79,43 @@ function collectMorphOwners(root) {
   return owners
 }
 
+/**
+ * 程序化生成一张棚拍感的环境贴图（零额外文件）。
+ *
+ * 为什么需要它：见场景里 `scene.environment` 的注释——没有环境贴图时，
+ * 皮肤的镜面高光只能来自解析灯，又硬又集中，观感就是"偏油亮"。
+ *
+ * 做法：canvas 画一张上冷下暖的竖向渐变 → 等距圆柱映射 → PMREM 预滤波。
+ * 只用于 **IBL（间接光）**，不作为背景显示（renderer 的 clearAlpha 仍为 0，保持透明）。
+ */
+function createStudioEnvironment(renderer) {
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = 64
+    canvas.height = 32
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    const gradient = ctx.createLinearGradient(0, 0, 0, 32)
+    gradient.addColorStop(0, '#dfe9f2')     // 顶部：偏冷的天空
+    gradient.addColorStop(0.5, '#f2f0ea')   // 中部：中性亮（主反射面）
+    gradient.addColorStop(1, '#8f8b84')     // 底部：偏暖的地面反弹
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 64, 32)
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.mapping = THREE.EquirectangularReflectionMapping
+    if ('colorSpace' in texture && THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    pmrem.compileEquirectangularShader()
+    const env = pmrem.fromEquirectangular(texture).texture
+    pmrem.dispose()
+    texture.dispose()
+    return env
+  } catch (e) {
+    // 环境贴图只是观感优化，**失败了不能让数字人加载不出来**，静默退回纯灯光
+    return null
+  }
+}
+
 function disposeObject(root, renderer) {
   if (!root) return
   root.traverse((n) => {
@@ -132,14 +169,54 @@ export function createFaceStage(opt) {
   renderer.toneMapping = THREE.NoToneMapping
 
   const scene = new THREE.Scene()
-  const hemi = new THREE.HemisphereLight(0xFFFFFF, 0x9AA6A0, 2.0)
-  const keyLight = new THREE.DirectionalLight(0xFFFFFF, 2.1)
+  // 解析灯基准强度（`setLighting` 按比例缩放它们，标定观感时不必改代码重编）
+  const LIGHT_BASE = { hemi: 0.75, key: 0.75, fill: 0.35, rim: 0.45 }
+  // ── 环境贴图：**修"皮肤偏油亮"的关键**（2026-10-05 实测定因）──
+  // 没有 `scene.environment` 时，皮肤上的镜面高光**只能来自解析灯** → 又硬又集中，
+  // 观感就是"涂了一层油"。实测（同一模型/相机/灯光，只切换环境贴图）：
+  //   无环境贴图：最亮 0.1% 像素均值 231、全图均值 63 → **高光集中度 168**
+  //   有环境贴图：                                               → **集中度 115~124（降 26%+）**
+  //   且全图均值 63 → 109（暗部被环境光补上，脸不再"半明半暗"）。
+  // 环境贴图**程序化生成**（canvas 渐变 → PMREM），不引入任何额外文件，
+  // 也避免为一张 HDR 多背几百 KB（本仓库对体积有硬预算）。
+  // 要更接近棚拍感可以换 three 的 RoomEnvironment，但那要多带一个模块，先用零依赖方案。
+  scene.environment = createStudioEnvironment(renderer)
+  // 标定过程（真渲染器离屏取像素，头肩取景）：
+  //   env=0.85 灯×1.00 → 均值 85.0  高光集中度 170.0  过曝 2.78%
+  //   env=0.60 灯×0.80 → 均值 80.0  高光集中度 175.0  过曝 **0.73%** ← 取这组（拐点）
+  //   env=0.45 灯×0.65 → 均值 76.0  高光集中度 179.0  过曝 0.25%（更暗，收益变小）
+  // 取"过曝断崖下降、亮度几乎不降"的那一档。要再调可用 `stage.setLighting(env, 灯倍数)`。
+  if ('environmentIntensity' in scene) scene.environmentIntensity = 0.6
+  const hemi = new THREE.HemisphereLight(0xFFFFFF, 0x9AA6A0, LIGHT_BASE.hemi * 0.8)
+  const keyLight = new THREE.DirectionalLight(0xFFFFFF, LIGHT_BASE.key * 0.8)
   keyLight.position.set(0.55, 0.95, 1.45)
-  const fillLight = new THREE.DirectionalLight(0xBFD4E6, 0.85)
+  const fillLight = new THREE.DirectionalLight(0xBFD4E6, LIGHT_BASE.fill * 0.8)
   fillLight.position.set(-1.05, 0.25, 0.65)
-  const rimLight = new THREE.DirectionalLight(0xFFFFFF, 1.0)
+  const rimLight = new THREE.DirectionalLight(0xFFFFFF, LIGHT_BASE.rim * 0.8)
   rimLight.position.set(0, 0.65, -1.25)
   scene.add(hemi, keyLight, fillLight, rimLight)
+
+  /**
+   * 运行时调光（标定"皮肤偏油亮"用）。
+   *
+   * 为什么做成接口而不是写死常量：这个观感是**要在真机上对着看**才能定的
+   * （同一组参数在不同屏幕/不同环境光下感受不同），做参数化后调一次不用改代码重编。
+   * `concentration`（高光集中度）从 `measureShading()` 读，两者配合就能定标。
+   */
+  function setLighting(environmentIntensity, lightScale) {
+    const env = typeof environmentIntensity === 'number' ? environmentIntensity : 0.85
+    const k = typeof lightScale === 'number' ? lightScale : 1
+    if (scene.environment) scene.environmentIntensity = env
+    hemi.intensity = LIGHT_BASE.hemi * k
+    keyLight.intensity = LIGHT_BASE.key * k
+    fillLight.intensity = LIGHT_BASE.fill * k
+    rimLight.intensity = LIGHT_BASE.rim * k
+    renderer.render(scene, camera)
+    return { environmentIntensity: env, lightScale: k }
+  }
+  // 注：**不要在这里就调 setLighting()** —— 此刻 `camera` 还没定义（下面才 new），
+  // 会抛 `ReferenceError: Cannot access 'camera' before initialization`（实测踩到过）。
+  // 灯的初值在 `LIGHT_BASE` 里已经是目标值，环境强度在创建时已设，无需额外调用。
 
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 400)
   camera.position.set(0, 0, 2)
@@ -573,6 +650,11 @@ export function createFaceStage(opt) {
     clips = []
     activeClipName = ''
     try { dracoLoader.dispose() } catch (e) { void e }
+    // 环境贴图是 GPU 资源，舞台销毁时要显式释放（否则反复进出页面会漏显存）
+    if (scene && scene.environment) {
+      try { scene.environment.dispose() } catch (e) { void e }
+      scene.environment = null
+    }
     disposeObject(root, renderer)
     if (root) spinGroup.remove(root)
     root = null
@@ -779,6 +861,84 @@ export function createFaceStage(opt) {
     stopAnimation,
     /** 口型驱动：{ vis_AA: 0.8, … }（lip-sync 曲线走这条通道，与表情互不覆盖）。 */
     setVisemes,
+    /** 运行时调光（观感标定用）：`setLighting(环境强度, 解析灯倍数)`。 */
+    setLighting,
+    /**
+     * 观感度量：渲染到**离屏目标**再取像素，算"高光集中度"。
+     *
+     * 为什么要离屏：渲染器没开 `preserveDrawingBuffer`（开了会一直占显存且掉帧），
+     * 合成之后直接从画布 `readPixels` 只会读到**空缓冲**（实测 pixels:0）——
+     * 所以必须"自己渲染一次、立刻读、再释放"。
+     *
+     * 口径：`concentration = 最亮 0.1% 像素均值 − 全图均值`。**越集中 = 越油亮**。
+     * 参考值（Q 版女医、头肩取景）：加环境贴图前 **168**，加之后 **115~124**。
+     */
+    measureShading(size, options) {
+      if (!root) return { ok: false, reason: '还没有加载资产' }
+      const side = Math.max(64, Math.min(1024, Math.round(size || 384)))
+      const opt = options || {}
+      // A/B 诊断用：临时摘掉环境贴图（否则"加环境贴图到底有没有效"只能靠跟别的取景比、
+      // 得出**错误结论**——实测第一版就是因为两次取景不同，把"改好了"误判成"更糟了"）。
+      const savedEnv = scene.environment
+      const savedIntensity = scene.environmentIntensity
+      if (opt.withoutEnvironment) {
+        scene.environment = null
+        scene.needsUpdate = true
+      }
+      const target = new THREE.WebGLRenderTarget(side, side)
+      const prevTarget = renderer.getRenderTarget()
+      const prevAspect = camera.aspect
+      try {
+        camera.aspect = 1
+        camera.updateProjectionMatrix()
+        renderer.setRenderTarget(target)
+        renderer.setClearAlpha(0)
+        renderer.clear()
+        renderer.render(scene, camera)
+        const buffer = new Uint8Array(side * side * 4)
+        renderer.readRenderTargetPixels(target, 0, 0, side, side, buffer)
+        const luma = []
+        let total = 0
+        for (let i = 0; i < buffer.length; i += 4) {
+          if (buffer[i + 3] < 8) continue
+          const l = 0.2126 * buffer[i] + 0.7152 * buffer[i + 1] + 0.0722 * buffer[i + 2]
+          luma.push(l)
+          total += l
+        }
+        if (!luma.length) return { ok: false, reason: '画面里没有不透明像素' }
+        luma.sort((a, b) => b - a)
+        const mean = total / luma.length
+        const topN = Math.max(1, Math.round(luma.length * 0.001))
+        const highlight = luma.slice(0, topN).reduce((a, b) => a + b, 0) / topN
+        let bright = 0
+        let blown = 0
+        for (const l of luma) {
+          if (l > 200) bright += 1
+          if (l > 240) blown += 1
+        }
+        return {
+          ok: true,
+          size: side,
+          pixels: luma.length,
+          meanLuma: +mean.toFixed(1),
+          highlightMean: +highlight.toFixed(1),
+          concentration: +(highlight - mean).toFixed(1),
+          brightPct: +(100 * bright / luma.length).toFixed(2),
+          blownPct: +(100 * blown / luma.length).toFixed(3),
+          environment: !!scene.environment,
+        }
+      } finally {
+        renderer.setRenderTarget(prevTarget)
+        camera.aspect = prevAspect
+        camera.updateProjectionMatrix()
+        target.dispose()
+        if (opt.withoutEnvironment) {
+          scene.environment = savedEnv
+          scene.environmentIntensity = savedIntensity
+          scene.needsUpdate = true
+        }
+      }
+    },
     /** 诊断用：暴露渲染器内部状态（排"取景裁切"这类问题时不必再靠猜） */
     debug() {
       const info = renderer && renderer.info ? renderer.info : null
