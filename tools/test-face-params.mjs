@@ -131,21 +131,33 @@ group('面板 ↔ GLB 资产一致性（直接读 static/avatar 里的 .glb）')
 
 const morphSliders = GROUPED_KEYS.map((k) => SLIDER_BY_KEY_ALL[k]).filter((m) => m.channel === 'morph')
 
-test('每个 morph 参数的 target 都真实存在于 GLB', () => {
-  assert.ok(morphSliders.length > 50, 'morph 参数只有 ' + morphSliders.length + ' 条')
+test('滑杆目录里「已接线」参数的 target 都真实存在于 GLB', () => {
+  // ⚠️ 判据在 2026-10-05 随策略变更重写：**移除 3D 捏脸**后，
+  //    面板目录里的 shape_* 参数不再由资产承担（资产只带 vis_*/expr_*）。
+  //    旧判据"每个 morph 参数（含 shape_*）的 target 都必须在 GLB 里"必然失败 —— 那正是新方案要的形态。
+  //    新判据：只校验**已接线到 vis_*/expr_* 的**参数；shape_* 参数视为"等资产/未接线"，列出但不判失败。
   const missing = []
+  let wired = 0
   for (const m of morphSliders) {
-    assert.ok(m.targets.length >= 1, m.key + ' 是 morph 通道却没有 target')
+    if (m.targets.length === 0) continue
+    const visTargets = m.targets.filter((t) => t.startsWith('vis_') || t.startsWith('expr_'))
+    if (visTargets.length === 0) continue        // shape_* 类参数：本方案不由资产承担
+    wired += 1
     assert.ok(m.targets.length <= 2, m.key + ' 的 target 超过 2 个（双向应只有 up/dn）')
-    for (const t of m.targets) if (!allMorphNames.has(t)) missing.push(m.key + '→' + t)
+    for (const t of visTargets) if (!allMorphNames.has(t)) missing.push(m.key + '→' + t)
   }
   assert.deepEqual(missing, [], '这些 target 在 GLB 里不存在：' + missing.join(', '))
+  // 注：本方案里 vis_*/expr_* 由 **lip-sync 曲线**驱动（运行时从服务端下发），
+  //     不经过捏脸面板的滑杆目录，所以这里**不要求**"必须有参数接到它们"——那是旧（捏脸）方案的口径。
+  void wired
 })
 
 test('双向参数必须 up/dn 成对（不会只导出一半）', () => {
   const broken = []
   for (const m of morphSliders) {
     if (!m.bidirectional) continue
+    // 只校验接到 vis_*/expr_* 的参数（shape_* 类参数本方案不由资产承担）
+    if (!m.targets.some((t) => t.startsWith('vis_') || t.startsWith('expr_'))) continue
     const hasUp = m.targets.some((t) => t.endsWith('_up'))
     const hasDn = m.targets.some((t) => t.endsWith('_dn'))
     if (!(hasUp && hasDn)) broken.push(m.key)
@@ -172,27 +184,40 @@ test('单向参数带 dn 目标的情况逐条报出（口径分歧，不静默�
   assert.ok(oneSided.length <= 3, '单向却有 dn 目标的参数过多（' + oneSided.length + ' 条），表与映射可能大面积脱节')
 })
 
-test('GLB 的 node_0 形变键基本被面板用上（覆盖率 ≥95%）', () => {
-  const used = new Set()
-  for (const m of morphSliders) m.targets.forEach((t) => used.add(t))
-  const unused = [...nodeMorphs].filter((n) => !used.has(n))
-  const ratio = (nodeMorphs.size - unused.length) / nodeMorphs.size
-  assert.ok(ratio >= 0.95, '覆盖率只有 ' + (ratio * 100).toFixed(1) + '%，未被使用的键：' + unused.join(', '))
+test('GLB 的形变键都是「唇形同步 + 表情」契约内的键（不夹带捏脸键）', () => {
+  // ⚠️ 判据在 2026-10-05 随策略变更(移除 3D 捏脸)重写：
+  //    旧判据是"GLB 的 shape_* 有 ≥95% 被面板滑杆用上"；现在**没有捏脸**，
+  //    资产里应当只有 vis_* / expr_*，出现 shape_* 反而说明导错件。
+  const allowed = new Set([
+    'vis_silence', 'vis_AA', 'vis_E', 'vis_I', 'vis_O', 'vis_U', 'vis_MBP', 'vis_FV',
+    'vis_L', 'vis_TH', 'vis_WQ', 'vis_RR', 'vis_SS', 'vis_KK', 'vis_NN',
+    'expr_blink_L', 'expr_blink_R', 'expr_smile', 'expr_frown', 'expr_surprise',
+    'expr_squint', 'expr_brow_up', 'expr_brow_down',
+  ])
+  const unexpected = [...nodeMorphs].filter((n) => !allowed.has(n))
+  assert.deepEqual(unexpected, [],
+    'GLB 里有契约外的形变键（已移除捏脸，不该有 shape_*）：' + unexpected.join(', '))
+  const missing = [...allowed].filter((n) => !nodeMorphs.has(n))
+  assert.deepEqual(missing, [], '缺口型/表情键：' + missing.join(', '))
 })
 
-test('嘴部参数同时驱动口内网格（mouth_cavity / teeth / tongue）', () => {
-  const mouthTargets = ['shape_mouth_width_up', 'shape_mouth_width_dn']
-  for (const name of ['mouth_cavity', 'teeth', 'tongue']) {
+test('口内网格：本方案不要求（Q 版医生的口腔画在贴图上）', () => {
+  // ⚠️ 判据在 2026-10-05 随资产更换调整：新资产是 **Q 版医生**，
+  //    口腔/牙齿是**画在贴图上**的，没有独立的 mouth_cavity / teeth / tongue 网格。
+  //    这里不判失败，只在"有这些网格"时才校验其口型键是否齐全（保留对旧资产的守护）。
+  const present = ['mouth_cavity', 'teeth', 'tongue'].filter((name) => meshSet(name))
+  if (present.length === 0) {
+    console.log('      · 新资产没有口内网格（口腔画在贴图上），跳过该校验')
+    return
+  }
+  const mouthTargets = ['vis_AA', 'vis_O', 'vis_MBP']
+  for (const name of present) {
     const set = meshSet(name)
-    assert.ok(set, 'GLB 里没有网格 ' + name + '（现有：' + [...morphsByMesh.keys()].join(', ') + '）')
-    for (const t of mouthTargets) assert.ok(set.has(t), name + ' 缺少 ' + t)
+    for (const t of mouthTargets) {
+      assert.ok(set.has(t), name + ' 缺少 ' + t)
+    }
   }
 })
-
-/* ------------------------------------------------------------ 4. 权重规则 */
-
-group('权重规则（端侧禁止负权重）')
-
 test('正向只出 _up、负向只出 _dn，且权重恒 ≥ 0', () => {
   const bi = morphSliders.filter((m) => m.bidirectional)
   assert.ok(bi.length > 30, '双向参数只有 ' + bi.length + ' 条')

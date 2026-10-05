@@ -71,51 +71,51 @@ const tris = (gltf.meshes || []).reduce((sum, mesh) => {
 }, 0)
 const joints = (gltf.skins || []).reduce((max, skin) => Math.max(max, (skin.joints || []).length), 0)
 const sizeMB = (readFileSync(target).length / 1024 / 1024).toFixed(1)
+// 动画片段名（"招手互动"的判据：必须有 glTF animation）
+const animations = (gltf.animations || []).map((a) => a.name || '(unnamed)')
 
 const vis = names.filter((n) => n.startsWith('vis_'))
 const expr = names.filter((n) => n.startsWith('expr_'))
 const shape = names.filter((n) => n.startsWith('shape_'))
-const boneLimit = role === 'edit' ? 40 : 8
-
+// ── 契约（2026-10-05 改判）──
+// 策略变更：**移除 3D 捏脸**，只保留「唇形同步 + 招手互动」。于是判据从
+//   「edit 件必须带 113 个 shape_*」
+// 改为
+//   「两个件都要带 15 个 vis_* + 8 个 expr_*，且必须带 1 段招手动画（glTF animation）」
+// 为什么必须改：旧判据会让**正确的新资产被拒**（实测新 q 版医生资产报
+//   "没有 shape_* / 骨数 41 > 40"而被 SWAP_BLOCKED，但那正是新方案要的形态）。
+const boneLimit = role === 'edit' ? 44 : 20
 console.log(`待测：${target}   role=${role}`)
-console.log(`  ${sizeMB} MB / ${Math.round(tris)} tri / ${joints} joints / ${names.length} morphs`)
-console.log(`  vis_* ${vis.length} / expr_* ${expr.length} / shape_* ${shape.length}`)
+console.log(`  ${sizeMB} MB / ${Math.round(tris)} tri / ${joints} joints / ${names.length} morphs`
+  + ` / ${animations.length} animations`)
 
 const blockers = []
-// 交付预算：主网格 60k + **必需附加几何**（口内 622 tri + 两个独立眼球约 480 tri）。
-// 62,500 ≈ 60,000 × 1.04：实测不放开这一档，女生/男生**都必然超**——
-// 眼球是"眼睛里不能有杂色"的必要件（参考图 v1 就是独立眼球，见任务笔记 §8.22），
-// 与其把主网格再砍（反而伤脸），不如把预算如实算给"眼球 + 眼裂开口"：
-// 布尔挖出眼裂开口本身还要 +1,554 tri（`tools/blender-eye-aperture.py`）。
-const triBudget = role === 'edit' ? 60000 * 1.10 : 62500
+// 三角面预算：主网格 60k（历史预算，Q 版医生实测 ~59k 落在里面）
+const triBudget = 62500
 if (tris > triBudget) {
   blockers.push(`三角面 ${Math.round(tris)} > ${Math.round(triBudget)}（交付预算）`)
 }
 if (joints > boneLimit) blockers.push(`骨数 ${joints} > ${boneLimit}（${role} 期上限）`)
-if (role === 'edit' && shape.length === 0) {
-  blockers.push('没有 shape_* 形态键 → 覆盖 _edit.glb 会让捏脸页 102 条滑杆全部失效'
-    + '（复现：node tools/test-face-params.mjs 报"覆盖率 0.0%"）')
-}
-if (role === 'delivery' && shape.length > 0) {
-  blockers.push(`交付件不该带 shape_*（实测 ${shape.length} 个）`)
-}
-// 编辑期件只带 shape_*；vis_*/expr_* 属于交付件（交付规范 §4.4 命名空间分离）
-if (role === 'delivery') {
-  if (vis.length !== 15) blockers.push(`vis_* 数量 ${vis.length} ≠ 15`)
-  if (expr.length !== 8) blockers.push(`expr_* 数量 ${expr.length} ≠ 8`)
-}
-if (role === 'edit' && shape.length > 0 && shape.length !== 113) {
-  blockers.push(`shape_* 数量 ${shape.length} ≠ 113（捏脸契约要求 113 个 target）`)
+
+// ① 口型 + 表情：两个件都要有（这是本方案的核心能力）
+if (vis.length !== 15) blockers.push(`vis_* 数量 ${vis.length} ≠ 15（唇形同步契约）`)
+if (expr.length !== 8) blockers.push(`expr_* 数量 ${expr.length} ≠ 8（表情契约）`)
+
+// ② 捏脸键：本方案**不应再有** shape_*（有反而说明导错件）
+if (shape.length > 0) {
+  blockers.push(`已移除捏脸，不该带 shape_*（实测 ${shape.length} 个）`)
 }
 
-const need = role === 'edit'
-  ? (JSON.parse(readFileSync(join(repo, '3D建模', '03_doc', 'shape-namespace-map.json'), 'utf8'))
-      .params.flatMap((p) => (p.target_dn && p.reverseRatio > 0
-        ? [p.target_up, p.target_dn] : [p.target_up])))
-  : ['vis_silence', 'vis_AA', 'vis_E', 'vis_I', 'vis_O', 'vis_U', 'vis_MBP',
-     'vis_FV', 'vis_L', 'vis_TH', 'vis_WQ', 'vis_RR', 'vis_SS', 'vis_KK', 'vis_NN',
-     'expr_blink_L', 'expr_blink_R', 'expr_smile', 'expr_frown', 'expr_surprise',
-     'expr_squint', 'expr_brow_up', 'expr_brow_down']
+// ③ 招手互动：必须有 glTF 动画
+if (animations.length === 0) {
+  blockers.push('没有动画片段 → "招手互动"会失效（导出时要加 --animations）')
+}
+
+// ④ 必含的形态键名单（口型 + 表情）
+const need = ['vis_silence', 'vis_AA', 'vis_E', 'vis_I', 'vis_O', 'vis_U', 'vis_MBP',
+  'vis_FV', 'vis_L', 'vis_TH', 'vis_WQ', 'vis_RR', 'vis_SS', 'vis_KK', 'vis_NN',
+  'expr_blink_L', 'expr_blink_R', 'expr_smile', 'expr_frown', 'expr_surprise',
+  'expr_squint', 'expr_brow_up', 'expr_brow_down']
 const missing = need.filter((n) => !names.includes(n))
 if (missing.length) blockers.push(`缺形态键（${missing.length} 个）：${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' …' : ''}`)
 

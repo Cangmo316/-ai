@@ -5,7 +5,7 @@
 用法：
     blender --background <资产.blend> \
         --python tools/blender-env.py \
-        --python tools/blender-reduce-bones.py -- --out <输出.blend> [--report]
+        --python tools/blender-reduce-bones.py -- --out <输出.blend> [--keep-set face|arms] [--report]
 
 为什么要有这一步：交付规范与端侧判据都要求**运行期资产 ≤ 8 骨**
 （`tools/blender-validate.py` 的 `MAX_BONES_DELIVERY = 8`，
@@ -30,7 +30,20 @@ import sys
 import bpy
 import numpy as np
 
+# 交付期保留的骨骼（默认档：只有面部，用于"仅唇形同步"的旧场景）
 KEEP = ("root", "neck", "head", "jaw", "tongue", "eye.L", "eye.R")
+
+# ⚠️ 2026-10-05 新增：**"唇形同步 + 招手互动"档**必须保留左右手臂链**。
+#    原来这份名单只有 7 根面部骨、没有手臂 —— 那样**招手动画会被整段烘没**
+#    （骨骼被合并进父级后，动画曲线就找不到目标骨）。用 `--keep-set arms` 切到这一档。
+KEEP_SETS = {
+    "face": KEEP,
+    "arms": (
+        "root", "neck", "head", "jaw", "eye.L", "eye.R",
+        "clavicle.L", "upperarm.L", "forearm.L", "hand.L",
+        "clavicle.R", "upperarm.R", "forearm.R", "hand.R",
+    ),
+}
 
 
 def arg_value(name, default=None):
@@ -98,6 +111,14 @@ def connect_chain(armature, links):
 def main():
     out = arg_value("--out")
     want_report = has_flag("--report")
+    global KEEP
+    keep_set = arg_value("--keep-set", "face")
+    if keep_set in KEEP_SETS:
+        KEEP = KEEP_SETS[keep_set]
+    elif keep_set != "face":
+        # 也允许直接传逗号分隔的骨名
+        KEEP = tuple(name.strip() for name in keep_set.split(",") if name.strip())
+    print(f"  保留档位：{keep_set}（{len(KEEP)} 骨）")
     min_weight = float(arg_value("--min-weight", "0.002"))
     max_influences = int(arg_value("--max-influences", "4"))
 
