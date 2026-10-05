@@ -336,7 +336,7 @@ onMounted(() => {
     onStageError()
     return
   }
-  stageRef.load(gender.value).catch(() => onStageError())
+  stageRef.load(gender.value, 'edit', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => onStageError())
 })
 
 onUnmounted(() => {
@@ -351,7 +351,7 @@ watch(view, (v) => {
 
 // 性别切换 → 换一份 .glb（同一个舞台，只换模型）
 watch(gender, (g) => {
-  if (stageRef) stageRef.load(g).catch(() => onStageError())
+  if (stageRef) stageRef.load(g, 'edit', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => onStageError())
 })
 // #endif
 
@@ -458,7 +458,7 @@ export default {
         })
       }
       const g = state.gender || DEFAULT_GENDER
-      this.gl.load(g).catch(() => ownerInstance.callMethod('onStageError'))
+      this.gl.load(g, 'edit', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => ownerInstance.callMethod('onStageError'))
       if (state.payload) {
         try { this.gl.applyPayload(JSON.parse(state.payload)) } catch (e) { void e }
       }
@@ -469,7 +469,7 @@ export default {
     },
     onGender(value, oldValue, ownerInstance) {
       if (!this.gl) return this.bootStage(ownerInstance, ownerInstance.getState() || {})
-      this.gl.load(value).catch(() => ownerInstance.callMethod('onStageError'))
+      this.gl.load(value, 'edit', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     onPayload(value, oldValue, ownerInstance) {
       if (!value) return

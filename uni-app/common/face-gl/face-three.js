@@ -197,6 +197,56 @@ export function createFaceStage(opt) {
   scene.add(hemi, keyLight, fillLight, rimLight)
 
   /**
+   * 出厂材质默认值（**每副资产都用它**，不必各页面各传一次）。
+   *
+   * 依据（真渲染器离屏取像素，女医交付件半身取景）：
+   *   金属=1 粗糙×1.0（资产原值）→ 均值 48.4，反光面积 0.22%，过曝 0.083%，集中度 203
+   *   金属=0 粗糙×1.0           → 均值 59.1，反光面积 0.10%，过曝 0.045%
+   *   **金属=0 粗糙×1.2（采用）** → 均值 58.2，反光面积 **0.01%**，过曝 **0.006%**，集中度 **124**
+   *   金属=0 粗糙×1.5           → 均值 57.1（过曝不再降，脸开始发灰）
+   *
+   * 为什么金属度必须归零：资产自带的 metallic 贴图 B 通道偏高（男医均值 0.259、
+   * **女医均值 0.374 且 33.8% 像素 > 0.5**），而这是卡通角色的**皮肤与布料**，
+   * 物理上金属度应接近 0 —— 不归零就会有近三分之一表面被当金属渲染（"反光太强"）。
+   */
+  const DEFAULT_MATERIAL = { metalness: 0, roughnessScale: 1.2 }
+
+  function applyDefaultMaterial() {
+    if (!root) return
+    setMaterial(DEFAULT_MATERIAL)
+  }
+
+  /**
+   * 材质校正：**金属度与粗糙度**（治"反光太强/像金属"）。
+   *
+   * 实测资产自带贴图的通道分布（glTF 规范：G = 粗糙度、B = 金属度）：
+   *   男医：R 1.000（AO）/ G 0.469 / B 0.259
+   *   女医：R 1.000 / G 0.526 / **B 0.374（33.8% > 0.5）**
+   * 另注：three r160 的 `texture.channel` 对 ORM 打包图**不生效**
+   * （实测 glTF 里 metalnessMap/roughnessMap 的 `channel` 都是 0），
+   * 所以压金属度只能改**材质**的 `metalness`，改不动采样通道。
+   */
+  function setMaterial(options) {
+    const opt = options || {}
+    const metal = typeof opt.metalness === 'number' ? Math.max(0, Math.min(1, opt.metalness)) : null
+    const roughScale = typeof opt.roughnessScale === 'number' ? Math.max(0.1, Math.min(3, opt.roughnessScale)) : null
+    let touched = 0
+    scene.traverse((n) => {
+      if (!n.isMesh) return
+      const list = Array.isArray(n.material) ? n.material : [n.material]
+      for (const mat of list) {
+        if (!mat) continue
+        if (metal !== null && 'metalness' in mat) mat.metalness = metal
+        if (roughScale !== null && 'roughness' in mat) mat.roughness = roughScale
+        mat.needsUpdate = true
+        touched += 1
+      }
+    })
+    renderer.render(scene, camera)
+    return { materials: touched, metalness: metal, roughnessScale: roughScale }
+  }
+
+  /**
    * `scene.environmentIntensity` 在 three r160（本仓库版本）上**不生效**。
    *
    * 实证：`debug().material.envMapIntensity = 1` 始终不变（该属性由 `scene.environmentIntensity` 赋值），
@@ -790,6 +840,8 @@ export function createFaceStage(opt) {
     }
     focusMode = wantFocusMode
     fitMargin = wantFitMargin
+    // 首次加载前先把材质默认值定好（**不放在 load 之后**，否则每次切性别都要重设一遍材质）
+    applyDefaultMaterial()
     const url = resolveAssetUrl((wantRole === 'delivery' ? AVATAR_DELIVERY_ASSET : AVATAR_ASSET)[g])
     loading = true
     ready = false
@@ -825,6 +877,8 @@ export function createFaceStage(opt) {
       // 镜面强度是**每材质**的（r160 上 scene.environmentIntensity 不生效），
       // 所以必须在挂上新模型之后重新施加一次，否则换模型会把上一轮的值丢掉。
       setSpecular(specularMultiplier)
+      // 金属度/粗糙度也是每材质的值，换模型后同样要重新施加（否则切性别会把校正丢掉）
+      applyDefaultMaterial()
       rotate(yaw, pitch)
       ready = true
       currentGender = g
@@ -971,6 +1025,11 @@ export function createFaceStage(opt) {
     setVisemes,
     /** 运行时调光（观感标定用）：`setLighting(环境强度, 解析灯倍数)`。 */
     setLighting,
+    /**
+     * 材质校正：`setMaterial({ metalness: 0, roughnessScale: 1 })`。
+     * 压金属度是治"反光太强/像金属"的正确那一刀（资产自带 metallic 贴图 B 通道偏高）。
+     */
+    setMaterial,
     /**
      * 只调**镜面强度**（治"皮肤油亮"的正确那一刀）。
      * 与 `setLighting` 的区别：它不碰漫反射，所以压高光不会把脸一起调暗。
