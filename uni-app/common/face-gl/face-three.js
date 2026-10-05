@@ -457,10 +457,15 @@ export function createFaceStage(opt) {
    * 保证重复调用不会二次平移。
    */
   /**
-   * 当前取景模式：`'head'`（捏脸页看脸）或 `'body'`（通话页看全身）。
+   * 当前取景模式：`'head'`（捏脸页看脸）/ `'bust'`（通话页看半身）/ `'body'`（全身）。
    * 由 `load()` 的 `frameMode` 选项设置；默认 head 保持既有行为。
    */
   let focusMode = 'head'
+  /**
+   * 构图松紧（乘在 Fit 距离上，越小人物越大）。
+   * 默认 `FIT_MARGIN`（= 捏脸页调出来的松紧）；通话页传更小的值让人物撑满画面。
+   */
+  let fitMargin = FIT_MARGIN
 
   function computeFocus() {
     if (!root) return
@@ -468,10 +473,30 @@ export function createFaceStage(opt) {
     root.updateWorldMatrix(true, true)
     const body = restBoxOf(root)
 
-    // ── 全身取景（通话页用）：数字人要露出全身，不是只给一个头 ──
-    // 捏脸页看的是"脸"，所以按头部取景（滑杆只作用在脸上，全身构图时脸只有几十像素）；
-    // 但通话页要的是"一个站在那儿的人"，只给头部会让人以为是"只有一个头"。
-    // 两种取景共用同一个相机与缩放逻辑，只换焦点盒。
+    // ── 半身取景（通话页用）──
+    // 全身取景虽然"完整"，但在通话页里人物只占画面高度约 **53%**（可见高 2.18 vs 身高 1.15），
+    // 看着就是"人很小、四周一圈空"。通话场景本来就该是**半身/胸像**（和视频通话一样），
+    // 所以这里截"胯以上"：上到头顶、下到身体中心再往下 12%，高度约占身高 60%，人物能撑满画面。
+    if (focusMode === 'bust') {
+      const box = boxAbove(root, body.min.y + (body.max.y - body.min.y) * 0.38)
+      const center = (box.isEmpty() ? body : box).getCenter(new THREE.Vector3())
+      const size = (box.isEmpty() ? body : box).getSize(new THREE.Vector3())
+      size.y *= 1.02
+      root.position.copy(center).negate()
+      root.updateWorldMatrix(true, true)
+      focus = { center, size }
+      frameInfo = {
+        mode: 'bust',
+        focus: [+size.x.toFixed(4), +size.y.toFixed(4), +size.z.toFixed(4)],
+        body: [+(body.max.x - body.min.x).toFixed(4),
+               +(body.max.y - body.min.y).toFixed(4),
+               +(body.max.z - body.min.z).toFixed(4)],
+        center: [+center.x.toFixed(4), +center.y.toFixed(4), +center.z.toFixed(4)],
+      }
+      return
+    }
+
+    // ── 全身取景（保留：需要在画面里看到完整站姿时用）──
     if (focusMode === 'body') {
       const center = body.getCenter(new THREE.Vector3())
       const size = body.getSize(new THREE.Vector3())
@@ -574,7 +599,10 @@ export function createFaceStage(opt) {
     const distV = (focus.size.y / 2) / tan
     const spanH = Math.max(focus.size.x, focus.size.z)
     const distH = (spanH / 2) / (tan * aspect)
-    const dist = Math.max(distV, distH) * FIT_MARGIN
+    // ⚠️ 这里的 1.25/2.2 是**捏脸页**调出来的（预览区是横的、且要留头部转动余量）。
+    //    通话页是竖屏、要"人看着够大"，沿用这个松紧会只剩约 45% 画面高度。
+    //    故把松紧做成可配：`load(..., {fitMargin})`。
+    const dist = Math.max(distV, distH) * fitMargin
     baseDist = dist
     camera.position.set(0, 0, dist)
     camera.near = Math.max(0.005, dist / 100)
@@ -745,18 +773,23 @@ export function createFaceStage(opt) {
     const wantRole = role === 'delivery' ? 'delivery' : 'edit'
     const g = AVATAR_ASSET[gender] ? gender : DEFAULT_GENDER
     const opt = options || {}
-    // 取景模式：捏脸页要"看脸"，通话页要"看全身"（用户反馈"数字人只有一个头"就是这个）
-    const wantFocusMode = opt.frameMode === 'body' ? 'body' : 'head'
+    // 取景模式：捏脸页要"看脸"，通话页要"看人"（用户反馈"只有一个头"→"人太小"两轮都在调这个）
+    const wantFocusMode = opt.frameMode === 'body' ? 'body'
+      : (opt.frameMode === 'bust' ? 'bust' : 'head')
+    const wantFitMargin = typeof opt.fitMargin === 'number'
+      ? Math.max(0.8, Math.min(4, opt.fitMargin)) : FIT_MARGIN
     // 幂等：H5 的 onMounted 与 App 的 renderjs mounted 都可能触发首次加载，
     // 加上首帧兜底的 boot tick，同一性别最多只真正加载一次。
     // 注意 role 也要参与幂等判断：同一个性别在"捏脸页（edit 件）"与"通话页（delivery 件）"
     // 下要加载的是**两个不同的文件**，只比 gender 会让第二个页面拿到错的资产。
     // focusMode 同理：同一个资产在两种取景下都要能重建构图。
     if (loading) return stats()
-    if (ready && currentGender === g && currentRole === wantRole && focusMode === wantFocusMode) {
+    if (ready && currentGender === g && currentRole === wantRole
+        && focusMode === wantFocusMode && fitMargin === wantFitMargin) {
       return stats()
     }
     focusMode = wantFocusMode
+    fitMargin = wantFitMargin
     const url = resolveAssetUrl((wantRole === 'delivery' ? AVATAR_DELIVERY_ASSET : AVATAR_ASSET)[g])
     loading = true
     ready = false
@@ -1018,6 +1051,61 @@ export function createFaceStage(opt) {
           scene.environmentIntensity = savedIntensity
           scene.needsUpdate = true
         }
+      }
+    },
+    /**
+     * 量"人物在画面里占多大"：渲染到离屏目标，取**不透明像素的包围盒**，
+     * 返回宽高占画布的百分比。这是"人太小/太大"唯一客观的判据
+     * （肉眼估容易在两个方向之间来回摇摆 —— 实测已经走过"只有头 → 全身 → 半身"两轮）。
+     *
+     * 与 `measureShading` 一样必须走离屏：渲染器没开 `preserveDrawingBuffer`，
+     * 合成后直接 `readPixels` 只会读到空缓冲。
+     */
+    measureSilhouette(size) {
+      if (!root) return { ok: false, reason: '还没有加载资产' }
+      const side = Math.max(64, Math.min(1024, Math.round(size || 384)))
+      const target = new THREE.WebGLRenderTarget(side, side)
+      const prevTarget = renderer.getRenderTarget()
+      const prevAspect = camera.aspect
+      try {
+        camera.aspect = 1
+        camera.updateProjectionMatrix()
+        renderer.setRenderTarget(target)
+        renderer.setClearAlpha(0)
+        renderer.clear()
+        renderer.render(scene, camera)
+        const buffer = new Uint8Array(side * side * 4)
+        renderer.readRenderTargetPixels(target, 0, 0, side, side, buffer)
+        let minX = side
+        let maxX = -1
+        let minY = side
+        let maxY = -1
+        let count = 0
+        for (let y = 0; y < side; y += 1) {
+          for (let x = 0; x < side; x += 1) {
+            if (buffer[(y * side + x) * 4 + 3] < 8) continue
+            count += 1
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+          }
+        }
+        if (maxX < 0) return { ok: false, reason: '画面里没有不透明像素' }
+        return {
+          ok: true,
+          frameMode: focusMode,
+          fitMargin,
+          widthPct: +(((maxX - minX + 1) / side) * 100).toFixed(1),
+          heightPct: +(((maxY - minY + 1) / side) * 100).toFixed(1),
+          fillPct: +((count / (side * side)) * 100).toFixed(1),
+          dist: +camera.position.z.toFixed(3),
+        }
+      } finally {
+        renderer.setRenderTarget(prevTarget)
+        camera.aspect = prevAspect
+        camera.updateProjectionMatrix()
+        target.dispose()
       }
     },
     /** 诊断用：暴露渲染器内部状态（排"取景裁切"这类问题时不必再靠猜） */

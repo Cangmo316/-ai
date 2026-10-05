@@ -140,9 +140,11 @@ onMounted(() => {
       return
     }
     // 通话中用**交付件**（vis_*/expr_* + 招手动画），不是捏脸页的编辑期件。
-    // `frameMode: 'body'` —— 通话页要看到**全身**（用户反馈"数字人只有一个头"）；
-    // 捏脸页仍是头像取景（滑杆只作用在脸上）。
-    stageRef.load(gender.value, 'delivery', { frameMode: 'body' })
+    // `frameMode: 'bust'` —— 通话页看**半身**（像视频通话那样），人物才够大。
+    //   演进过程：只有头（用户："只有一个头"）→ 全身（用户："人太小"）→ **半身**。
+    //   实测全身取景下人物只占画面高度约 53%；半身取景截"胯以上"，高度约占身高 60%，
+    //   再配合 `fitMargin: 1.15`（捏脸页默认 2.2 太松）让人物撑满画面。
+    stageRef.load(gender.value, 'delivery', { frameMode: 'bust', fitMargin: 1.15 })
       .then(() => {
         // 皮肤偏油亮：只压**镜面反射**（不碰漫反射，所以不会把脸调暗）。
         // 为什么是 0.55：全身取景下扫出来的拐点——
@@ -221,7 +223,7 @@ export default {
         })
       }
       const g = state.gender || DEFAULT_GENDER
-      this.gl.load(g, 'delivery', { frameMode: 'body' }).then(() => {
+      this.gl.load(g, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).then(() => {
         if (typeof this.gl.setSpecular === 'function') this.gl.setSpecular(0.55)
       }).catch(() => ownerInstance.callMethod('onStageError'))
     },
@@ -230,7 +232,7 @@ export default {
     },
     onGender(value, oldValue, ownerInstance) {
       if (!this.gl) return this.bootStage(ownerInstance, ownerInstance.getState() || {})
-      this.gl.load(value, 'delivery', { frameMode: 'body' }).catch(() => ownerInstance.callMethod('onStageError'))
+      this.gl.load(value, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     /** 招手：token 每次递增就播一次（不循环），播完停在静止姿势。 */
     onPlaying(value, oldValue, ownerInstance) {
