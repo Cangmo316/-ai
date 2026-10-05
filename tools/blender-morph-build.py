@@ -268,10 +268,26 @@ def clear_pose(armature):
 class Fields:
     """把资产自身的解剖尺度量出来，所有幅度按它标定（不写死 mm）"""
 
-    def __init__(self, co, weights, jaw_w, head_w):
+    def __init__(self, co, weights, jaw_w, head_w, jaw_tip_z=None, face_span=None):
         self.co = co
-        mouth = (np.abs(co[:, 0]) < 0.030) & (co[:, 1] < -0.062) & (co[:, 1] > -0.098) \
-            & (co[:, 2] > 1.010) & (co[:, 2] < 1.048)
+        # ⚠️ 唇部掩膜原来把 z 写死在 1.010~1.048（**女性资产**坐标）。换成卡通小男孩
+        #    （嘴 z≈0.68）后匹配到 **0 个顶点** → mouth_center / mouth_half_width 落到硬编码
+        #    默认值 [0,-0.078,1.024] / 24mm → 所有唇形都作用在错误位置，
+        #    表现为"口型怎么调都不动"（`vis_MBP` 的唇缝间隙与静止完全一致）。
+        #    现在以**下颌骨尾（下巴尖）的 z** 为基准、范围按脸的大小给，不依赖绝对坐标。
+        _z0 = jaw_tip_z if jaw_tip_z is not None else 1.024
+        _span = face_span if face_span else 0.062
+        # ⚠️ 锚点要落在**唇缝**上：jaw 骨的尾端（下巴尖）在唇缝**上方**约 3cm
+        #    （实测 jaw_tip_z=0.7265，唇缝在 0.695），直接用它会让掩膜偏上、
+        #    把"上唇以上"也算进来，读数与实际相反。往下压 0.22 倍脸尺度取唇缝。
+        _z0 = _z0 - _span * 0.22
+        # ⚠️ x / y 也要收：第一版只按 z 取，把**衣领与肩膀**也算进来了
+        #    （实测掩膜 738 顶点、嘴半宽算出 72.85mm，实际嘴宽约 40mm）。
+        _half_x = min(_span * 0.45, 0.026)
+        _front_y = float(np.percentile(co[:, 1], 12))
+        mouth = ((np.abs(co[:, 0]) < _half_x)
+                 & (co[:, 1] < _front_y)
+                 & (co[:, 2] > _z0 - _span * 0.22) & (co[:, 2] < _z0 + _span * 0.22))
         jaw_band = mouth & (jaw_w > 0.15)
         self.mouth_mask = mouth
         self.jaw = jaw_w
@@ -284,6 +300,8 @@ class Fields:
         else:
             self.mouth_center = np.array([0.0, -0.078, 1.024])
         self.mouth_half_width = float(np.percentile(np.abs(co[mouth, 0]), 98)) if mouth.any() else 0.024
+        # 唇形振幅按嘴宽缩放（基准 12mm 取自女性资产）。振幅写死会让嘴更大的角色做不出闭口。
+        self.amp_scale = max(0.6, min(3.0, self.mouth_half_width / 0.012))
         self.lip_front_y = float(co[mouth, 1].min()) if mouth.any() else -0.088
         self.eye_center = {}
         self.lid_top = {}
@@ -426,8 +444,19 @@ def main():
                  "eyelid_lower.L", "eyelid_lower.R"):
         if name in bone_names:
             weights[name] = read_group_weights(mesh_obj, name, count)
+    # 唇部定位基准：下巴尖 z（来自 jaw 骨）+ 脸的高度（网格分位），避免写死坐标
+    _arm_obj = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+    _jaw_tip_z = None
+    if _arm_obj is not None and _arm_obj.data.bones.get("jaw") is not None:
+        _jaw_tip_z = float((_arm_obj.matrix_world
+                            @ _arm_obj.data.bones["jaw"].matrix_local).translation.z)
+    _face_span = float(np.percentile(co[:, 2], 98) - np.percentile(co[:, 2], 2)) * 0.13
     fields = Fields(co, weights, weights.get("jaw", np.zeros(count)),
-                    weights.get("head", np.zeros(count)))
+                    weights.get("head", np.zeros(count)),
+                    jaw_tip_z=_jaw_tip_z, face_span=_face_span)
+    print("  唇部定位：下巴尖 z=%s  脸尺度=%.4f → 掩膜命中 %d 顶点，嘴半宽 %.2fmm"
+          % ("n/a" if _jaw_tip_z is None else "%.4f" % _jaw_tip_z, _face_span,
+             int(fields.mouth_mask.sum()), fields.mouth_half_width * 1000))
 
     targets, offsets, edges = build_adjacency(mesh_obj)
     rest_length = np.linalg.norm(co[edges[:, 0]] - co[edges[:, 1]], axis=1)

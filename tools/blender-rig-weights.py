@@ -325,14 +325,24 @@ def analytic_fields(coords, vertex_hair, hair_soft=None, bones=None):
     # ⚠️ `jaw` 必须有**下界**：只写 smoothstep((JAW_TOP_Z - z)/0.030) 会让下颌场一直罩到脖子上，
     #    实测最差边因此落在 z≈1.00、下巴正下方（一个顶点 jaw 0.73、邻居 head 0.68），
     #    下颌转 20° 就撕出 14× 拉伸。下颌区的正确范围是 z ∈ [1.002, 1.062]。
-    jaw_band = (smoothstep((local_jaw_top_z - z) / 0.028)
-                * smoothstep((z - (local_chin_z - 0.016)) / 0.018))
+    # 下颌场：**下唇以下为主，上唇以下渐强**。
+    # ⚠️ 原来是一个"包住整个嘴区"的带（从 jaw_top 往下、下巴以上），实测问题：
+    #   下颌张开时**上唇跟着一起走**（`mouth_dz` 上下唇同向），口型做不出"上唇不动、下唇下移"；
+    #   且下唇被 `lip_lower` + `head` 拉住，张不开多少。
+    # 现在按"相对嘴中心的纵向权重函数"给：嘴中心以下 1.0，往上 2cm 线性降到 0.15。
+    _below_mouth = np.clip((local_lip_upper_z + 0.020 - z) / 0.030, 0.0, 1.0)
+    _about_mouth = 1.0 - 0.85 * (1.0 - _below_mouth)
+    jaw_band = (_about_mouth
+                * smoothstep((local_jaw_top_z + 0.030 - z) / 0.030)
+                * smoothstep((z - (local_chin_z - 0.030)) / 0.022))
+    fields["jaw_dbg_band"] = jaw_band
     fields["jaw"] = face * jaw_band * smoothstep((local_eye_x * 3.1 - np.abs(x)) / 0.02)
     fields["chin"] = (face * blob(coords, 0.0, local_chin_z, 0.030, 0.018)
                       * front_gate(coords, -0.045) * smoothstep((z - (local_chin_z - 0.016)) / 0.014))
     fields["nose"] = face * blob(coords, 0.0, local_nose_z, 0.017, 0.022) * front_gate(coords, -0.050)
     fields["lip_upper"] = face * blob(coords, 0.0, local_lip_upper_z, 0.024, 0.009)
-    fields["lip_lower"] = face * blob(coords, 0.0, local_lip_lower_z, 0.024, 0.009)
+    # 下唇场收窄一点：让 jaw 也能带动下唇外侧（否则下唇被本场"锁"在原位，嘴张不开）
+    fields["lip_lower"] = face * blob(coords, 0.0, local_lip_lower_z, 0.022, 0.007)
     fields["tongue"] = np.zeros_like(z)               # 原始资产没有舌网格
 
     # ── 手臂链（招手用）：按"到骨段的距离"给场 ──
@@ -387,6 +397,7 @@ def analytic_fields(coords, vertex_hair, hair_soft=None, bones=None):
         fields[f"jaw_width.{side}"] = face_hard * blob(coords, 0.048 * sign, 1.026, 0.024, 0.018)
         fields[f"cheek_fat.{side}"] = face_hard * blob(coords, 0.032 * sign, 1.045, 0.028, 0.022)
         fields[f"eye_socket.{side}"] = face_hard * blob(coords, EYE_X * sign, EYE_Z, 0.017, 0.013)
+    fields.pop("jaw_dbg_band", None)
     return fields
 
 
