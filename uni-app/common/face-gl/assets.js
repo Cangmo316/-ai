@@ -27,7 +27,7 @@ export const AVATAR_ASSET = Object.freeze({
  * 而磁盘上早已是白大褂医生）。原因是 URL 没变、浏览器用了缓存副本。
  * 以后**每次重新导出资产都要把这个号加一**，否则改了等于没改。
  */
-export const ASSET_VERSION = '2'
+export const ASSET_VERSION = '3'   // 2026-10-05 换成正确的新女医资产（旧的是企鹅玩偶）
 
 /** 口型 / 表情资产（运行期，vis_* / expr_*）。捏脸页不用，视觉模式用，先登记在此避免路径写两处。 */
 export const AVATAR_DELIVERY_ASSET = Object.freeze({
