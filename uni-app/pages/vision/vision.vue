@@ -68,7 +68,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings } from '@/common/store.js'
 import { UI_COPY } from '@/common/face/face-index.js'
 import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
@@ -76,8 +76,9 @@ import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
 import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
 // #endif
 
-// 数字人形象性别：沿用全局设置（`settings.gender`），与捏脸页共用同一份口径。
-const gender = ref((settings && settings.gender) || DEFAULT_GENDER)
+// 数字人形象性别：**跟着全局设置走**（在「数字人形象」页切了性别，这里要跟着换）。
+// 用 computed 而不是快照，这样用户在别处改了 `settings.gender`、回到这里能自动生效。
+const gender = computed(() => settings.gender || DEFAULT_GENDER)
 const stage = ref({ fallback: false })
 const bootTick = ref(0)
 const waveToken = ref(0)
@@ -158,6 +159,11 @@ onMounted(() => {
       .catch(() => onStageError())
   }
   // #endif
+})
+
+// 形象性别变化（在「数字人形象」页切换）→ 这里跟着换模型。watch 优于快照，避免回页面看不到新形象。
+watch(gender, (g) => {
+  if (stageRef) stageRef.load(g, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => onStageError())
 })
 
 onUnmounted(() => {

@@ -64,8 +64,19 @@
         </view>
       </view>
 
+
+      <!-- 捏脸功能按策略变更**暂时下线**（数字人只做唇形同步 + 招手互动）。
+           这里保留"正在开发中"提示而不是删掉整块 —— 页面仍然开放，
+           因为用户需要一个**切换男女形象**的入口（这块是可用的）。
+           将来接回捏脸只需把 FACE_EDIT_ENABLED 改回 true。 -->
+      <view v-if="!FACE_EDIT_ENABLED" class="bl-face-soon">
+        <bl-icon name="settings" color="#9AA6A0" :size="72" />
+        <text class="bl-face-soon__title">{{ UI_COPY.faceDeveloping }}</text>
+        <text class="bl-face-soon__desc">精细调整五官的功能还在做，先上线形象切换</text>
+        <text class="bl-face-soon__desc">上面选「女性 / 男性」即可切换数字人形象</text>
+      </view>
       <!-- 分区 chips：目录来自参数表 + 适老裁剪，「不做」的参数不会出现在这里 -->
-      <scroll-view class="bl-face-zones" scroll-x>
+      <scroll-view v-if="FACE_EDIT_ENABLED" class="bl-face-zones" scroll-x>
         <view class="bl-face-zones__inner">
           <view
             v-for="g in SLIDER_GROUPS"
@@ -86,11 +97,11 @@
         </view>
       </scroll-view>
 
-      <view class="bl-face-summary">
+      <view v-if="FACE_EDIT_ENABLED" class="bl-face-summary">
         <text class="bl-face-summary__text">{{ summaryText }}</text>
       </view>
 
-      <scroll-view class="bl-face-controls" scroll-y>
+      <scroll-view v-if="FACE_EDIT_ENABLED" class="bl-face-controls" scroll-y>
         <view v-for="p in activeGroup.sliders" :key="p.key" class="bl-face-controls__row">
           <view v-if="!p.wired" class="bl-face-controls__tag">
             <text class="bl-face-controls__tag-text">{{ p.pendingReason || '未接线' }}</text>
@@ -109,7 +120,7 @@
         </view>
       </scroll-view>
 
-      <view class="bl-face-actions">
+      <view v-if="FACE_EDIT_ENABLED" class="bl-face-actions">
         <view class="bl-btn bl-btn--ghost bl-face-actions__btn" @click="randomize">
           <bl-icon name="shuffle" color="#07C160" :size="36" />
           <text class="bl-face-actions__text bl-face-actions__text--ghost">随机生成</text>
@@ -121,7 +132,7 @@
       </view>
 
       <!-- 分区级操作：只动当前分区，避免"想微调一处却整套随机" -->
-      <view class="bl-face-subactions">
+      <view v-if="FACE_EDIT_ENABLED" class="bl-face-subactions">
         <view class="bl-face-subactions__item" @click="randomizeZone">
           <text class="bl-face-subactions__text">本区随机</text>
         </view>
@@ -140,7 +151,7 @@
 
 <script setup>
 import { reactive, computed, ref, watch, onMounted, onUnmounted } from 'vue'
-import { settings } from '@/common/store.js'
+import { settings, setGender } from '@/common/store.js'
 import {
   SLIDER_GROUPS, GROUPED_KEYS, panelSummary, UI_COPY,
   defaultValues, computeView, randomValues, buildSave,
@@ -202,7 +213,19 @@ const view = computed(() => computeView(values, { keys: GROUPED_KEYS }))
 const weights = computed(() => view.value.weights)
 
 /** 当前形象性别。默认女性，可切男性（交付 README：捏脸页默认形象 = 女性）。 */
-const gender = ref(DEFAULT_GENDER)
+/**
+ * 捏脸（五官滑杆）是否开放。
+ * 按策略变更**暂时关闭**：数字人只做「唇形同步 + 招手互动」。
+ * 但**页面保持开放**——用户需要「切换男女形象」这个入口，那块功能是可用的。
+ * 将来接回捏脸只需把这个常量改回 true（滑杆目录与接线都还在）。
+ */
+const FACE_EDIT_ENABLED = false
+/**
+ * 当前形象性别：**以全局 store 为准**（`settings.gender`），没选过时兜底 `DEFAULT_GENDER`。
+ * 之前用局部 `ref(DEFAULT_GENDER)`，切了性别带不到通话页（换页面又回默认），
+ * 所以改成"全局 store 持有 + 这里只做兜底与写入"。
+ */
+const gender = computed(() => settings.gender || DEFAULT_GENDER)
 
 /** 宿主 → renderjs 的唯一数据通道（App 端 renderjs 拿不到逻辑层对象，只能靠 prop 下发）。 */
 const payload = computed(() => JSON.stringify({ commands: view.value.cmds }))
@@ -336,7 +359,8 @@ watch(gender, (g) => {
 function switchGender(value) {
   if (value === gender.value) return
   if (!GENDER_OPTIONS.some((g) => g.value === value)) return
-  gender.value = value
+  // 写全局 store（会落本地存储）→ 通话页也跟着变
+  setGender(value)
   uni.showToast({ title: '已切换为' + genderLabel(value) + '形象', icon: 'none' })
 }
 
@@ -465,6 +489,32 @@ export default {
 }</script>
 
 <style scoped>
+/* 「正在开发中」占位块：替代被下线的捏脸滑杆区 */
+.bl-face-soon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  padding: 72rpx 40rpx;
+  margin: 24rpx 32rpx;
+  border-radius: var(--bl-radius-bubble);
+  background-color: rgba(154, 166, 160, .10);
+  border: 2rpx dashed rgba(154, 166, 160, .5);
+}
+.bl-face-soon__title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #3E4A44;
+  margin-top: 8rpx;
+}
+.bl-face-soon__desc {
+  font-size: 26rpx;
+  color: #7A857F;
+  text-align: center;
+  line-height: 1.5;
+}
+
 .bl-face-page {
   flex: 1;
   min-height: 0;

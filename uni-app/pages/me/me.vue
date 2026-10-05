@@ -85,7 +85,6 @@
 
 <script setup>
 import { settings, setLargeFont } from '@/common/store.js'
-import { UI_COPY } from '@/common/face/face-index.js'
 
 function toast(title) {
   uni.showToast({ title: title, icon: 'none' })
@@ -98,9 +97,10 @@ function toRoles() {
   uni.navigateTo({ url: '/pages/roles/roles' })
 }
 function toFace() {
-  // 3D 捏脸已按策略变更移除（数字人只做唇形同步 + 招手互动）。
-  // 按产品决策：**入口保留**、点进去给提示，而不是把入口删掉（避免老人找不到原来那一项）。
-  uni.showToast({ title: UI_COPY.faceDeveloping, icon: 'none' })
+  // 形象页**已开放**（用户要求）：页面里可切换男女形象；精细捏脸在页面内标注"正在开发中"。
+  // 所以这里恢复为正常跳转 —— 之前"点进来只弹提示"的做法已作废
+  // （那时捏脸整体下线、页面打不开，用户就没有切换男女的入口了）。
+  uni.navigateTo({ url: '/pages/face/face' })
 }
 function toTokens() {
   uni.navigateTo({ url: '/pages/tokens/tokens' })
