@@ -62,6 +62,8 @@ def region_stats(obj, label, mask):
     co = np.empty(count * 3, dtype=np.float64)
     mesh.vertices.foreach_get("co", co)
     co = co.reshape(count, 3)
+
+
     inside = mask(co)
     stats = {"label": label, "verts": int(inside.sum())}
     if inside.any():
@@ -105,13 +107,33 @@ def main():
     print(f"  特征区保护：{'开' if protect else '关'}"
           f"{'' if not protect else f'（权重组 feature 系数 {factor}）'}")
 
-    def mouth_mask(co):
-        return ((np.abs(co[:, 0]) < 0.035) & (co[:, 1] > -0.095) & (co[:, 1] < -0.045)
-                & (co[:, 2] > 1.000) & (co[:, 2] < 1.050))
+    # 嘴区 / 眼区保护带（按资产标定，不写死 z）：
+    # ⚠️ 原实现把 z 写死成 1.000~1.050（嘴）与 1.050~1.095（眼）——那是女性资产的坐标。
+    # 2026-10-05 换成卡通小男孩资产（嘴 z≈0.68、眼 z≈0.75）后，写死坐标会让这段保护
+    # **完全落空**（嘴区统计为 0，报不出错但口型已被砍坏）。现按 --mouth-z/--eye-z 传参。
+    mouth_z = float(arg_value("--mouth-z", "1.025"))
+    mouth_half_z = float(arg_value("--mouth-half-z", "0.025"))
+    eye_z = float(arg_value("--eye-z", "1.072"))
+    eye_half_z = float(arg_value("--eye-half-z", "0.023"))
+    face_half_x = float(arg_value("--face-half-x", "0.048"))
+    probe = np.empty(before_verts * 3, dtype=np.float64)
+    obj.data.vertices.foreach_get("co", probe)
+    probe = probe.reshape(before_verts, 3)
+    y_front = float(np.percentile(probe[:, 1], 1))
+    y_back = y_front + 0.10
+    print("  保护带：嘴 z[%.3f,%.3f] 眼 z[%.3f,%.3f] 前缘 y[%.3f,%.3f]" % (
+        mouth_z - mouth_half_z, mouth_z + mouth_half_z,
+        eye_z - eye_half_z, eye_z + eye_half_z, y_front, y_back))
 
-    def eye_mask(co):
-        return ((np.abs(co[:, 0]) > 0.010) & (np.abs(co[:, 0]) < 0.048)
-                & (co[:, 1] < -0.035) & (co[:, 2] > 1.050) & (co[:, 2] < 1.095))
+    def mouth_mask(values):
+        return ((np.abs(values[:, 0]) < face_half_x * 0.75)
+                & (values[:, 1] > y_front - 0.02) & (values[:, 1] < y_back)
+                & (values[:, 2] > mouth_z - mouth_half_z) & (values[:, 2] < mouth_z + mouth_half_z))
+
+    def eye_mask(values):
+        return ((np.abs(values[:, 0]) > face_half_x * 0.20) & (np.abs(values[:, 0]) < face_half_x)
+                & (values[:, 1] > y_front - 0.02) & (values[:, 1] < y_back)
+                & (values[:, 2] > eye_z - eye_half_z) & (values[:, 2] < eye_z + eye_half_z))
 
     before = {"tris": before_tris, "verts": before_verts,
               "mouth": region_stats(obj, "嘴区", mouth_mask),

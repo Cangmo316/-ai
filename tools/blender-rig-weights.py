@@ -89,6 +89,36 @@ def smoothstep(value):
     return value * value * (3.0 - 2.0 * value)
 
 
+
+def bone_points(armature):
+    """从骨架读关键点（用于把写死的面部常量换成"按骨架自适应"）。
+
+    为什么需要（2026-10-05，换成卡通小男孩资产时踩到）：
+    本文件原来的 EYE_Z / LIP_UPPER_Z / NECK_LOW_Z 等都是**女性资产**的绝对坐标
+    （眼 z=1.069、嘴 z=1.034），而新男生资产的脸在 z≈0.75、嘴在 z≈0.68 ——
+    直接套用会让**所有机能骨的权重场落到头发/额头上**（实测嘴部只拿到 30 个顶点权重）。
+    """
+    points = {}
+    if armature is None:
+        return points
+    for bone in armature.data.bones:
+        points[bone.name] = (armature.matrix_world @ bone.matrix_local).translation.copy()
+    return points
+
+
+def segment_distance(coords, head, tail):
+    """每个顶点到线段 head-tail 的距离（用于手臂等"沿骨段"的场）。"""
+    head = np.array(head, dtype=np.float64)
+    tail = np.array(tail, dtype=np.float64)
+    direction = tail - head
+    length_sq = float(direction @ direction)
+    if length_sq < 1e-12:
+        return np.linalg.norm(coords - head, axis=1)
+    t = np.clip(((coords - head) @ direction) / length_sq, 0.0, 1.0)
+    closest = head + t[:, None] * direction
+    return np.linalg.norm(coords - closest, axis=1)
+
+
 def blob(coords, cx, cz, rx, rz, rx_z=None):
     """平面高斯团（(x,z) 上的椭圆），返回 0~1"""
     dx = (coords[:, 0] - cx) / rx
@@ -219,7 +249,7 @@ def soft_hair_mask(mesh_obj, coords, vertex_hair, rounds=2, factor=0.5,
     return soft, hard
 
 
-def analytic_fields(coords, vertex_hair, hair_soft=None):
+def analytic_fields(coords, vertex_hair, hair_soft=None, bones=None):
     """全部 33 骨的解析权重场；返回 {骨名: np.ndarray(顶点数)}（未归一化，0~1）
 
     `vertex_hair` 是原布尔遮罩（用于骨相骨的 hard 门）；
@@ -228,6 +258,47 @@ def analytic_fields(coords, vertex_hair, hair_soft=None):
     """
     x = coords[:, 0]
     z = coords[:, 2]
+
+    # ── 按骨架覆盖关键点（骨架缺项时回退到女性资产常量）──
+    bones = bones or {}
+    def bp(name, fallback):
+        point = bones.get(name)
+        return None if point is None else (float(point.x), float(point.y), float(point.z))
+
+    eye_l = bp("eye.L", None)
+    eye_r = bp("eye.R", None)
+    jaw_head = bp("jaw", None)
+    jaw_tail = bp("chin", None)
+    lip_upper = bp("lip_upper", None)
+    lip_lower = bp("lip_lower", None)
+    nose_tail = bp("nose", None)
+    nose_head = bp("nose", None)
+    neck = bp("neck", None)
+    head_bone = bp("head", None)
+
+    local_eye_z = eye_l[2] if eye_l else EYE_Z
+    local_eye_x = abs(eye_l[0]) if eye_l else EYE_X
+    local_lip_upper_z = lip_upper[2] if lip_upper else LIP_UPPER_Z
+    local_lip_lower_z = lip_lower[2] if lip_lower else LIP_LOWER_Z
+    # jaw_tail 是**下巴骨的尾端**，在卡通角色上可能被放得很低；用"嘴中心下方"更稳
+    local_chin_z = (local_lip_lower_z - 0.012) if lip_lower else (jaw_tail[2] if jaw_tail else CHIN_Z)
+    local_nose_z = nose_tail[2] if nose_tail else NOSE_Z
+    local_jaw_top_z = jaw_head[2] if jaw_head else JAW_TOP_Z
+    # 眉毛/眼睑没有专属骨时的相对偏移：按"眼位到头顶"的比例给
+    local_top = float(np.max(z))
+    local_brow_z = local_eye_z + max(0.006, (local_top - local_eye_z) * 0.14)
+    local_lid_upper_z = local_eye_z + max(0.004, (local_top - local_eye_z) * 0.06)
+    local_lid_lower_z = local_eye_z - max(0.006, (local_top - local_eye_z) * 0.08)
+    # 颈部带：原来按"neck 骨到头顶"的比例算，在卡通角色上会把**大半个身子**算成脖子
+    # （实测颈带变成 z 0.18~0.57）。改成"从下颌往下、只取很窄一段"。
+    if neck:
+        local_neck_high = max(neck[2], local_chin_z + 0.010)
+        local_neck_low = local_neck_high - max(0.030, (local_top - local_neck_high) * 0.10)
+    else:
+        local_neck_low, local_neck_high = NECK_LOW_Z, NECK_HIGH_Z
+    print("  [权重场] 骨架自适应关键点：眼 z=%.3f x=%.3f 唇上/下 z=%.3f/%.3f 下巴 z=%.3f "
+          "颈 z=%.3f~%.3f" % (local_eye_z, local_eye_x, local_lip_upper_z, local_lip_lower_z,
+                              local_chin_z, local_neck_low, local_neck_high))
     if hair_soft is None:
         skin = (~vertex_hair).astype(np.float64)
         skin_hard = skin
@@ -239,8 +310,8 @@ def analytic_fields(coords, vertex_hair, hair_soft=None):
     fields = {}
 
     # ── 竖向三分：root / neck / head ──
-    head_zone = smoothstep((z - NECK_LOW_Z) / (NECK_HIGH_Z - NECK_LOW_Z))
-    neck_band = smoothstep((z - (NECK_LOW_Z - 0.04)) / 0.06)
+    head_zone = smoothstep((z - local_neck_low) / max(local_neck_high - local_neck_low, 1e-6))
+    neck_band = smoothstep((z - (local_neck_low - 0.04)) / 0.06)
     fields["head"] = head_zone
     fields["neck"] = neck_band * (1.0 - head_zone)
     fields["root"] = np.clip(1.0 - head_zone - fields["neck"], 0, 1)
@@ -254,19 +325,50 @@ def analytic_fields(coords, vertex_hair, hair_soft=None):
     # ⚠️ `jaw` 必须有**下界**：只写 smoothstep((JAW_TOP_Z - z)/0.030) 会让下颌场一直罩到脖子上，
     #    实测最差边因此落在 z≈1.00、下巴正下方（一个顶点 jaw 0.73、邻居 head 0.68），
     #    下颌转 20° 就撕出 14× 拉伸。下颌区的正确范围是 z ∈ [1.002, 1.062]。
-    jaw_band = smoothstep((JAW_TOP_Z - z) / 0.028) * smoothstep((z - 1.002) / 0.018)
-    fields["jaw"] = face * jaw_band * smoothstep((0.085 - np.abs(x)) / 0.02)
-    fields["chin"] = (face * blob(coords, 0.0, CHIN_Z, 0.030, 0.018)
-                      * front_gate(coords, -0.045) * smoothstep((z - 1.002) / 0.014))
-    fields["nose"] = face * blob(coords, 0.0, NOSE_Z, 0.017, 0.022) * front_gate(coords, -0.050)
-    fields["lip_upper"] = face * blob(coords, 0.0, LIP_UPPER_Z, 0.024, 0.009)
-    fields["lip_lower"] = face * blob(coords, 0.0, LIP_LOWER_Z, 0.024, 0.009)
+    jaw_band = (smoothstep((local_jaw_top_z - z) / 0.028)
+                * smoothstep((z - (local_chin_z - 0.016)) / 0.018))
+    fields["jaw"] = face * jaw_band * smoothstep((local_eye_x * 3.1 - np.abs(x)) / 0.02)
+    fields["chin"] = (face * blob(coords, 0.0, local_chin_z, 0.030, 0.018)
+                      * front_gate(coords, -0.045) * smoothstep((z - (local_chin_z - 0.016)) / 0.014))
+    fields["nose"] = face * blob(coords, 0.0, local_nose_z, 0.017, 0.022) * front_gate(coords, -0.050)
+    fields["lip_upper"] = face * blob(coords, 0.0, local_lip_upper_z, 0.024, 0.009)
+    fields["lip_lower"] = face * blob(coords, 0.0, local_lip_lower_z, 0.024, 0.009)
     fields["tongue"] = np.zeros_like(z)               # 原始资产没有舌网格
+
+    # ── 手臂链（招手用）：按"到骨段的距离"给场 ──
+    # 为什么单独写：解析场原来是**纯面部**的（按 z 分带），完全没有手臂概念，
+    # 实测手臂骨拿到的权重是 0（招手会一动不动）。这里按骨段距离生成，半径从骨长推。
+    for side in ("L", "R"):
+        shoulder = bp(f"clavicle.{side}", None)
+        elbow_pt = bp(f"upperarm.{side}", None)
+        wrist_pt = bp(f"forearm.{side}", None)
+        # 骨 head 位置：upperarm 的 head=肩、forearm 的 head=肘、hand 的 head=腕
+        upper = bp(f"upperarm.{side}", None)
+        fore = bp(f"forearm.{side}", None)
+        hand = bp(f"hand.{side}", None)
+        if upper and fore:
+            arm_len = float(np.linalg.norm(np.array(fore) - np.array(upper)))
+        else:
+            arm_len = 0.20
+        radius = max(arm_len * 0.55, 0.03)
+        if shoulder is None:
+            # 没有锁骨骨时，肩点用 upperarm 的 head 往回退一点
+            shoulder = upper
+        if upper and fore:
+            fields[f"clavicle.{side}"] = np.exp(-((segment_distance(coords, shoulder, upper)
+                                                   / max(arm_len * 0.45, 0.02)) ** 2) * 1.5)
+            fields[f"upperarm.{side}"] = np.exp(-((segment_distance(coords, upper, fore) / radius) ** 2) * 1.6)
+        if fore and hand:
+            fields[f"forearm.{side}"] = np.exp(-((segment_distance(coords, fore, hand) / radius) ** 2) * 1.6)
+            # 手：以腕为球心（圆团手，没有手指）
+            fields[f"hand.{side}"] = np.exp(-((np.linalg.norm(coords - np.array(hand), axis=1)
+                                               / max(arm_len * 0.35, 0.02)) ** 2) * 1.5)
+
     for side, sign in (("L", 1.0), ("R", -1.0)):
-        fields[f"eye.{side}"] = face * blob(coords, EYE_X * sign, EYE_Z, 0.013, 0.011)
-        fields[f"eyelid_upper.{side}"] = face * blob(coords, EYE_X * sign, LID_UPPER_Z, 0.016, 0.007)
-        fields[f"eyelid_lower.{side}"] = face * blob(coords, EYE_X * sign, LID_LOWER_Z, 0.016, 0.007)
-        fields[f"brow.{side}"] = face * blob(coords, EYE_X * sign * 1.06, BROW_Z, 0.021, 0.008)
+        fields[f"eye.{side}"] = face * blob(coords, local_eye_x * sign, local_eye_z, 0.013, 0.011)
+        fields[f"eyelid_upper.{side}"] = face * blob(coords, local_eye_x * sign, local_lid_upper_z, 0.016, 0.007)
+        fields[f"eyelid_lower.{side}"] = face * blob(coords, local_eye_x * sign, local_lid_lower_z, 0.016, 0.007)
+        fields[f"brow.{side}"] = face * blob(coords, local_eye_x * sign * 1.06, local_brow_z, 0.021, 0.008)
         fields[f"ear.{side}"] = (head_zone * skin
                                  * blob(coords, EAR_X * sign, EAR_Z, 0.022, 0.022)
                                  * smoothstep((np.abs(x) - 0.038) / 0.012))
@@ -541,7 +643,8 @@ def main():
             hard_level=hair_hard_level)
         report["hair_soft"] = {"rounds": hair_rounds, "factor": hair_factor,
                               "hard_level": hair_hard_level}
-    fields = analytic_fields(coords, vertex_hair, hair_soft)
+    armature = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+    fields = analytic_fields(coords, vertex_hair, hair_soft, bones=bone_points(armature))
     report["field_bones"] = len(fields)
     functional, structural = combine_fields(fields, group_names, structural_names)
     report["field_seconds"] = round(time.time() - started, 1)
