@@ -6,7 +6,7 @@
 
 用法：
     blender --background <文件.blend> --python tools/blender-export-glb.py -- \
-        --out <输出.glb> [--stats] [--keep-morph-prefix shape_|vis_,expr_]
+        --out <输出.glb> [--stats] [--keep-morph-prefix shape_|vis_,expr_] [--animations]
 
 注意：
   · **不能** apply 修改器里的 Armature（那会把蒙皮烘死）——导出器本身会跳过 Armature 修改器，
@@ -94,6 +94,8 @@ def main() -> None:
         if renamed:
             print(f"  网格数据块改名对齐对象名: {renamed} 个")
 
+    # 是否导出动画（招手互动需要）；默认关，保持既有批量导出的体积行为
+    want_animations = has_flag("--animations")
     max_size = int(arg_value("--texture-max", "0"))
     if max_size > 0:
         for image in bpy.data.images:
@@ -175,7 +177,14 @@ def main() -> None:
         # ⚠️ 必须关：开启会给**每个形变键**都写一组法线，137 个键 → 体积从 9.6MB 涨到 32MB
         #    （对照原版资产：137 个 morph 目标里带法线的 = 0）
         export_morph_normal=False,
-        export_animations=False,
+        # ⚠️ 动画：**默认关**（历史行为，批量导出时省体积）；本轮"招手互动"需要它，
+        #    用 `--animations` 打开。开启后把 Action（如 `wave`）作为 glTF animation 导出，
+        #    端侧 three.js 用 AnimationMixer 按名字播放。
+        export_animations=want_animations,
+        export_animation_mode="ACTIONS" if want_animations else "ACTIONS",
+        export_nla_strips=False,
+        export_frame_range=False,
+        export_bake_animation=False,
         export_yup=True,
         export_materials="EXPORT",
         export_image_format="AUTO",

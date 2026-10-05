@@ -266,7 +266,18 @@ export function createFaceStage(opt) {
     const below = FOCUS_BELOW_HEAD * Math.max(1, 0.22 / Math.max(headRatio, 1e-6))
     const cutY = headY - below * headH
     const head = boxAbove(root, cutY)
-    const box = head.isEmpty() ? body : head
+    let box = head.isEmpty() ? body : head
+    // ⚠️ 头部包围盒要**再放宽一点**：`headY` 来自 head 骨，而 Q 版角色的**头发体积**在骨上方
+    //    很高（实测女医 headRatio 只算出 0.13，取景框偏上、把半张脸切掉）。
+    //    这里把取景盒按 1.25 倍放大并以盒中心为基准，保证整个头（含头发）都在框内。
+    {
+      const center0 = box.getCenter(new THREE.Vector3())
+      const size0 = box.getSize(new THREE.Vector3())
+      size0.multiplyScalar(1.25)
+      const min = center0.clone().sub(size0.clone().multiplyScalar(0.5))
+      const max = center0.clone().add(size0.clone().multiplyScalar(0.5))
+      box = new THREE.Box3(min, max)
+    }
     const center = box.getCenter(new THREE.Vector3())
     const size = box.getSize(new THREE.Vector3())
     root.position.copy(center).negate()
