@@ -225,8 +225,10 @@ def find_anchors(points):
     # 纵向基准：鼻尖。脸部各部件按"到鼻尖的相对距离"摆放，这样换任何模型都能自适应。
     nose_z = nose_tip[2]
     mouth_z = mouth[2]
-    # 下巴：中线最低；中线下端即下巴尖
-    chin_z = bottom + height * 0.002 if bottom < nose_z - 0.05 else mouth_z - 0.03
+    # 下巴：**不要用网格最低点**（那在全身网格上是脚底，实测算出 chin_z=0.014）。
+    # 用"嘴中心下方一段"（相对脸的大小），对半身/全身网格都成立。
+    face_span = max(top - mouth_z, 1e-4)
+    chin_z = mouth_z - max(0.012, face_span * 0.06)
     # 上唇/下唇：在嘴中心上下各一点点
     lip_upper_z = mouth_z + 0.006
     lip_lower_z = mouth_z - 0.008
@@ -355,14 +357,21 @@ def build_bones(a):
     add("neck", (0, a["face_front_y"] * 0.10, a["head_bottom"]),
         (0, a["face_front_y"] * 0.08, a["head_bottom"] + (a["top"] - a["head_bottom"]) * 0.30),
         "root", "bone", "脖子（scale 驱动脖子粗细）")
-    # 头骨：head 放在"颈上缘"（下巴稍下），tail 指向头顶——
-    # 原来按 head_center_z 算，在卡通角色上 head 落到 z≈0.51（胸腹高度），
-    # 结果"转头"会带着大半身体一起动。
-    add("head", (0, a["face_front_y"] * 0.08, a["chin_low_z"] - (a["top"] - a["chin_low_z"]) * 0.16),
+    # 头骨：head 放在**下巴稍下**（=头和脖子的分界），tail 指向头顶。
+    # ⚠️ 这个位置同时决定三件事，必须按真实头身比定：
+    #   ① "转头"的旋转中心；② `head` 权重场的下界；③ 端侧取景（`computeFocus` 用 head 骨推头高）。
+    #   实测教训（卡通小男孩，约 2.3 头身）：原来用
+    #   `chin_low_z - (top - chin_low_z) * 0.16`（≈0.967）当 head，算出"单头占身高仅 13%"，
+    #   端侧取景只框到头发+额头，**半张脸被切掉**。改为"下巴下方 6% 身高"。
+    # head 放在"下巴与眼位之间、偏下巴 45%"处：这样单头高度 ≈ 0.45·身高，符合卡通头身比；
+    # 用 (top - chin_low_z)*0.16 或 height*0.06 这类式子都会在大头角色上算歪（实测 head 掉到 z=-0.06）。
+    _head_base = a["chin_low_z"] + (a["eye_z"] - a["chin_low_z"]) * 0.45
+    add("head", (0, a["face_front_y"] * 0.08, _head_base),
         (0, a["face_front_y"] * 0.08, a["eye_z"] + (a["top"] - a["eye_z"]) * 0.55),
         "neck", "bone", "头（转头）")
-    add("jaw", (0, a["mouth_front_y"] * 0.35, a["nose_z"] + 0.012),
-        (0, a["chin_front_y"], a["chin_low_z"] + 0.010), "head", "bone", "下颌开合")
+    # 下颌：旋转轴放在**耳前上方**（近似真实颞下颌关节），tail 指向下巴尖。
+    add("jaw", (0, a["mouth_front_y"] * 0.30, a["eye_z"] - (a["eye_z"] - a["mouth_z"]) * 0.35),
+        (0, a["chin_front_y"], a["chin_low_z"]), "head", "bone", "下颌开合")
     add("chin", (0, a["chin_front_y"], a["chin_low_z"] + 0.012),
         (0, a["chin_front_y"], a["chin_low_z"] - 0.006), "jaw", "bone", "下巴前后/长度")
 

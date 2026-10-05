@@ -8,9 +8,16 @@
  * 不能把 1.2 MB 的 three.js 拖进逻辑层包体。
  */
 
-/** 端侧捏脸资产（编辑期母本，含 113 个 shape_* 形态键）。默认女性，可切男性。 */
+/** 端侧形象资产。默认女性，可切男性。
+ *
+ * ⚠️ 2026-10-05 临时改动（**预览用，验证后要改回**）：
+ * 新男生资产（卡通小男孩，`模型男2/...obj` 重绑）要先进 H5 看形象，
+ * 而"切性别"这条交互目前不生效（见任务笔记 §7 的绑定层问题）。
+ * 所以把 `female` 暂时指向男生的 GLB，让页面**默认就加载他**，便于直接目视验收。
+ * 验收完请把下面两行改回：female → FemaleFaceRig，male → MaleFaceRig。
+ */
 export const AVATAR_ASSET = Object.freeze({
-  female: 'static/avatar/BilinAI_FemaleFaceRig_60k_edit.glb',
+  female: 'static/avatar/BilinAI_MaleFaceRig_60k_edit.glb',
   male: 'static/avatar/BilinAI_MaleFaceRig_60k_edit.glb',
 })
 

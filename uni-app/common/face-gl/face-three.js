@@ -259,7 +259,12 @@ export function createFaceStage(opt) {
     // 兜底：拿不到 head 骨时按「身高 1/7.5 是头」的经验比例推一个
     if (!(headY > body.min.y && headY < body.max.y)) headY = body.max.y - bodyH / 7.5
     const headH = Math.max(1e-4, body.max.y - headY)
-    const cutY = headY - FOCUS_BELOW_HEAD * headH
+    // ⚠️ 构图余量要**按头身比自适应**：原来固定 FOCUS_BELOW_HEAD=0.45 是按**成人 7.5 头身**调的，
+    //    换成卡通角色（约 2.5 头身、头占身高 ~40%）时，往下只留 0.45 个头高会把**半张脸切掉**
+    //    （实测：新男生资产在捏脸页预览里只露出头发与额头）。头越大，往下要留得越多。
+    const headRatio = headH / Math.max(bodyH, 1e-6)          // 头占身高的比例
+    const below = FOCUS_BELOW_HEAD * Math.max(1, 0.22 / Math.max(headRatio, 1e-6))
+    const cutY = headY - below * headH
     const head = boxAbove(root, cutY)
     const box = head.isEmpty() ? body : head
     const center = box.getCenter(new THREE.Vector3())
@@ -272,6 +277,7 @@ export function createFaceStage(opt) {
       body: [+(body.max.x - body.min.x).toFixed(4), +bodyH.toFixed(4), +(body.max.z - body.min.z).toFixed(4)],
       center: [+center.x.toFixed(4), +center.y.toFixed(4), +center.z.toFixed(4)],
       headY: +headY.toFixed(4), cutY: +cutY.toFixed(4),
+      headRatio: +headRatio.toFixed(3),
     }
   }
 
