@@ -85,6 +85,7 @@
 
 <script setup>
 import { settings, setLargeFont } from '@/common/store.js'
+import { UI_COPY } from '@/common/face/face-index.js'
 
 function toast(title) {
   uni.showToast({ title: title, icon: 'none' })
@@ -97,7 +98,9 @@ function toRoles() {
   uni.navigateTo({ url: '/pages/roles/roles' })
 }
 function toFace() {
-  uni.navigateTo({ url: '/pages/face/face' })
+  // 3D 捏脸已按策略变更移除（数字人只做唇形同步 + 招手互动）。
+  // 按产品决策：**入口保留**、点进去给提示，而不是把入口删掉（避免老人找不到原来那一项）。
+  uni.showToast({ title: UI_COPY.faceDeveloping, icon: 'none' })
 }
 function toTokens() {
   uni.navigateTo({ url: '/pages/tokens/tokens' })

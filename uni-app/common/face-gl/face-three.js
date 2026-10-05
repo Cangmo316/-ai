@@ -109,7 +109,12 @@ export function createFaceStage(opt) {
   if (!el) throw new Error('face-three: 缺少容器元素 el')
 
   const canvas = document.createElement('canvas')
-  canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;outline:none;'
+  // ⚠️ 画布必须**绝对定位铺满宿主**，而不是靠 `width/height:100%` 参与宿主的 flex 布局：
+  //    在通话页那种"竖向 flex 列 + 底部按钮"的布局里，100% 高的画布会把页面挤高、
+  //    把下面的按钮顶出视口（实测 body 高度被撑到 485+ 而舞台元素高 520）。
+  //    绝对定位后宿主高度由 CSS 决定，画布只负责铺满它。
+  canvas.style.cssText = 'display:block;position:absolute;left:0;top:0;width:100%;height:100%;'
+    + 'touch-action:none;outline:none;'
   el.appendChild(canvas)
 
   let renderer = null
@@ -164,6 +169,13 @@ export function createFaceStage(opt) {
   /** 正在加载中 / 当前已加载的性别，用于 load() 的幂等判定。 */
   let loading = false
   let currentGender = null
+  /**
+   * 当前加载的是哪一份资产：
+   *   `edit`     → 编辑期件（捏脸页用，含 shape_*）
+   *   `delivery` → 交付件（通话页用，含 vis_* / expr_* 与招手动画）
+   * 同一性别在两个页面下要加载两个不同文件，所以 role 必须参与幂等判断。
+   */
+  let currentRole = null
   // §7 排查用：把"正在加载哪个性别 / 哪个资产地址 / 最近一次错误"记下来，
   // 由 stats() 暴露。没有这几个字段时，"UI 选了男性但模型没换"只能靠肉眼猜。
   let loadingGender = null
@@ -197,13 +209,81 @@ export function createFaceStage(opt) {
   const loader = new GLTFLoader()
   loader.setDRACOLoader(dracoLoader)
 
+  // ── 动画（"招手互动"用）────────────────────────────────────────────
+  // 交付件里带 glTF animation（`wave`），由 AnimationMixer 驱动。
+  // 时钟单独持有：不能依赖帧率，否则不同机器上招手快慢不一致。
+  let mixer = null
+  let clips = []
+  let actions = {}
+  let activeClipName = ''
+  const clock = new THREE.Clock()
+
   function schedule() {
     if (!alive || raf) return
     raf = requestAnimationFrame(() => {
       raf = 0
       if (!alive) return
+      if (mixer) mixer.update(clock.getDelta())
+      else clock.getDelta()               // 没动画也要推进时钟，避免下次播放跳一大步
       renderer.render(scene, camera)
+      // 动画播放期间要持续出帧（原本只在有交互时渲染一次）
+      if (mixer && activeClipName) schedule()
     })
+  }
+
+  /** 播放指定动画片段（默认 `wave`）。**幂等**：同一段正在播就直接返回。 */
+  function playAnimation(name, options) {
+    const clipName = name || 'wave'
+    if (!mixer || !actions[clipName]) {
+      return { ok: false, reason: mixer ? ('没有动画片段 ' + clipName) : '当前资产没有动画（要用交付件 + --animations 导出）' }
+    }
+    if (activeClipName === clipName && actions[clipName].isRunning()) {
+      return { ok: true, name: clipName, alreadyPlaying: true }
+    }
+    const opt = options || {}
+    const action = actions[clipName]
+    action.reset()
+    action.setLoop(opt.loop === false ? THREE.LoopOnce : THREE.LoopRepeat, opt.loop === false ? 1 : Infinity)
+    action.clampWhenFinished = opt.loop === false
+    action.timeScale = typeof opt.speed === 'number' ? opt.speed : 1
+    action.fadeIn(0.18)
+    action.play()
+    activeClipName = clipName
+    clock.getDelta()
+    schedule()
+    return { ok: true, name: clipName, duration: action.getClip().duration }
+  }
+
+  /** 停止动画并回到静止姿势。 */
+  function stopAnimation() {
+    if (!mixer) return { ok: false, reason: '当前资产没有动画' }
+    for (const name of Object.keys(actions)) actions[name].stop()
+    activeClipName = ''
+    // 停完要立刻出帧，否则画面会停在最后一帧的动作上
+    renderer.render(scene, camera)
+    return { ok: true }
+  }
+
+  /**
+   * 口型驱动：把「viseme 名 → 权重」写成形态键影响值。
+   * 与 `applyWeights` 分开，是因为这两条通道会同时工作（口型来自语音，表情来自交互），
+   * 合在一起会互相覆盖。名字必须是 `vis_*` / `expr_*`（交付件命名空间）。
+   */
+  function setVisemes(next) {
+    if (!next) return 0
+    let applied = 0
+    for (const mesh of morphOwners) {
+      for (const name of Object.keys(next)) {
+        const idx = mesh.morphTargetDictionary ? mesh.morphTargetDictionary[name] : undefined
+        if (typeof idx === 'number' && mesh.morphTargetInfluences) {
+          const value = Number(next[name])
+          mesh.morphTargetInfluences[idx] = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
+          applied += 1
+        }
+      }
+    }
+    if (applied) renderer.render(scene, camera)
+    return applied
   }
 
   function measure() {
@@ -485,6 +565,14 @@ export function createFaceStage(opt) {
     } catch (e) { void e }
     if (raf) { cancelAnimationFrame(raf); raf = 0 }
     throttle.reset()
+    // 动画与解码器都要跟着拆：mixer 不停会继续驱动已 dispose 的骨骼（报错或闪帧），
+    // dracoLoader 持有 wasm worker，不 terminate 会在反复进出页面时堆积。
+    if (mixer) { try { mixer.stopAllAction(); mixer.uncacheRoot(root || spinGroup) } catch (e) { void e } }
+    mixer = null
+    actions = {}
+    clips = []
+    activeClipName = ''
+    try { dracoLoader.dispose() } catch (e) { void e }
     disposeObject(root, renderer)
     if (root) spinGroup.remove(root)
     root = null
@@ -506,16 +594,20 @@ export function createFaceStage(opt) {
    *   2. 状态要能被外部观测：`stats()` 里带 `gender` / `asset` / `lastError`，
    *      否则"UI 选了男性但模型没换"这种问题只能靠肉眼猜。
    */
-  async function load(gender) {
+  async function load(gender, role) {
+    const wantRole = role === 'delivery' ? 'delivery' : 'edit'
     const g = AVATAR_ASSET[gender] ? gender : DEFAULT_GENDER
     // 幂等：H5 的 onMounted 与 App 的 renderjs mounted 都可能触发首次加载，
     // 加上首帧兜底的 boot tick，同一性别最多只真正加载一次。
+    // 注意 role 也要参与幂等判断：同一个性别在"捏脸页（edit 件）"与"通话页（delivery 件）"
+    // 下要加载的是**两个不同的文件**，只比 gender 会让第二个页面拿到错的资产。
     if (loading) return stats()
-    if (ready && currentGender === g) return stats()
-    const url = resolveAssetUrl(AVATAR_ASSET[g])
+    if (ready && currentGender === g && currentRole === wantRole) return stats()
+    const url = resolveAssetUrl((wantRole === 'delivery' ? AVATAR_DELIVERY_ASSET : AVATAR_ASSET)[g])
     loading = true
     ready = false
     loadingGender = g
+    currentRole = wantRole
     lastAssetUrl = url
     lastError = ''
     if (o.onStatus) o.onStatus('正在加载' + (g === 'female' ? '女性' : '男性') + '形象…')
@@ -524,10 +616,20 @@ export function createFaceStage(opt) {
       const gltf = await loader.loadAsync(url)
       // 换模型：先拆旧的再挂新的，避免两套骨骼同时参与渲染
       if (root) { spinGroup.remove(root); disposeObject(root, renderer) }
+      // 动画混合器必须跟着旧模型一起丢，否则它会继续驱动已经 dispose 的骨骼
+      if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(mixer.getRoot() || root || spinGroup) }
+      mixer = null
+      activeClipName = ''
+      clips = gltf.animations || []
       root = gltf.scene
       spinGroup.add(root)
       bound = bindThree(root)
       morphOwners = collectMorphOwners(root)
+      if (clips.length) {
+        mixer = new THREE.AnimationMixer(root)
+        actions = {}
+        for (const clip of clips) actions[clip.name] = mixer.clipAction(clip)
+      }
       lastLoadMs = Date.now() - t0
       computeFocus()
       resize()
@@ -564,11 +666,15 @@ export function createFaceStage(opt) {
       canvas: measure(), frame: frameInfo,
       // §7 排查用的可观测状态：性别 / 资产地址 / 是否正在加载 / 最近一次错误
       gender: currentGender, loadingGender, loading, asset: lastAssetUrl, lastError,
+      // 资产角色（edit / delivery）与动画状态：通话页要能确认"招手到底有没有在放"
+      role: currentRole,
+      clips: clips.map((c) => c.name),
+      playing: activeClipName,
     }
   }
 
   /** load 的失败兜底包装：任何异常都要把 loading 复位，否则后续切换性别会被幂等守卫挡住。 */
-  const loadSafe = (g) => Promise.resolve().then(() => load(g)).catch((e) => {
+  const loadSafe = (g, role) => Promise.resolve().then(() => load(g, role)).catch((e) => {
     loading = false
     ready = false
     if (o.onStatus) o.onStatus('形象加载失败：' + ((e && e.message) || e))
@@ -667,6 +773,12 @@ export function createFaceStage(opt) {
   return {
     version: FACE_THREE_VERSION,
     canvas,
+    /** 播放动画片段（默认 `wave` 招手）。通话页的"招手互动"入口。 */
+    playAnimation,
+    /** 停止动画回到静止姿势。 */
+    stopAnimation,
+    /** 口型驱动：{ vis_AA: 0.8, … }（lip-sync 曲线走这条通道，与表情互不覆盖）。 */
+    setVisemes,
     /** 诊断用：暴露渲染器内部状态（排"取景裁切"这类问题时不必再靠猜） */
     debug() {
       const info = renderer && renderer.info ? renderer.info : null
