@@ -20,13 +20,31 @@ export const AVATAR_ASSET = Object.freeze({
   male: 'static/avatar/BilinAI_MaleFaceRig_60k_edit.glb',
 })
 
+/**
+ * 资产版本号：**只用来破浏览器缓存**。
+ *
+ * ⚠️ 踩坑（2026-10-05）：资产同名替换后，H5 里仍显示**旧模型**（用户看到的是企鹅玩偶，
+ * 而磁盘上早已是白大褂医生）。原因是 URL 没变、浏览器用了缓存副本。
+ * 以后**每次重新导出资产都要把这个号加一**，否则改了等于没改。
+ */
+export const ASSET_VERSION = '2'
+
 /** 口型 / 表情资产（运行期，vis_* / expr_*）。捏脸页不用，视觉模式用，先登记在此避免路径写两处。 */
 export const AVATAR_DELIVERY_ASSET = Object.freeze({
   female: 'static/avatar/BilinAI_FemaleFaceRig_60k_delivery_baked.glb',
   male: 'static/avatar/BilinAI_MaleFaceRig_60k_delivery_baked.glb',
 })
 
-export const DEFAULT_GENDER = 'female'
+/**
+ * 默认性别。
+ *
+ * ⚠️ 2026-10-05 从 `female` 改成 `male`：用户核对发现「进 3D 模式看到的是企鹅玩偶」——
+ * 因为默认加载女那份，而 `3D建模/女医` 里的 OBJ 经几何指纹比对**其实就是企鹅玩偶的网格**
+ * （与企鹅资产余弦相似度 0.9679，与男医只有 0.8862），不是穿白大褂的女医。
+ * 男医源文件是**正确的白大褂医生**（已渲染确认）。
+ * 等用户提供正确的女医资产后再把默认改回或保持，届时重新走一遍管线。
+ */
+export const DEFAULT_GENDER = 'male'
 
 /** 形象性别选项。性别只决定加载哪份 .glb，不影响参数表与捏脸结果语义。 */
 export const GENDER_OPTIONS = Object.freeze([
@@ -46,9 +64,16 @@ export function genderLabel(value) {
  */
 export function resolveAssetUrl(rel) {
   const p = String(rel == null ? '' : rel).replace(/^\/+/, '')
+  // 破缓存：**只对 .glb 资产**追加版本号。同名替换资产后浏览器会继续用缓存副本，
+  // 实测表现为"磁盘上改了、页面上还是旧模型"（用户看到企鹅玩偶就是这个原因）。
+  // 只给 .glb 加，避免给所有静态资源（如解码器 wasm）都带上无意义的参数。
+  const versioned = /\.glb$/i.test(p) ? p + '?v=' + ASSET_VERSION : p
   const loc = (typeof location !== 'undefined') ? location : null
-  if (loc && loc.protocol && /^https?:$/.test(loc.protocol)) return loc.origin + '/' + p
-  return p
+  if (loc && loc.protocol && /^https?:$/.test(loc.protocol)) return loc.origin + '/' + versioned
+  return versioned
 }
 
-export default { AVATAR_ASSET, AVATAR_DELIVERY_ASSET, DEFAULT_GENDER, GENDER_OPTIONS, genderLabel, resolveAssetUrl }
+export default {
+  AVATAR_ASSET, AVATAR_DELIVERY_ASSET, ASSET_VERSION,
+  DEFAULT_GENDER, GENDER_OPTIONS, genderLabel, resolveAssetUrl,
+}
