@@ -20,6 +20,7 @@
 
 import * as THREE from '../../libs/three/three.module.js'
 import { GLTFLoader } from '../../libs/three/GLTFLoader.js'
+import { DRACOLoader } from '../../libs/three/DRACOLoader.js'
 import { adapter, bindThree, createThrottle, DEFAULT_THROTTLE_HZ } from '../face/face-index.js'
 
 export const FACE_THREE_VERSION = 'face-three/1.0.0'
@@ -177,7 +178,24 @@ export function createFaceStage(opt) {
   /** 上一次画布尺寸，用于「只在尺寸真变了才重新构图」，避免把滚轮缩放顶掉。 */
   let canvasSize = { w: 0, h: 0 }
 
+  /**
+   * glTF 加载器 + **Draco 解码**（2026-10-05 引入）。
+   *
+   * 为什么需要：交付规范 §5 的「`.glb` ≤ 8MB」**前提就是"Draco 压缩后"**，
+   * 而 Q 版医生这套 4K 原始贴图在未压缩时导出是 **14.5MB**；开 Draco 后 **6.4MB**。
+   * 也就是说：不加解码器就得放宽规范或牺牲贴图/面数，加解码器则**什么都不牺牲**。
+   *
+   * 解码器按 three 的常规布局放在 **`static/draco/`**（不是 `libs/`）——
+   * uni-app 只保证 `static/` 目录在打包时**全量拷贝**，`libs/` 下的 `.wasm` 有被漏掉的风险。
+   * 路径用 `resolveAssetUrl`（H5 用站点根、App 用相对路径，两端口径已在 assets.js 里分好）。
+   */
+  const dracoLoader = new DRACOLoader()
+  dracoLoader.setDecoderPath(resolveAssetUrl('static/draco/') + '/')
+  // 只用 WASM 解码（不挂 JS 回退版），省掉 700KB 的 draco_decoder.js
+  dracoLoader.setDecoderConfig({ type: 'wasm' })
+
   const loader = new GLTFLoader()
+  loader.setDRACOLoader(dracoLoader)
 
   function schedule() {
     if (!alive || raf) return

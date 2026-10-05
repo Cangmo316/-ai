@@ -94,3 +94,66 @@
 - 若引入：把 `DRACOLoader` 与解码器放进 `uni-app/libs/three/`，在 `face-three.js` 里挂上，
   并按规范 §6 的要求**在 H5 实测兼容性**（含形态键与动画一起动）。
 - 若不引入：按 §4 的口径改规范，交付未压缩的 14.5MB 件。
+
+
+---
+
+## 6. ✅ 已按方案 A 落地（2026-10-05）
+
+**决定**：引入 Draco 解码器，交付 **1K 贴图 + Draco** 的 6.4MB 件 —— 守规范、不减面、不牺牲动画。
+
+### 6.1 端侧接入（本地化，无 CDN 依赖）
+
+| 文件 | 位置 | 大小 |
+|---|---|---|
+| `DRACOLoader.js` | `uni-app/libs/three/`（与 GLTFLoader 同级） | 13KB |
+| `draco_wasm_wrapper.js` | **`uni-app/static/draco/`** | 57KB |
+| `draco_decoder.wasm` | **`uni-app/static/draco/`** | 279KB |
+
+两点取舍（都有理由）：
+1. **解码器放 `static/` 而不是 `libs/`** —— uni-app 只保证 `static/` 目录打包时**全量拷贝**，
+   `libs/` 下的 `.wasm` 有被漏掉的风险；`static/` 两个端都能直接按 URL 取到。
+2. **只用 WASM 解码**（`setDecoderConfig({ type: 'wasm' })`），不带 JS 回退版
+   —— 省掉 700KB 的 `draco_decoder.js`（编码器 907KB 也一并清掉）。
+
+`DRACOLoader.js` 的 import 原是 bare specifier `'three'`（three 官方 examples 的写法），
+本仓库没有 importmap，已改为相对路径 `'./three.module.js'`。
+
+### 6.2 接线位置
+
+`uni-app/common/face-gl/face-three.js`：
+```js
+const dracoLoader = new DRACOLoader()
+dracoLoader.setDecoderPath(resolveAssetUrl('static/draco/') + '/')
+dracoLoader.setDecoderConfig({ type: 'wasm' })
+const loader = new GLTFLoader()
+loader.setDRACOLoader(dracoLoader)
+```
+解码器路径复用 `assets.js` 里已有的 `resolveAssetUrl`（H5 用站点根、App 用相对路径）。
+
+### 6.3 端侧兼容性实测（规范 §6 要求"先在端上实测兼容性"）
+
+CDP 的浏览器窗口当时状态异常，于是**绕开 HBuilderX 的 GUI**：
+起一个无头 Edge（`--remote-debugging-port=9600`）跑自包含测试页，
+用**项目自己的 three r160 + DRACOLoader** 真加载 Draco 件。结果：
+
+| 资产 | 解码耗时 | 三角面 | morph | 动画 | 骨数 |
+|---|---|---|---|---|---|
+| 男医 delivery | 124~138ms | 59,000 | 23（可驱动） | `wave` 42 通道 | 14 |
+| 女医 delivery | 116~119ms | 58,998 | 23（可驱动） | `wave` 42 通道 | 14 |
+| 女医 edit | 119ms | 58,998 | 23（可驱动） | `wave` 123 通道 | 41 |
+
+**`morphDriven: 23`** 这一项是关键 —— 它不只检查名字在不在，而是**把形态键下标真正推了一下**
+确认 morph 能驱动（Draco 常见坑就是"几何解出来了但 morph 失效"）。
+结论：**Draco 与形态键、动画、蒙皮三者共存正常**。
+
+> 这轮临时测试页已删除；验证手法（无头 Edge + 自包含页 + `hx-cdp`）记在此处备用。
+
+### 6.4 四个件的最终状态
+
+| 资产 | 体积 | 判定 |
+|---|---|---|
+| 男医 edit / delivery | 6.4MB / 6.4MB | ✅ 规范 §5 |
+| 女医 edit / delivery | 6.3MB / 6.3MB | ✅ 规范 §5 |
+
+`npm run test:face` 20/20、`npm test` 全绿。
