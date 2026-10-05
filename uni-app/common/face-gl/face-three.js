@@ -186,7 +186,7 @@ export function createFaceStage(opt) {
   //   env=0.60 灯×0.80 → 均值 80.0  高光集中度 175.0  过曝 **0.73%** ← 取这组（拐点）
   //   env=0.45 灯×0.65 → 均值 76.0  高光集中度 179.0  过曝 0.25%（更暗，收益变小）
   // 取"过曝断崖下降、亮度几乎不降"的那一档。要再调可用 `stage.setLighting(env, 灯倍数)`。
-  if ('environmentIntensity' in scene) scene.environmentIntensity = 0.6
+  if ('environmentIntensity' in scene) scene.environmentIntensity = SPECULAR_ENV_INTENSITY
   const hemi = new THREE.HemisphereLight(0xFFFFFF, 0x9AA6A0, LIGHT_BASE.hemi * 0.8)
   const keyLight = new THREE.DirectionalLight(0xFFFFFF, LIGHT_BASE.key * 0.8)
   keyLight.position.set(0.55, 0.95, 1.45)
@@ -195,6 +195,43 @@ export function createFaceStage(opt) {
   const rimLight = new THREE.DirectionalLight(0xFFFFFF, LIGHT_BASE.rim * 0.8)
   rimLight.position.set(0, 0.65, -1.25)
   scene.add(hemi, keyLight, fillLight, rimLight)
+
+  /**
+   * `scene.environmentIntensity` 在 three r160（本仓库版本）上**不生效**。
+   *
+   * 实证：`debug().material.envMapIntensity = 1` 始终不变（该属性由 `scene.environmentIntensity` 赋值），
+   * 且场景里没有 `USE_ENVMAP` 宏；不同取值下的像素度量完全一致。
+   * 而 `MeshStandardMaterial.envMapIntensity` 是**每材质**生效的，所以 r160 上改走材质。
+   * r161+ 恢复用 `scene.environmentIntensity`（见 setLighting 里的版本判断）。
+   */
+  const ENV_INTENSITY_SUPPORTED = parseInt(THREE.REVISION, 10) >= 161
+  const SPECULAR_ENV_INTENSITY = 0.6
+
+  /**
+   * 压"皮肤油亮"的**正确那一刀**：只缩**镜面反射**，不碰漫反射。
+   *
+   * 上一轮我错在"把解析灯降到 0.8×"——那会**同时压暗漫反射**（脸整体发灰），
+   * 而"油"只来自镜面项。所以这里把镜面单独做成一个可调乘子：
+   * 用户再觉得油，直接调它即可，不会把脸调暗。
+   */
+  function setSpecular(multiplier) {
+    const m = typeof multiplier === 'number' ? Math.max(0, Math.min(2, multiplier)) : 1
+    specularMultiplier = m
+    if (scene.environment) {
+      if (ENV_INTENSITY_SUPPORTED) scene.environmentIntensity = SPECULAR_ENV_INTENSITY * m
+      else {
+        // r160：逐个材质设 envMapIntensity（这是唯一真正生效的入口）
+        scene.traverse((n) => {
+          if (!n.isMesh) return
+          const list = Array.isArray(n.material) ? n.material : [n.material]
+          for (const mat of list) if (mat && 'envMapIntensity' in mat) mat.envMapIntensity = m
+        })
+      }
+    }
+    renderer.render(scene, camera)
+    return { specularMultiplier: m, supported: ENV_INTENSITY_SUPPORTED }
+  }
+  let specularMultiplier = 1
 
   /**
    * 运行时调光（标定"皮肤偏油亮"用）。
@@ -419,11 +456,39 @@ export function createFaceStage(opt) {
    * 平移到原点，围绕原点的 Y 轴旋转就是「绕头部中轴转头」；用 copy+negate 而非 sub()，
    * 保证重复调用不会二次平移。
    */
+  /**
+   * 当前取景模式：`'head'`（捏脸页看脸）或 `'body'`（通话页看全身）。
+   * 由 `load()` 的 `frameMode` 选项设置；默认 head 保持既有行为。
+   */
+  let focusMode = 'head'
+
   function computeFocus() {
     if (!root) return
     root.position.set(0, 0, 0)
     root.updateWorldMatrix(true, true)
     const body = restBoxOf(root)
+
+    // ── 全身取景（通话页用）：数字人要露出全身，不是只给一个头 ──
+    // 捏脸页看的是"脸"，所以按头部取景（滑杆只作用在脸上，全身构图时脸只有几十像素）；
+    // 但通话页要的是"一个站在那儿的人"，只给头部会让人以为是"只有一个头"。
+    // 两种取景共用同一个相机与缩放逻辑，只换焦点盒。
+    if (focusMode === 'body') {
+      const center = body.getCenter(new THREE.Vector3())
+      const size = body.getSize(new THREE.Vector3())
+      size.multiplyScalar(1.06)          // 留一点边，避免脚尖/头顶贴边
+      root.position.copy(center).negate()
+      root.updateWorldMatrix(true, true)
+      focus = { center, size }
+      frameInfo = {
+        mode: 'body',
+        focus: [+size.x.toFixed(4), +size.y.toFixed(4), +size.z.toFixed(4)],
+        body: [+(body.max.x - body.min.x).toFixed(4),
+               +(body.max.y - body.min.y).toFixed(4),
+               +(body.max.z - body.min.z).toFixed(4)],
+        center: [+center.x.toFixed(4), +center.y.toFixed(4), +center.z.toFixed(4)],
+      }
+      return
+    }
     const headBone = bound ? bound.getBone('head') : null
     let headY = null
     if (headBone) {
@@ -676,15 +741,22 @@ export function createFaceStage(opt) {
    *   2. 状态要能被外部观测：`stats()` 里带 `gender` / `asset` / `lastError`，
    *      否则"UI 选了男性但模型没换"这种问题只能靠肉眼猜。
    */
-  async function load(gender, role) {
+  async function load(gender, role, options) {
     const wantRole = role === 'delivery' ? 'delivery' : 'edit'
     const g = AVATAR_ASSET[gender] ? gender : DEFAULT_GENDER
+    const opt = options || {}
+    // 取景模式：捏脸页要"看脸"，通话页要"看全身"（用户反馈"数字人只有一个头"就是这个）
+    const wantFocusMode = opt.frameMode === 'body' ? 'body' : 'head'
     // 幂等：H5 的 onMounted 与 App 的 renderjs mounted 都可能触发首次加载，
     // 加上首帧兜底的 boot tick，同一性别最多只真正加载一次。
     // 注意 role 也要参与幂等判断：同一个性别在"捏脸页（edit 件）"与"通话页（delivery 件）"
     // 下要加载的是**两个不同的文件**，只比 gender 会让第二个页面拿到错的资产。
+    // focusMode 同理：同一个资产在两种取景下都要能重建构图。
     if (loading) return stats()
-    if (ready && currentGender === g && currentRole === wantRole) return stats()
+    if (ready && currentGender === g && currentRole === wantRole && focusMode === wantFocusMode) {
+      return stats()
+    }
+    focusMode = wantFocusMode
     const url = resolveAssetUrl((wantRole === 'delivery' ? AVATAR_DELIVERY_ASSET : AVATAR_ASSET)[g])
     loading = true
     ready = false
@@ -717,6 +789,9 @@ export function createFaceStage(opt) {
       resize()
       applyFraming()
       applyWeights(weights)
+      // 镜面强度是**每材质**的（r160 上 scene.environmentIntensity 不生效），
+      // 所以必须在挂上新模型之后重新施加一次，否则换模型会把上一轮的值丢掉。
+      setSpecular(specularMultiplier)
       rotate(yaw, pitch)
       ready = true
       currentGender = g
@@ -756,7 +831,7 @@ export function createFaceStage(opt) {
   }
 
   /** load 的失败兜底包装：任何异常都要把 loading 复位，否则后续切换性别会被幂等守卫挡住。 */
-  const loadSafe = (g, role) => Promise.resolve().then(() => load(g, role)).catch((e) => {
+  const loadSafe = (g, role, options) => Promise.resolve().then(() => load(g, role, options)).catch((e) => {
     loading = false
     ready = false
     if (o.onStatus) o.onStatus('形象加载失败：' + ((e && e.message) || e))
@@ -863,6 +938,12 @@ export function createFaceStage(opt) {
     setVisemes,
     /** 运行时调光（观感标定用）：`setLighting(环境强度, 解析灯倍数)`。 */
     setLighting,
+    /**
+     * 只调**镜面强度**（治"皮肤油亮"的正确那一刀）。
+     * 与 `setLighting` 的区别：它不碰漫反射，所以压高光不会把脸一起调暗。
+     * 用户再觉得油，调它即可（0 = 完全无镜面，1 = 默认）。
+     */
+    setSpecular,
     /**
      * 观感度量：渲染到**离屏目标**再取像素，算"高光集中度"。
      *

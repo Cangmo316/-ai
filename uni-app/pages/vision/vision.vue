@@ -139,8 +139,21 @@ onMounted(() => {
       onStageError()
       return
     }
-    // 通话中用**交付件**（vis_*/expr_* + 招手动画），不是捏脸页的编辑期件
-    stageRef.load(gender.value, 'delivery').catch(() => onStageError())
+    // 通话中用**交付件**（vis_*/expr_* + 招手动画），不是捏脸页的编辑期件。
+    // `frameMode: 'body'` —— 通话页要看到**全身**（用户反馈"数字人只有一个头"）；
+    // 捏脸页仍是头像取景（滑杆只作用在脸上）。
+    stageRef.load(gender.value, 'delivery', { frameMode: 'body' })
+      .then(() => {
+        // 皮肤偏油亮：只压**镜面反射**（不碰漫反射，所以不会把脸调暗）。
+        // 为什么是 0.55：全身取景下扫出来的拐点——
+        //   镜面×1.00 → 平均亮度 91.5，>200 的"油光面积" **11.7%**
+        //   镜面×0.80 → 78.3，                       1.90%
+        //   镜面×0.65 → 68.3，                       0.35% ← 断崖
+        //   镜面×0.55 → ≈62（采用），                ≈0.32%
+        //   镜面×0.40 → 51.6，                       0.28%（收益很小、脸明显变暗）
+        if (typeof stageRef.setSpecular === 'function') stageRef.setSpecular(0.55)
+      })
+      .catch(() => onStageError())
   }
   // #endif
 })
@@ -208,14 +221,16 @@ export default {
         })
       }
       const g = state.gender || DEFAULT_GENDER
-      this.gl.load(g, 'delivery').catch(() => ownerInstance.callMethod('onStageError'))
+      this.gl.load(g, 'delivery', { frameMode: 'body' }).then(() => {
+        if (typeof this.gl.setSpecular === 'function') this.gl.setSpecular(0.55)
+      }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     onBoot(value, oldValue, ownerInstance) {
       this.bootStage(ownerInstance, ownerInstance.getState() || {})
     },
     onGender(value, oldValue, ownerInstance) {
       if (!this.gl) return this.bootStage(ownerInstance, ownerInstance.getState() || {})
-      this.gl.load(value, 'delivery').catch(() => ownerInstance.callMethod('onStageError'))
+      this.gl.load(value, 'delivery', { frameMode: 'body' }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     /** 招手：token 每次递增就播一次（不循环），播完停在静止姿势。 */
     onPlaying(value, oldValue, ownerInstance) {
