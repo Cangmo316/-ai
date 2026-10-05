@@ -6,7 +6,7 @@
 
 用法：
     blender --background <文件.blend> --python tools/blender-export-glb.py -- \
-        --out <输出.glb> [--stats] [--keep-morph-prefix shape_|vis_,expr_] [--animations]
+        --out <输出.glb> [--stats] [--keep-morph-prefix shape_|vis_,expr_] [--animations] [--draco] [--draco-level 6]
 
 注意：
   · **不能** apply 修改器里的 Armature（那会把蒙皮烘死）——导出器本身会跳过 Armature 修改器，
@@ -96,6 +96,11 @@ def main() -> None:
 
     # 是否导出动画（招手互动需要）；默认关，保持既有批量导出的体积行为
     want_animations = has_flag("--animations")
+    # Draco 网格压缩：规范 §5 的 ".glb ≤ 8MB" 前提就是"Draco 压缩后"。
+    # ⚠️ 但实测（Q 版医生，23 个 morph）：**开了反而更小但不明显**，因为 morph 目标
+    #    走稀疏访问器、本来就不占体积（见任务笔记）。默认仍关，避免给端侧增加解码器依赖。
+    want_draco = has_flag("--draco")
+    draco_level = int(arg_value("--draco-level", "6"))
     max_size = int(arg_value("--texture-max", "0"))
     if max_size > 0:
         for image in bpy.data.images:
@@ -181,6 +186,12 @@ def main() -> None:
         #    用 `--animations` 打开。开启后把 Action（如 `wave`）作为 glTF animation 导出，
         #    端侧 three.js 用 AnimationMixer 按名字播放。
         export_animations=want_animations,
+        export_draco_mesh_compression_enable=want_draco,
+        export_draco_mesh_compression_level=draco_level,
+        export_draco_position_quantization=14,
+        export_draco_normal_quantization=10,
+        export_draco_texcoord_quantization=12,
+        export_draco_generic_quantization=12,
         export_animation_mode="ACTIONS" if want_animations else "ACTIONS",
         export_nla_strips=False,
         export_frame_range=False,
