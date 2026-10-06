@@ -29,8 +29,9 @@ import logging
 import re
 from collections.abc import AsyncIterator
 
-from ..avatar.visemes import build_lipsync_payload
+from ..avatar.visemes import build_lipsync_payload, from_alignment
 from ..llm.base import LLMError, LLMProvider
+from ..voice.gateway import NullTtsProvider
 from ..models.elder import DEFAULT_ELDER_ID
 from ..models.message import (
     ROLE_AGENT,
@@ -146,6 +147,7 @@ class ChatService:
         idempotency: IdempotencyStore | None = None,
         memory_provider=None,
         after_turn=None,
+        voice=None,
     ) -> None:
         self.provider = provider
         self.store = store
@@ -162,6 +164,13 @@ class ChatService:
         # 一轮成功产出后的钩子（自动整理记忆用）。它在 done 事件之前执行，
         # 所以**必须很快**——慢一步老人就多等一步（模型抽取那部分由 main.py 另行后台跑）
         self.after_turn = after_turn
+        # 语音（TTS + 字级时间戳）：`app/voice/gateway.py` 里装配的 Provider。
+        # 做成**可注入且可选**：没配（Null*）时口型走估算版，对话完全不受影响。
+        # 默认取全局装配结果，测试与部署都可以覆盖。
+        if voice is None:
+            from ..voice import gateway as voice_gateway
+            voice = voice_gateway.build_tts_provider()
+        self.voice = voice
 
     # ------------------------------------------------------------ 事件流
 
@@ -321,9 +330,16 @@ class ChatService:
 
             # 口型关键帧：放在 done 之前发一次（端侧按 assistantMsgId 与这条回复关联）。
             # 只在**有正文**时发：纯表情/卡片不需要口型，发了反而让数字人"对空气张嘴"。
+            #
+            # 两条产出路径（**共用同一契约**，端侧只认 cues）：
+            #   ① TTS 给了字级时间戳（如百炼 Qwen-Audio-TTS / 或 CosyVoice+强制对齐）
+            #      → `from_alignment`，source: "tts-aligned"
+            #   ② 没配 TTS 或没拿到时间戳 → `build_lipsync_payload`，source: "estimated"
+            # 语音是**增强项**：任何失败都只记日志，绝不中断对话。
             if (reply_text or "").strip():
                 try:
-                    yield events.EVENT_LIPSYNC, build_lipsync_payload(reply_text, assistant_id)
+                    payload = await self._build_lipsync(reply_text, assistant_id)
+                    yield events.EVENT_LIPSYNC, payload
                 except Exception:  # noqa: BLE001 —— 口型是增强项，绝不能因为它失败而中断对话
                     logger.warning("口型关键帧生成失败，已忽略", exc_info=True)
 
@@ -394,7 +410,31 @@ class ChatService:
             if not producer.done():
                 producer.cancel()
 
-    # -------------------------------------------------------- 一次性回复
+    # ---------------------------------------------------------------- 内部
+
+    async def _build_lipsync(self, reply_text: str, assistant_id: str) -> dict:
+        """产出这一轮的口型关键帧：**优先用真语音时间戳**，拿不到就回退估算版。
+
+        为什么放在编排层而不是别处：
+        · 只有在"回复文本已经定稿"之后才能合成语音（文本还会被 StyleStreamer 重排）；
+        · 语音是增强项，失败必须静默降级 —— 这个判断要贴着事件流写才好读。
+        """
+        # ① 真语音时间戳（百炼 Qwen-Audio-TTS 自带；或 CosyVoice + 强制对齐）
+        provider = self.voice
+        if provider is not None and not isinstance(provider, NullTtsProvider):
+            # 百炼是"一次调用同时拿音频与时间戳"；CosyVoice 路线这里只拿音频，
+            # 时间戳要另外走 Aligner —— 两条路都由 Provider 自己决定，
+            # 编排层只看 "有没有 word_segments"。
+            result = await provider.synthesize(reply_text)
+            if result.ok:
+                segments = (result.extra or {}).get("word_segments") or []
+                if segments:
+                    return from_alignment(segments, assistant_id)
+                logger.info("TTS 没给字级时间戳（音色可能不支持）→ 口型回退估算版")
+            else:
+                logger.info("TTS 未产出音频（%s）→ 口型回退估算版", result.reason)
+        # ② 估算版（本机没有 TTS 时的默认，也是上面所有失败的兜底）
+        return build_lipsync_payload(reply_text, assistant_id)
 
     async def reply_once(
         self,

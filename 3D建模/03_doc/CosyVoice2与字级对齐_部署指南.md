@@ -113,3 +113,97 @@ curl http://127.0.0.1:8000/healthz
 3. **通话页还没有对话流入口**，口型目前靠 `window.__blVisionPlayLipsync(cues)` 手工触发。
 4. CosyVoice 的**音色复刻**（用老人授权的真人素材做定制音色）涉及肖像/声音授权，
    属产品与合规范畴，本轮未涉及。
+
+
+---
+
+## 6. 已选定路线：阿里云百炼 **Qwen-Audio-TTS**（2026-10-05）
+
+> 用户决定：走托管路线，模型 **Qwen-Audio-3.0-TTS**（文档里的模型名是
+> `qwen-audio-3.0-tts-flash`；具体版本名可用 `BILIN_TTS_MODEL` 覆盖）。
+
+### 6.1 契约（照阿里云官方文档，2026-09 更新）
+
+| 项 | 值 |
+|---|---|
+| 协议 | **WebSocket**：`wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`（新加坡另有域名） |
+| Python SDK | `dashscope`，`from dashscope.audio.tts_v2 import SpeechSynthesizer` |
+| 字级时间戳开关 | `additional_params={"word_timestamp_enabled": True}` |
+| ⚠️ 限制 | **仅在流式输出模式可用** → 必须传 `callback`，不能走非流式的 `call()` |
+| 时间戳位置 | `payload.output.sentence.words[]`，每项 `text` / `begin_time` / `end_time`（**毫秒**） |
+| 事件类型 | `sentence-begin` / `sentence-synthesis` / **`sentence-end`（带全量 words）** |
+| 音频 | 走 `on_data(bytes)` 回调；Python SDK 的 `on_event` **只给 message 字符串、不给音频** |
+| 音色 | `longanhuan_v3.6`（文档示例）；**哪些音色支持字级时间戳文档没列全** → 拿到空 words 时降级 |
+| 额外能力 | 还支持**音素级**时间戳 `Phoneme{begin_time,end_time,text,tone}`（比字级更细，本轮未用） |
+
+来源：[Qwen-Audio-TTS Python SDK](https://www.alibabacloud.com/help/en/model-studio/qwen-audio-tts-python-sdk)、
+[Java SDK（含 Sentence/Word/Phoneme 结构）](https://www.alibabacloud.com/help/en/model-studio/qwen-audio-tts-java-sdk)
+
+### 6.2 与 CosyVoice 路线的**结构差异**（这是本轮最重要的设计判断）
+
+| | CosyVoice（自建） | 百炼 Qwen-Audio-TTS（托管） |
+|---|---|---|
+| 流程 | **两步**：先合成音频 → 再用 WhisperX/MFA 对齐 | **一步**：同一会话里音频与时间戳一起回来 |
+| 对齐依赖 | 需要额外部署对齐工具 | **不需要**（`describe()` 直接报 `alignReady: true`） |
+| 环境 | GPU + Python 3.10 + WSL2/Docker | 本机零安装（只要 `pip install dashscope` + API Key） |
+
+所以实现上**不能照搬"先出音频再对齐"**：Qwen 的音频与 words 是**两路回调**，
+必须一次收齐。`app/voice/qwen_tts.py` 的 `QwenTtsProvider.synthesize()`
+把两者一起返回（`extra.word_segments`），编排层只看"有没有 word_segments"，
+**两条路线在编排层是同一段代码**（见 `ChatService._build_lipsync`）。
+
+### 6.3 本轮的落地
+
+| 文件 | 作用 |
+|---|---|
+| `server/app/voice/qwen_tts.py`（新） | `QwenTtsProvider`：一次调用拿音频 + 字级时间戳；`_extract_words_from_event()` 解析事件；`words_to_segments()` 做单位/键名转换（毫秒→秒、`begin_time`→`start`） |
+| `server/app/voice/gateway.py` | 装配优先级：`BILIN_TTS_PROVIDER=qwen` > `BILIN_TTS_URL` > `BILIN_TTS_CMD` > Null；`describe()` 对百炼额外报 `sdkInstalled`/`hasApiKey`/`model`/`voice` |
+| `server/app/orchestration/service.py` | 新增 `_build_lipsync()`：**优先真时间戳 → 失败/缺失则回退估算**；`voice` 可注入（默认取全局装配） |
+| `server/tests/test_qwen_tts.py`（新 17 项） | 事件解析（含坏数据/驼峰/顶层 words 三种形状）、单位换算、装配优先级、**降级不许静默** |
+| `server/tests/test_lipsync_wiring.py`（新 6 项） | **接线断言**：注入假 TTS 验证 lipsync 事件真的走 `tts-aligned` |
+
+**为什么 `dashscope` 故意不写进 `requirements.txt`**：仓库约定"只装四个包、能不装就不装"；
+托管路线是可选能力，没装时**明确降级**（`sdkInstalled: false`）而不是让服务起不来。
+
+### 6.4 接线层的"静默失败"防线
+
+口型接错**不会报错**——只是退回估算版、口型不准而已，页面上照常动。
+所以专门加了 `tests/test_lipsync_wiring.py`：用假的"带时间戳 TTS"注入编排层，
+断言 `source == "tts-aligned"` 且时间轴来自对齐数据（880ms 而非按字数的估算值）。
+**没有这条断言，"接上了"和"没接上"从外部看不出区别。**
+
+### 6.5 怎么启用（三步）
+
+```powershell
+# 1) 装 SDK（故意不在 requirements 里）
+cd server; .\.venv\Scripts\python.exe -m pip install dashscope
+
+# 2) 配置（server/.env；key 只放 .env，进仓库的只有变量名）
+#    DASHSCOPE_API_KEY=sk-xxxx
+#    BILIN_TTS_PROVIDER=qwen
+#    BILIN_TTS_VOICE=longanhuan_v3.6      # 换音色后要复验是否还返回 words
+#    BILIN_TTS_MODEL=qwen-audio-3.0-tts-flash
+
+# 3) 验证
+cd server; .\.venv\Scripts\python.exe -c "import sys;sys.path.insert(0,'.');from app.voice import gateway;print(gateway.describe())"
+#   → 期望 sdkInstalled=True, hasApiKey=True, ttsReady=True, alignReady=True
+```
+
+然后发起一次对话，SSE 流里应出现 `event: lipsync` 且 `"source":"tts-aligned"`。
+
+### 6.6 成本与合规（必须一并说清）
+
+- **音频出网 + 按字计费**：与选型文档"自建 GPU 推理"的取向不同，这是**产品取舍**，代码层不评判。
+- **老人语音/文本出网**：涉及 PIPL 与《人脸识别技术应用安全管理办法》同一类问题——
+  **建议在隐私政策里写明"语音合成由第三方云服务完成"**，并确认老人的知情同意范围。
+  （本项目已有"AI 标识常驻""不冒充真人"等红线，这条要一起对齐。）
+- **密钥管理**：`DASHSCOPE_API_KEY` 只放 `server/.env`（已 gitignore），任何提交文件里不得出现。
+
+### 6.7 仍然没做的（与路线无关）
+
+1. **音频下发通道**：`TtsProvider` 产出的音频文件**还没有送到端侧播放**。
+   端侧取音频带不了 `Authorization` 头（`innerAudioContext.src` / H5 `<audio>` 都不行），
+   需 `uni.downloadFile` 先落地或服务端签名 URL。
+2. **端侧时钟**仍是 `performance.now()`；接真音频后必须改成**以音频播放时刻为基准**，
+   否则音画漂移（`player.start(cues, audioStartMs)` 已留形参）。
+3. **通话页仍无对话流入口**，口型目前靠 `window.__blVisionPlayLipsync(cues)` 手工触发。

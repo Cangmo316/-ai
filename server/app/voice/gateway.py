@@ -278,6 +278,19 @@ def probe_wav_ms(path: str) -> int:
 # ---------------------------------------------------------------------------
 
 def build_tts_provider() -> TtsProvider:
+    """按环境变量装配 TTS。
+
+    优先级（**已定的路线优先，不猜**）：
+    1. `BILIN_TTS_PROVIDER=qwen` → 阿里云百炼 Qwen-Audio-TTS（托管路线，**自带字级时间戳**）
+    2. `BILIN_TTS_URL` → 独立推理节点（HTTP）
+    3. `BILIN_TTS_CMD` → 本机命令行推理（GPU 机器上的自建脚本）
+    4. 都没有 → `NullTtsProvider`（明确降级：口型走估算版，对话不受影响）
+    """
+    provider = (os.environ.get("BILIN_TTS_PROVIDER") or "").strip().lower()
+    if provider in ("qwen", "dashscope", "bailian"):
+        # 延迟导入：不装 dashscope SDK 时这一段根本不会执行
+        from .qwen_tts import build_qwen_provider
+        return build_qwen_provider()
     url = (os.environ.get("BILIN_TTS_URL") or "").strip()
     if url:
         return HttpTtsProvider(url, voice=os.environ.get("BILIN_TTS_VOICE", ""))
@@ -300,10 +313,24 @@ def describe() -> dict:
     """给 `/healthz` 用：如实反映语音链路当前是"真跑"还是"降级"。"""
     tts = build_tts_provider()
     aligner = build_aligner()
-    return {
-        "tts": type(tts).__name__,
-        "aligner": type(aligner).__name__,
+    tts_name = type(tts).__name__
+    # 百炼 Qwen-Audio-TTS **自带字级时间戳**，不需要再跑一遍强制对齐
+    # （它在同一次会话里把音频与 words 一起给回来，见 qwen_tts.py 顶部说明）
+    self_aligned = tts_name == "QwenTtsProvider"
+    align_ready = self_aligned or not isinstance(aligner, NullAligner)
+    info = {
+        "tts": tts_name,
+        "aligner": "（TTS 自带字级时间戳，无需额外对齐）" if self_aligned else type(aligner).__name__,
         "ttsReady": not isinstance(tts, NullTtsProvider),
-        "alignReady": not isinstance(aligner, NullAligner),
+        "alignReady": align_ready,
         "note": "未配置时口型走估算版（source=estimated），对话不受影响",
     }
+    if self_aligned:
+        # 托管路线的两个代价要能一眼看到，不要藏在文档里
+        from .qwen_tts import sdk_available
+        info["sdkInstalled"] = sdk_available()
+        info["hasApiKey"] = bool(os.environ.get("DASHSCOPE_API_KEY"))
+        info["voice"] = getattr(tts, "voice", "")
+        info["model"] = getattr(tts, "model", "")
+        info["note"] = "托管路线：音频出网 + 按字计费；sdkInstalled/hasApiKey 必须都为 true 才能真正工作"
+    return info
