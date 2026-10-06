@@ -94,6 +94,80 @@ def _extract_words_from_event(message: str) -> list[dict]:
     return words
 
 
+# 缺句子号时的兜底桶（整句快照是单调增长的，最长的那份即最全）
+_NO_SENTENCE_INDEX = -1
+
+
+def _extract_sentence_index(message: str) -> int | None:
+    """取这条事件属于哪一句（百炼给的是 `payload.output.sentence.index`）。
+
+    为什么要句子号：同一句会被投递多次（见 `WordSnapshotCollector`），
+    只有拿到句子号才能"覆盖"而不是"累加"。拿不到就返回 None，调用方走兜底。
+    """
+    try:
+        data = json.loads(message)
+    except (TypeError, ValueError):
+        return None
+    payload = data.get("payload") if isinstance(data, dict) else None
+    output = payload.get("output") if isinstance(payload, dict) else None
+    if not isinstance(output, dict):
+        return None
+    sentence = output.get("sentence")
+    if not isinstance(sentence, dict):
+        return None
+    for key in ("index", "sentence_index", "sentenceIndex"):
+        value = sentence.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+class WordSnapshotCollector:
+    """把百炼的多条事件收敛成**一句一份全量**的字级时间戳。
+
+    ⚠️ 为什么不能简单 `words.extend(...)`（第一版就是这么写的，真机上是错的）：
+    百炼对**同一句**会投递多次，每次给的是"到目前为止"的**增量快照**。
+    实测 16 个字的回复来了 5 次快照（7 → 7 → 10 → 13 → 16 段），最后一条才是全量；
+    直接累加会得到 53 段（另一句 17 字的回复实测 69 段），
+    时间轴里同一段出现好几遍且**非单调** —— 端侧按时间取样时会取到"上一遍"的时间戳，
+    于是声音与口型对不上。正确语义：**按句子覆盖**（后到的快照更全），收尾时按句子号排序拼接。
+    """
+
+    def __init__(self) -> None:
+        self._by_sentence: dict[int, list[dict]] = {}
+
+    def feed(self, message) -> None:
+        """喂一条 `on_event` 消息。解析不出字级时间戳时**什么都不做**（不清空已有数据）。"""
+        extracted = _extract_words_from_event(message)
+        if not extracted:
+            return
+        index = _extract_sentence_index(message)
+        if index is None:
+            # 拿不到句子号就无法定位覆盖：只保留最长的一份（快照单调增长 → 最长即最全）。
+            # 这条分支只在"整条流都不给句子号"时才有意义，见 result()。
+            previous = self._by_sentence.get(_NO_SENTENCE_INDEX, [])
+            if len(extracted) > len(previous):
+                self._by_sentence[_NO_SENTENCE_INDEX] = extracted
+            return
+        self._by_sentence[index] = extracted
+
+    def result(self) -> list[dict]:
+        """按句子顺序拼出全量字级时间戳。"""
+        indexed = {index: words for index, words in self._by_sentence.items()
+                   if index != _NO_SENTENCE_INDEX}
+        if indexed:
+            ordered: list[dict] = []
+            for index in sorted(indexed):
+                ordered.extend(indexed[index])
+            return ordered
+        # 整条流都没有句子号：只能用兜底桶里最长的那份快照
+        return list(self._by_sentence.get(_NO_SENTENCE_INDEX, []))
+
+
 def words_to_segments(words: list[dict]) -> list[dict]:
     """百炼的 words（毫秒、键名 begin/end）→ `from_alignment` 认的 segments（秒、键名 start/end）。
 
@@ -163,7 +237,9 @@ class QwenTtsProvider(TtsProvider):
             dashscope.base_websocket_api_url = self.region
 
         audio_chunks: list[bytes] = []
-        words: list[dict] = []
+        # 字级时间戳按**句子**收集：同一句会被多次投递，必须覆盖而不是累加
+        # （第一版用 words.extend 累加，实测 17 字的回复拿到 69 段，口型与声音对不上）
+        collector = WordSnapshotCollector()
         error_message: list[str] = []
         finished = threading.Event()
 
@@ -176,9 +252,9 @@ class QwenTtsProvider(TtsProvider):
                     audio_chunks.append(bytes(data))
 
             def on_event(self, message) -> None:
-                # 字级时间戳在 `sentence-end` 事件的 payload.output.sentence.words 里；
-                # 逐事件累加即可（同一句不会重复给两遍全量）
-                words.extend(_extract_words_from_event(message))
+                # 字级时间戳在 `payload.output.sentence.words` 里，但**同一句会来好几条快照**：
+                # 交由收集器按句子覆盖（累加会让时间轴重复且非单调，口型就会错位）
+                collector.feed(message)
 
             def on_complete(self) -> None:
                 finished.set()
@@ -217,10 +293,13 @@ class QwenTtsProvider(TtsProvider):
             for chunk in audio_chunks:
                 handle.write(chunk)
 
-        segments = words_to_segments(words)
+        segments = words_to_segments(collector.result())
+        # 时长口径：MP3 头不做解析（要额外依赖），但**末字结束时间**就是"这句话说完"的时刻，
+        # 比 0 有用得多（0 等于把 durationMs 这条契约字段白丢）。
+        duration_ms = int(round(max((seg["end"] for seg in segments), default=0.0) * 1000))
         return TtsResult(
             audio_path=out_file,
-            duration_ms=0,          # MP3 头解析不做（要额外依赖）；时长由 words 的末尾给出
+            duration_ms=duration_ms,
             ok=True,
             reason="" if segments else "本次未返回字级时间戳（该音色可能不支持）→ 口型将走估算版",
             extra={

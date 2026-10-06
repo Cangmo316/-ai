@@ -5,7 +5,9 @@
    拿不到时**明确返回空**（上层据此降级），不许伪造时间戳；
 2. **单位换算**：百炼给的是**毫秒**且键名是 `begin_time/end_time`，
    而 `from_alignment` 认的是 WhisperX 形状（秒 + `start/end`）—— 转换必须正确；
-3. **装配优先级**：`BILIN_TTS_PROVIDER=qwen` 要能覆盖 URL/CMD 两条路。
+3. **快照收敛**：同一句会被投递多次，必须按句子**覆盖**而不是累加
+   （累加会让时间轴重复且非单调 → 口型与声音错位，真机实测 17 字的回复拿到 69 段）；
+4. **装配优先级**：`BILIN_TTS_PROVIDER=qwen` 要能覆盖 URL/CMD 两条路。
 
 跑法：`cd server; .\\.venv\\Scripts\\python.exe -m unittest tests.test_qwen_tts -v`
 """
@@ -25,6 +27,8 @@ from app.voice.qwen_tts import (  # noqa: E402
     DEFAULT_MODEL,
     DEFAULT_VOICE,
     QwenTtsProvider,
+    WordSnapshotCollector,
+    _extract_sentence_index,
     _extract_words_from_event,
     build_qwen_provider,
     sdk_available,
@@ -110,6 +114,61 @@ class UnitConversionTest(unittest.TestCase):
 
     def test_坏条目跳过(self):
         self.assertEqual(words_to_segments([None, {}, {"word": "好"}]), [])
+
+
+class SentenceSnapshotTest(unittest.TestCase):
+    """同一句会被**投递多次**（增量快照）——必须按句子覆盖，不能累加。
+
+    守的是真机踩过的坑：第一版用 `words.extend(...)` 累加，
+    17 个字的回复拿到 69 段（时间轴重复且非单调），端侧按时间取样会取到"上一遍"的时间戳，
+    声音与口型因此对不上。
+    """
+
+    def 快照事件(self, index, count):
+        words = [{"text": "字%d" % i, "begin_time": i * 100, "end_time": i * 100 + 80}
+                 for i in range(count)]
+        return event({"type": "sentence-synthesis", "sentence": {"index": index, "words": words}})
+
+    def test_同一句的多次快照只保留最后一份(self):
+        collector = WordSnapshotCollector()
+        for count in (7, 7, 10, 13, 16):
+            collector.feed(self.快照事件(0, count))
+        words = collector.result()
+        self.assertEqual(len(words), 16)            # 不是 7+7+10+13+16 = 53
+        begins = [w["start"] for w in words]
+        self.assertEqual(begins, sorted(begins))     # 时间轴单调（累加会回跳）
+        self.assertEqual(len(set(begins)), 16)       # 没有重复时间戳
+
+    def test_多句按句子号顺序拼接(self):
+        collector = WordSnapshotCollector()
+        # 故意乱序喂：真实流里句子是顺序来的，但拼接不能依赖"喂的顺序"
+        collector.feed(event({"sentence": {"index": 1, "words": [
+            {"text": "后", "begin_time": 2000, "end_time": 2100}]}}))
+        collector.feed(event({"sentence": {"index": 0, "words": [
+            {"text": "先", "begin_time": 0, "end_time": 100},
+            {"text": "再", "begin_time": 100, "end_time": 200}]}}))
+        self.assertEqual([w["word"] for w in collector.result()], ["先", "再", "后"])
+
+    def test_空快照不清空已有数据(self):
+        collector = WordSnapshotCollector()
+        collector.feed(self.快照事件(0, 3))
+        collector.feed(event({"type": "sentence-synthesis", "sentence": {"index": 0, "words": []}}))
+        self.assertEqual(len(collector.result()), 3)
+
+    def test_没有句子号时取最长的一份快照(self):
+        collector = WordSnapshotCollector()
+        for count in (3, 5):
+            words = [{"text": "字%d" % i, "begin_time": i * 10, "end_time": i * 10 + 5}
+                     for i in range(count)]
+            collector.feed(event({"sentence": {"words": words}}))
+        self.assertEqual(len(collector.result()), 5)
+
+    def test_句子号解析(self):
+        self.assertEqual(_extract_sentence_index(event({"sentence": {"index": 2}})), 2)
+        self.assertEqual(_extract_sentence_index(event({"sentence": {"sentence_index": 0}})), 0)
+        self.assertIsNone(_extract_sentence_index(event({"sentence": {"words": []}})))
+        self.assertIsNone(_extract_sentence_index("不是 json"))
+        self.assertIsNone(_extract_sentence_index(None))
 
 
 class DegradeTest(unittest.TestCase):

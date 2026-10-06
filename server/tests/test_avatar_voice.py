@@ -166,8 +166,14 @@ class GatewayDegradeTest(unittest.TestCase):
     """降级链：默认全部降级，且**必须显式**（不许假装成功）。"""
 
     def setUp(self):
+        # ⚠️ 本类的前提是"**没有任何**语音配置"，而 server/.env（本机开发配置）会被加载进
+        # 进程环境（test_api 导入 app 时就触发了 load_dotenv），本机把
+        # BILIN_TTS_PROVIDER=qwen 配进 .env 后，这里若只摘 URL/CMD，全套跑就会假失败。
+        # 所以凡是会决定 provider 的变量都要摘掉 —— 与 test_qwen_tts.DegradeTest 同一口径。
         self._saved = {key: os.environ.get(key) for key in
-                       ("BILIN_TTS_URL", "BILIN_TTS_CMD", "BILIN_ALIGN_CMD")}
+                       ("BILIN_TTS_PROVIDER", "BILIN_TTS_URL", "BILIN_TTS_CMD",
+                        "BILIN_ALIGN_CMD", "DASHSCOPE_API_KEY", "BILIN_TTS_MODEL",
+                        "BILIN_TTS_VOICE", "BILIN_DASHSCOPE_WS_URL")}
         for key in self._saved:
             os.environ.pop(key, None)
 

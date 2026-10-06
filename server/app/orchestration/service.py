@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import AsyncIterator
 
@@ -348,11 +349,13 @@ class ChatService:
                 try:
                     # **音频先发、口型后发**：端侧要先把音频下载并起播，
                     # 才能用"音频播放时刻"驱动口型（否则音画会漂移）。
-                    audio_payload = self._last_audio_payload
-                    self._last_audio_payload = None
+                    # ⚠️ 生产顺序不能反（真机踩过）：音频 payload 是 `_build_lipsync()`
+                    # **内部**合成 TTS 时顺手写进 `self._last_audio_payload` 的。
+                    # 第一版写成"先取 payload 再合成"，取到的永远是 None —— 于是配了百炼 TTS
+                    # 也一个 audio 事件都不发，端侧表现就是"数字人没声音"。
+                    audio_payload, payload = await self._audio_then_lipsync(reply_text, assistant_id)
                     if audio_payload:
                         yield events.EVENT_AUDIO, audio_payload
-                    payload = await self._build_lipsync(reply_text, assistant_id)
                     yield events.EVENT_LIPSYNC, payload
                 except Exception:  # noqa: BLE001 —— 口型是增强项，绝不能因为它失败而中断对话
                     logger.warning("口型关键帧生成失败，已忽略", exc_info=True)
@@ -453,6 +456,22 @@ class ChatService:
         # ② 估算版（本机没有 TTS 时的默认，也是上面所有失败的兜底）
         return build_lipsync_payload(reply_text, assistant_id)
 
+    async def _audio_then_lipsync(self, reply_text: str, assistant_id: str):
+        """一次调用同时给出"音频事件 payload"与"口型 payload"（发送顺序由调用方决定）。
+
+        为什么要有这个方法：音频 payload 是 `_build_lipsync()` **内部**合成 TTS 时
+        顺手写进 `self._last_audio_payload` 的，所以"取音频"必须发生在"合成"之后。
+        两件事拆在两处写时极易写成"先取后合成"——第一版就是这样，取到的永远是 None，
+        端侧从头到尾收不到 audio 事件（配了 TTS 也没声音）。收进一个方法后顺序不可能再写反，
+        单测也能直接断言（见 tests/test_lipsync_wiring.py）。
+
+        返回 `(音频事件 payload 或 None, 口型 payload)`；音频失败时前者为 None，对话照常。
+        """
+        payload = await self._build_lipsync(reply_text, assistant_id)
+        audio_payload = self._last_audio_payload
+        self._last_audio_payload = None
+        return audio_payload, payload
+
     def _store_audio(self, result, assistant_id: str) -> dict | None:
         """把 TTS 产出的音频放进暂存，拼出端侧可直取的**签名 URL**。
 
@@ -477,9 +496,11 @@ class ChatService:
         return {
             "assistantMsgId": assistant_id,
             "url": audio_store.build_audio_url(audio_id, settings),
-            # 时长：TTS 若给了就用（百炼 MP3 头我们没解析），否则 0 由端侧按音频实际时长处理
+            # 时长：TTS 若给了就用（百炼按字级时间戳末字给出），否则 0 由端侧按音频实际时长处理
             "durationMs": int(getattr(result, "duration_ms", 0) or 0),
-            "format": "mp3",
+            # 格式跟着**实际落盘的扩展名**走（百炼是 mp3、CosyVoice 是 wav）：
+            # 原来写死 "mp3"，wav 路线会下发错误的 format
+            "format": (os.path.splitext(path)[1].lstrip(".").lower() or "mp3"),
             "bytes": len(data),
         }
 

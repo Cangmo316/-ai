@@ -244,7 +244,7 @@
 
 ================================================================================
 八、本轮第二轮（2026-10-06）：「没有具体的声音 / 挥手太假 / 只要进场挥一次 / 去掉两个按钮」
-    —— 代码已完成并验证；**尚未提交**
+    —— 代码已完成并验证；已在 546d5b9 提交
 ================================================================================
 
 ■ ① 真语音：先把「声音是怎么来的」讲清楚
@@ -298,7 +298,7 @@
 
 ■ 下一步（未完成）
    1) 用户复测：重启 mock（`node tools/mock-server.mjs`，现在默认人声）→ HBuilderX 重新"运行到浏览器"
-   2) 本轮改动**尚未提交**，待提交文件：
+   2) 本轮改动已在 546d5b9 提交，当时提交的文件：
         tools/mock-tts.ps1 / tools/mock-tts.mjs / tools/mock-tts-stub.mjs / tools/mock-server.mjs
         tools/test-audio-channel.mjs
         uni-app/pages/vision/vision.vue
@@ -313,3 +313,88 @@
    · 静息姿势也是观感契约：T-pose 会让挥手怎么调都假；改动画前先确认基准姿势
    · 交付件动画幅度要用 FK 复算**量化**，别只看"通道里有没有这个 clip"
    · 本会话中 exec 沙箱助手故障（apply deny-read ACLs），所有命令改走提权执行
+
+================================================================================
+九、本轮第三轮（2026-10-06）：接阿里云百炼真语音 —— 「出声 + 动嘴」在真后端跑通
+================================================================================
+
+■ 背景：为什么"mock 有声"仍不够
+   上一轮让 mock 默认出真中文语音（本机 SAPI5），解决了"演示时听不到人话"。
+   但 mock 只是联调靶子，产品要的是自建 agent 出真 TTS。本轮把端侧切到 :8000 真后端，
+   接阿里云百炼（DashScope）Qwen-Audio-TTS，口型走它自带的字级时间戳。
+
+■ ① 语音栈落地
+   · provider：server/.env 里 BILIN_TTS_PROVIDER=qwen + DASHSCOPE_API_KEY
+     （key 只放 .env，已 gitignore；提交文件里不得出现密钥）
+   · 模型/音色：qwen-audio-3.0-tts-flash / longanhuan_v3.6
+   · 依赖：dashscope 1.27.7 装进 server/.venv，**故意不写进 requirements.txt**
+     （仓库约定：不装也能跑；缺依赖时明确降级，并在 /healthz 如实上报）
+   · /healthz 自检：voice.tts=QwenTtsProvider、ttsReady=True、alignReady=True、sdk=True、key=True
+
+■ ② 端侧切换（不用改源码）
+   uni-app/api/config.js 的 setBaseURL 写 localStorage `bl_api_base`，运行期可切：
+     切真后端：uni.setStorageSync('bl_api_base','http://127.0.0.1:8000') 后刷新
+     回 mock  ：uni.setStorageSync('bl_api_base','') 或设 http://127.0.0.1:8787
+   本次浏览器验收就是在切到 :8000 之后跑的。
+
+■ ③ 抓到并修掉两条真 bug（"没声音 + 没唇形"在服务端的那两条真根因）
+   甲、字表重复累积 → 口型错位（server/app/voice/qwen_tts.py）
+       现象：百炼对同一句会多次投递"增量快照"（实测 7 7 10 13 16 段），
+             原实现 words.extend(...) 累加 → 17 字回复拿到 69 段、时间轴非单调，
+             端侧按时间取样会取到"上一遍"，口型就错位。
+       修法：新增 _extract_sentence_index() + WordSnapshotCollector，按
+             payload.output.sentence.index **覆盖**（同一句只保留最后一份快照），
+             收尾按句子号排序拼接；无句子号时取最长快照兜底。
+       附带：duration_ms 由 0 改为末字结束毫秒（实测 3520）。修后 16 段、时间单调。
+
+   乙、音频事件从不发出 → 完全没声音（server/app/orchestration/service.py）
+       真因：_last_audio_payload 是 _build_lipsync() **内部**合成 TTS 时才写入的，
+             而 generate() 写成"先取 payload 再合成" → if audio_payload 恒假
+             → **配了 TTS 也一个 audio 事件都不发**（端侧表现就是"没声音"）。
+       修法：新增 _audio_then_lipsync(reply_text, assistant_id)（**先合成、后取音频**，
+             顺序不可能再写反），generate() 改为调它。
+       附带：_store_audio 的 format 由写死 "mp3" 改为跟实际扩展名
+             （wav 路线原来会下发错误格式）。
+
+■ ④ 回归用例（照现有风格，中文测试名）
+   · server/tests/test_qwen_tts.py::SentenceSnapshotTest（5 条）
+       只保留最后一份快照 / 多句按号拼接 / 空快照不清空 / 无句子号取最长 / 句子号解析
+   · server/tests/test_lipsync_wiring.py::AudioEventWiringTest（4 条）
+       音频与口型一起产出且非空 / 每轮不串音 / TTS 失败时不产音频但口型照给 /
+       wav 的 format 跟着扩展名
+   · server/tests/test_avatar_voice.py：修测试环境隔离（见"坑"）
+
+■ ⑤ 实测读数（本轮）
+   · 后端全量单测：364 项 OK
+     （cd server; .\.venv\Scripts\python.exe -m unittest discover -s tests -t .）
+   · 真后端 SSE 端到端（_tts_probe/probe-server-e2e.py）：
+       事件序列 meta → token×N → audio → lipsync → done（顺序对）
+       audio：durationMs=7490、format=mp3、bytes=120881，
+              取音频 HTTP 200 audio/mpeg、头 ID3、非静音
+       lipsync：source=tts-aligned、durationMs=7610、cues=36，时间单调
+   · HBuilderX 内置浏览器 + 真后端（tools/hx-audio-gesture.mjs，base 切到 :8000）：
+       输入"妈今天药按时吃了没" → 判定全绿：
+         音频起播 true / 音频推进 2.41s / 口型姿态种类 6 / 口型在变化 true
+         / 变化落在播放期间 true / 说完回静止 true
+       后端日志同时可见 POST /v1/chat/stream 200 之后浏览器 GET /v1/audio/<hash> 200
+       —— 即这次的声音确实来自 :8000 的百炼，不是残留的 mock 音频。
+
+■ 更正（上文作者座）
+   上一轮 §八 里写的"尚未提交"已过期：那一轮改动已随 546d5b9 提交（含本文档本身）。
+
+■ 下一步（未完成）
+   1) 端侧默认连谁：当前默认仍是 mock(8787)，切真后端靠运行期 setBaseURL。
+      若要让 H5 默认连真后端，改 uni-app/api/config.js 的 DEFAULT_BASE_URL，
+      需跑 npm.cmd test（167 项）；mock 是联调靶子，改默认值前建议先与用户确认。
+   2) 百炼 MP3 头不解析（要额外依赖），时长用末字结束时间近似 —— 够用，但不是精确时长。
+   3) 端侧不使用 audio.durationMs（只用 url，时长取自音频元素本身），
+      后端该字段只影响契约与诊断。
+
+■ 本轮踩的坑（别再重走）
+   · .env 会被 load_dotenv 带进测试进程环境（经 tests/test_api.py 导入 app 时触发），
+     把 test_avatar_voice.GatewayDegradeTest（前提=完全没配置）打破 → 4 项假失败。
+     修法：该 setUp 摘除**所有**决定 provider 的变量，与 test_qwen_tts.DegradeTest 同口径。
+   · PS 5.1 会把 dashscope 的 DeprecationWarning 当错误（命令 exit=1，但测试实际 OK），别误判。
+   · 真后端音频 URL 是相对路径，由端侧按当前 base 绝对化 —— 切 :8000 后取音频没问题；
+     诊断时别自己拼绝对路径。
+   · 百炼对同一句会投多份"增量快照"，任何"累加"式收集都会长出重复字表。
