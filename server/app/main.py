@@ -32,6 +32,7 @@ from .api.reminders import router as reminders_router
 from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, warn_if_open
 from .config import Settings, get_settings
 from .errors import api_error
+from .voice import gateway as voice_gateway
 from .errors import code_for_status
 from .errors import table as error_table
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
@@ -338,6 +339,10 @@ def create_app(
             },
             "idempotency": idempotency.counts(),
             "memory": memories.counts(),
+            # 语音链路状态：如实反映"真跑还是降级"（与 auth/storage 同一原则：
+            # 部署方必须能从 /healthz 一眼看出真实状态，而不是猜）。
+            # 未配置时口型走估算版（source=estimated），对话完全不受影响。
+            "voice": voice_gateway.describe(),
             "storage": database.describe(),
             "storageDurable": database.enabled,
             "endpoints": [
