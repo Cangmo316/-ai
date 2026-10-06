@@ -28,10 +28,8 @@
       id="blVisionStage"
       :gender="gender"
       :boot="bootTick"
-      :playing="waveToken"
       :change:gender="visionGl.onGender"
       :change:boot="visionGl.onBoot"
-      :change:playing="visionGl.onPlaying"
     >
       <!-- 降级态：WebGL 不可用或资产加载失败时兜住"白屏"（原来的 CSS 假人留作兜底） -->
       <view v-if="stage.fallback" class="bl-vision__person">
@@ -44,17 +42,10 @@
       <text class="bl-vision__caption-text">{{ caption }}</text>
     </view>
 
-    <!-- 老人可以随时停下（产品红线）。放在招手与通话按钮之间，够大够显眼。 -->
-    <view class="bl-vision__wave">
-      <view class="bl-wave-btn bl-wave-btn--stop" @click="stopSpeaking">
-        <bl-icon name="muted" color="#FFFFFF" :size="48" />
-        <text class="bl-wave-btn__text">停一下</text>
-      </view>
-      <view class="bl-wave-btn" :class="{ 'is-busy': waving }" @click="wave">
-        <bl-icon name="person" color="#FFFFFF" :size="48" />
-        <text class="bl-wave-btn__text">{{ waving ? '招手打招呼…' : '让 TA 招手' }}</text>
-      </view>
-    </view>
+    <!-- 招手已改为**进场自动一次**（见 waveOnEntry）：真人视频通话里对方也只是接通时打个招呼，
+         手动反复触发只会让"动作假"更显眼 —— 所以「让 TA 招手」按钮去掉了。
+         一键停止（产品红线）由底部通话栏的「挂断」承担：它卸载本页，onUnmounted 里
+         stopAudio + lipsync.stop 全停；原「停一下」按钮同理去掉，stopSpeaking 保留给打断与验收。 -->
 
     <!-- 问一句：走**真对话流**（SSE 流式文字 → 服务端合成音频 + 口型 → 端侧边说边动嘴）。
          现在还没有语音识别，"说"用输入框代替；等 ASR 接上后这里换成按住说话即可。 -->
@@ -106,10 +97,9 @@ import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js
 const gender = computed(() => settings.gender || DEFAULT_GENDER)
 const stage = ref({ fallback: false })
 const bootTick = ref(0)
-const waveToken = ref(0)
-const waving = ref(false)
+// 进场招手是否已经播过（只播一次）
+let wavedOnEntry = false
 let stageRef = null
-let waveTimer = null
 /** 对话流订阅的取消函数（卸载时必须取消，否则页面销毁后回调仍会跑） */
 let unsubscribeLive = null
 /** 这一轮是"音频+口型"还是"只有口型"（诊断用；后端没配 TTS 时会是后者） */
@@ -438,20 +428,19 @@ function onStageError() {
   stage.value = { fallback: true }
 }
 
-/** 招手：播放交付件里的 `wave` 片段。用 token 递增触发 renderjs 的 :change 派发。 */
-function wave() {
-  if (waving.value) return
-  waving.value = true
-  waveToken.value += 1
-  if (waveTimer) clearTimeout(waveTimer)
-  // 动画 2.6s（78 帧 @30fps），留一点余量再复位按钮
-  waveTimer = setTimeout(() => { waving.value = false }, 3000)
-  if (stageRef && typeof stageRef.playAnimation === 'function') {
-    const r = stageRef.playAnimation('wave', { loop: false })
-    if (r && r.ok === false) {
-      waving.value = false
-      uni.showToast({ title: '这个形象还没有招手动作', icon: 'none' })
-    }
+/**
+ * 进场招手：**只在刚进通话页时挥一次**。
+ * 用户原话："挥手的动作太假，挥手只需要在刚打开语音的时候就行" —— 所以不再提供手动入口。
+ * 幂等：H5 与 App 两条路径的就绪回调都可能调到这里，第二次直接返回。
+ */
+function waveOnEntry() {
+  if (wavedOnEntry) return
+  wavedOnEntry = true
+  if (!stageRef || typeof stageRef.playAnimation !== 'function') return
+  const result = stageRef.playAnimation('wave', { loop: false })
+  // 编辑期资产没有这段动画：进场挥手失败**不打扰老人**（原来的 toast 是给手动按钮用的反馈）
+  if (result && result.ok === false && typeof console !== 'undefined') {
+    console.info('[vision] 该形象没有进场招手动画')
   }
 }
 
@@ -498,6 +487,8 @@ onMounted(() => {
         //   镜面×0.55 → ≈62（采用），                ≈0.32%
         //   镜面×0.40 → 51.6，                       0.28%（收益很小、脸明显变暗）
         if (typeof stageRef.setSpecular === 'function') stageRef.setSpecular(0.55)
+        // 模型**就绪之后**才挥手：资产还没加载完就播会定格在第一帧（看起来更假）
+        waveOnEntry()
       })
       .catch(() => onStageError())
   }
@@ -541,7 +532,6 @@ watch(gender, (g) => {
 
 onUnmounted(() => {
   if (timer) { clearInterval(timer); timer = null }
-  if (waveTimer) { clearTimeout(waveTimer); waveTimer = null }
   if (unsubscribeLive) { unsubscribeLive(); unsubscribeLive = null }
   lipsync.stop()
   stopAudio()
@@ -572,7 +562,12 @@ function ask(text) {
   return { ok: true, question, conversationId: chat.conversationId || DEFAULT_CONVERSATION_ID }
 }
 
-/** 一键停止（产品红线：老人可随时停下）。 */
+/**
+ * 一键停止（产品红线：老人可随时停下）。
+ * ⚠️ 页面上**不再有**独立按钮（原「停一下」已去掉）：这条红线现在由通话栏的「挂断」承担
+ * —— 它卸载本页，onUnmounted 里 stopAudio + lipsync.stop 会把声音与口型全部停掉。
+ * 这个函数保留给「打断」（pipeline 上的 VAD / 未来入口）与自动化验收（window.__blVisionStop）。
+ */
 function stopSpeaking() {
   stopAudio()
   lipsync.stop()
@@ -688,7 +683,7 @@ import { DEFAULT_GENDER } from '../../common/face-gl/assets.js'
 export default {
   data() {
     // 字段名避开 stage：与 <script setup> 暴露的 stage 同名会被 Vue 拦下。
-    return { gl: null }
+    return { gl: null, waved: false }
   },
   mounted(ownerInstance) {
     // #ifdef APP-PLUS
@@ -716,6 +711,11 @@ export default {
       const g = state.gender || DEFAULT_GENDER
       this.gl.load(g, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).then(() => {
         if (typeof this.gl.setSpecular === 'function') this.gl.setSpecular(0.55)
+        // 进场招手只播一次：切性别会重载模型，但**不该再挥一次**（与 H5 同口径）
+        if (!this.waved) {
+          this.waved = true
+          this.gl.playAnimation('wave', { loop: false })
+        }
       }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     onBoot(value, oldValue, ownerInstance) {
@@ -725,12 +725,6 @@ export default {
       if (!this.gl) return this.bootStage(ownerInstance, ownerInstance.getState() || {})
       this.gl.load(value, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => ownerInstance.callMethod('onStageError'))
     },
-    /** 招手：token 每次递增就播一次（不循环），播完停在静止姿势。 */
-    onPlaying(value, oldValue, ownerInstance) {
-      if (!value || value === oldValue) return
-      if (!this.gl) return this.bootStage(ownerInstance, ownerInstance.getState() || {})
-      this.gl.playAnimation('wave', { loop: false })
-    },
     // #endif
 
     // #ifndef APP-PLUS
@@ -738,7 +732,6 @@ export default {
     bootStage() {},
     onBoot() {},
     onGender() {},
-    onPlaying() {},
     // #endif
   },
 }
@@ -884,35 +877,6 @@ export default {
   text-align: center;
 }
 
-/* 招手 / 停一下：两个等宽按钮并排（比通话按钮更宽更好按，适老） */
-.bl-vision__wave {
-  position: relative;
-  display: flex;
-  justify-content: center;
-  gap: 20rpx;
-  margin-top: 20rpx;
-  padding: 0 32rpx;
-}
-.bl-wave-btn {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12rpx;
-  min-height: 92rpx;
-  padding: 18rpx 20rpx;
-  border-radius: var(--bl-radius-pill);
-  background-color: rgba(7, 193, 96, .92);
-}
-.bl-wave-btn:active { background-color: rgba(6, 170, 84, .95); }
-.bl-wave-btn.is-busy { background-color: rgba(255, 255, 255, .3); }
-.bl-wave-btn--stop { background-color: rgba(255, 255, 255, .26); }
-.bl-wave-btn--stop:active { background-color: rgba(255, 255, 255, .4); }
-.bl-wave-btn__text {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #FFFFFF;
-}
 
 /* 问一句：输入框 + 提交（这一条走真对话流，数字人会边说边动嘴） */
 .bl-vision__ask {

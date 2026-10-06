@@ -381,6 +381,10 @@ export function createFaceStage(opt) {
   let visemeWrites = 0
   let lastVisemeApplied = 0
   let clips = []
+  /** 手臂基准姿势（A-pose）诊断读数：量不出轴时为 null（保持原样，不乱转） */
+  let armRestInfo = null
+  /** 程序化招手诊断读数（null = 回落交付件的 wave） */
+  let waveGestureInfo = null
   let actions = {}
   let activeClipName = ''
   const clock = new THREE.Clock()
@@ -808,6 +812,7 @@ export function createFaceStage(opt) {
     actions = {}
     clips = []
     activeClipName = ''
+    waveGestureInfo = null
     try { dracoLoader.dispose() } catch (e) { void e }
     // 环境贴图是 GPU 资源，舞台销毁时要显式释放（否则反复进出页面会漏显存）
     if (scene && scene.environment) {
@@ -835,6 +840,392 @@ export function createFaceStage(opt) {
    *   2. 状态要能被外部观测：`stats()` 里带 `gender` / `asset` / `lastError`，
    *      否则"UI 选了男性但模型没换"这种问题只能靠肉眼猜。
    */
+/* ─────────────────── 手臂基准姿势：把交付件的 T-pose 收成「自然下垂」 ─────────────────── */
+
+/**
+ * 静息姿势是 T-pose 的资产**怎么调都假**：不讲话时两臂平举像稻草人，
+ * 挥手也只是「从平举刻度上抖一下」。所以给手臂叠一层「自然下垂」基准（A-pose）。
+ *
+ * 三步：
+ *   1. **实测轴**：逐个候选局部轴把上臂转一次，量 `hand.*` 的**世界 Y 下降最多**那组。
+ *      交付件过了外轴（Y-up→Z-up）后局部轴与直觉不一致，写死 `rotation_euler[2]`
+ *      会让手前后晃而不是上下动 —— Blender 侧 `tools/blender-wave-anim.py` 踩过同一个坑，
+ *      那里的做法同样是「实测」。
+ *   2. **有动画轨道的骨**：把偏移**乘进每个关键帧**（`q → q * offset`）。glTF 四元数插值
+ *      是逐段 slerp，而 `slerp(q0*p, q1*p) = slerp(q0,q1)*p`，所以「后乘常量」对动作**无损**，
+ *      只是把整段动画搬到下垂基准上播。关键是**不要在每帧和 AnimationMixer 抢着写骨骼**：
+ *      谁先谁后、动作停了要不要补一次，都会变成「姿势闪一下」这种很难查的 bug。
+ *   3. **没有动画轨道的骨**：直接把偏移写进骨骼静息值。
+ *
+ * 量不出轴（骨名对不上／换了资产）时**整体跳过**：宁可保持原样，也不要乱转。
+ */
+const ARM_DROP_JOINTS = [
+  { key: 'upperarm', share: 0.72 },   // 肩：承担主要的下垂量
+  { key: 'forearm', share: 0.28 },    // 肘：留一点自然弯曲（全压在肩上看像木偶吊着）
+]
+/** 不折到 100%：完全垂直会贴住身体，留一点角度更像自然站姿 */
+const ARM_DROP_FRACTION = 0.85
+/**
+ * 「这条轨道算不算真的在动」的门槛（弧度，≈20°）。
+ * 交付件里没被动画驱动的骨也会带一条**常量轨道**（左臂那两根就是 2 关键帧 STEP），
+ * 它们的"离基准距离"恒为 0；把常量轨道当成动画，左臂会在挥手期间被推回 T-pose。
+ */
+const ARM_CLIP_DEV_MIN = 0.35
+
+/**
+ * 骨名归一化：GLTFLoader 会过一遍 PropertyBinding.sanitizeNodeName，把 . : _ 之类从节点名里抹掉
+ * —— 交付件里叫 upperarm.R 的骨，**运行时叫 upperarmR**。取骨不能按字面名硬取
+ * （第一版就是这么写的，结果一根也取不到，静默退化成"什么都不做"），统一按「只留字母数字并小写」建索引。
+ */
+function normalizeBoneKey(name) {
+  return String(name || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+}
+
+/** 收集 root 下所有骨骼：骨骼既可能挂在 Armature 节点上，也可能只出现在 skin.bones 里 */
+function collectBones(root) {
+  const map = new Map()
+  const visit = (node) => {
+    if (!node) return
+    if (node.isBone && node.name) map.set(normalizeBoneKey(node.name), node)
+    if (node.isSkinnedMesh && node.skeleton && Array.isArray(node.skeleton.bones)) {
+      for (const bone of node.skeleton.bones) {
+        if (bone && bone.name) map.set(normalizeBoneKey(bone.name), bone)
+      }
+    }
+    const kids = node.children || []
+    for (const kid of kids) visit(kid)
+  }
+  visit(root)
+  return map
+}
+
+/**
+ * 骨骼在**模型内部**的父级旋转（一路乘到 root 为止）。
+ * 刻意不走 matrixWorld：那条链上还挂着 tiltGroup / spinGroup，取景一晃这层姿势就跟着歪。
+ */
+function modelParentRotation(bone, root) {
+  const chain = []
+  let cursor = bone ? bone.parent : null
+  while (cursor && cursor !== root) {
+    chain.push(cursor)
+    cursor = cursor.parent
+  }
+  const matrix = new THREE.Matrix4()
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    chain[i].updateMatrix()
+    matrix.multiply(chain[i].matrix)
+  }
+  return new THREE.Quaternion().setFromRotationMatrix(matrix)
+}
+
+/**
+ * 求「把这条手臂折下去」的旋转（**局部四元数**，左乘到骨骼上即生效）。
+ *
+ * 世界系里的转轴取 `手相对肩的方向 × 竖直向下`：这条轴上的旋转**完全落在这两者张成的平面内**，
+ * 所以手臂只会"往下走"，既不会被带进身体、也不会前后穿。
+ * （写死某个局部轴的做法试过，会得到"手往下但整个人像耸肩"的怪姿势。）
+ */
+function solveArmDropRotation(armBone, handBone, root, radians, applyTo) {
+  const head = new THREE.Vector3()
+  const hand = new THREE.Vector3()
+  armBone.getWorldPosition(head)
+  handBone.getWorldPosition(hand)
+  const direction = hand.sub(head)
+  if (!(direction.length() > 1e-6)) return null
+  direction.normalize()
+  const down = new THREE.Vector3(0, -1, 0)
+  // 世界 → 模型系（**必须换**）：下面的 modelParentRotation 是相对 root 的旋转，
+  // 而 root 自己（以及外层的 spinGroup/tiltGroup）带着朝向；用户拖拽转动模型时，
+  // 不换系的话"竖直向下"会跟着歪，下垂轴就不再是脚下的那条。
+  const rootQuat = new THREE.Quaternion()
+  root.getWorldQuaternion(rootQuat).invert()
+  direction.applyQuaternion(rootQuat)
+  down.applyQuaternion(rootQuat)
+  const axis = new THREE.Vector3().crossVectors(direction, down)
+  if (!(axis.length() > 1e-6)) return null
+  axis.normalize()
+  const world = new THREE.Quaternion().setFromAxisAngle(axis, radians)
+  // ⚠️ 父级坐标系要取**真正要挨这一刀的那根骨**（applyTo），不是用来量方向的上臂：
+  // 肘的父级是上臂，两者差一个"上臂静息旋转"。用错的话前臂绕的是另一条轴 ——
+  // 下垂看着还行（角度小、看不出），但挥手摆动会变成拧手腕（实测：手部几乎不动）。
+  const parent = modelParentRotation(applyTo || armBone, root)
+  return parent.clone().invert().multiply(world).multiply(parent)
+}
+
+/** 两个四元数之间的夹角（弧度，0..π）。取 |dot|：q 与 -q 是同一个旋转 */
+function quatAngle(x, y, z, w, ref) {
+  const dot = Math.abs(x * ref.x + y * ref.y + z * ref.z + w * ref.w)
+  return 2 * Math.acos(Math.max(0, Math.min(1, dot)))
+}
+
+/* ─────────────────── 程序化「招手」：交付件的 wave 幅度不够 ─────────────────── */
+
+/**
+ * 为什么不用交付件里的 `wave`：拿 GLB 做 FK 复算（_tts_probe/anim6.cjs）实测那 2.6 秒里
+ * 上臂只摆了 ±5°、手腕 5°，**手部全程位移约 1cm** —— 它不是"挥手"，是"举着胳膊抖"，
+ * 所以看着假。资产契约不动（GLB 里仍然有 wave），运行时用**同名程序化片段**替代播放；
+ * 量不出轴（换资产 / 骨名对不上）时自动回落到交付件那一版。
+ *
+ * 动作全部绕**同一条实测平面轴**（就是下垂基准那条：手-肩方向 × 竖直向下）：
+ * 绕它转 = 手臂只在这个平面里上下走 → 抬臂与摆动都不可能穿进身体。
+ *   0    → 0.42s   抬臂到 WAVE_ARM_FROM_DOWN（smoothstep，别像机械臂）
+ *   0.42 → 1.92s   前臂摆动 ±WAVE_WIPER_DEG × 3 个来回，手腕相位领先一点跟着摆
+ *   1.92 → 2.34s   收回静息（终点就是下垂基准，与"没在播动画"同一姿势 → 首尾无缝）
+ */
+const WAVE_ARM_FROM_DOWN = 148   // 抬到离"竖直向下"多少度（90=平举，148≈斜上 58°）
+const WAVE_WIPER_DEG = 22        // 前臂摆动幅度
+const WAVE_WRIST_DEG = 9         // 手腕跟随幅度（相位领先，像甩出去的手）
+const WAVE_CYCLES = 3
+const WAVE_RAISE_MS = 420
+const WAVE_HOLD_MS = 1500
+const WAVE_LOWER_MS = 420
+const WAVE_KEY_MS = 60
+
+/**
+ * 量「肩 → 手」相对**竖直向下**的角度（度）。
+ * 抬手到底抬起来没有，用这个读数验，不靠肉眼猜 —— 与下垂基准同一套量纲。
+ */
+function armAngleFromDown(armBone, handBone) {
+  const head = new THREE.Vector3()
+  const hand = new THREE.Vector3()
+  armBone.getWorldPosition(head)
+  handBone.getWorldPosition(hand)
+  const dir = hand.sub(head)
+  if (!(dir.length() > 1e-6)) return null
+  dir.normalize()
+  return THREE.MathUtils.radToDeg(Math.acos(Math.max(-1, Math.min(1, dir.dot(new THREE.Vector3(0, -1, 0))))))
+}
+
+/**
+ * 生成程序化「招手」片段。
+ * @returns {null|{clip:THREE.AnimationClip, info:object}} 量不出轴时返回 null（上层回落交付件）
+ */
+function buildWaveGesture(spec) {
+  if (!spec || !spec.shoulder || !spec.elbow || !spec.wrist) return null
+  const { shoulder, elbow, wrist } = spec
+  const before = armAngleFromDown(shoulder.bone, wrist.bone)
+  if (before === null) return null
+  const rad = THREE.MathUtils.degToRad
+  const target = before + (WAVE_ARM_FROM_DOWN - before)   // 语义自明：抬到 WAVE_ARM_FROM_DOWN
+  const raiseDeg = WAVE_ARM_FROM_DOWN - before
+
+  /** 试一个方向：把肩按 dir 转 raiseDeg，返回"肩→手"的新角度（试完立刻还原） */
+  const probe = (dir) => {
+    const keep = [shoulder.bone, elbow.bone, wrist.bone].map((b) => b.quaternion.clone())
+    try {
+      shoulder.bone.quaternion.copy(shoulder.base).premultiply(
+        new THREE.Quaternion().setFromAxisAngle(shoulder.axis, dir * rad(raiseDeg)))
+      shoulder.bone.updateWorldMatrix(false, true)
+      return armAngleFromDown(shoulder.bone, wrist.bone)
+    } finally {
+      shoulder.bone.quaternion.copy(keep[0])
+      elbow.bone.quaternion.copy(keep[1])
+      wrist.bone.quaternion.copy(keep[2])
+      shoulder.bone.updateWorldMatrix(false, true)
+    }
+  }
+  // 符号**实测**：下垂基准是"绕该轴正向 = 往下"，但换资产后未必；
+  // 取"更接近目标角"的那个方向，而不是写死正负。
+  const up = probe(-1)
+  const dn = probe(1)
+  const sign = (up !== null && (dn === null || Math.abs(up - target) <= Math.abs(dn - target))) ? -1 : 1
+
+  const total = WAVE_RAISE_MS + WAVE_HOLD_MS + WAVE_LOWER_MS
+  const times = []
+  const vS = []
+  const vE = []
+  const vW = []
+  const push = (ms) => {
+    const inHold = ms > WAVE_RAISE_MS && ms < WAVE_RAISE_MS + WAVE_HOLD_MS
+    const uHold = inHold ? (ms - WAVE_RAISE_MS) / WAVE_HOLD_MS : 0
+    const win = inHold ? Math.sin(Math.PI * uHold) : 0          // 两端为 0：摆动与抬臂不打架
+    let phi = 0
+    if (ms <= WAVE_RAISE_MS) {
+      const u = WAVE_RAISE_MS ? ms / WAVE_RAISE_MS : 1
+      phi = raiseDeg * (0.5 - 0.5 * Math.cos(Math.PI * u))
+    } else if (inHold) {
+      phi = raiseDeg
+    } else {
+      const u = Math.min(1, (ms - WAVE_RAISE_MS - WAVE_HOLD_MS) / WAVE_LOWER_MS)
+      phi = raiseDeg * (0.5 + 0.5 * Math.cos(Math.PI * u))
+    }
+    const psi = WAVE_WIPER_DEG * win * Math.sin(2 * Math.PI * WAVE_CYCLES * uHold)
+    const chi = -WAVE_WRIST_DEG * win * Math.sin(2 * Math.PI * WAVE_CYCLES * uHold - Math.PI / 6)
+    const qS = shoulder.base.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(shoulder.axis, sign * rad(phi)))
+    const qE = elbow.base.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(elbow.axis, rad(psi)))
+    const qW = wrist.base.clone().premultiply(new THREE.Quaternion().setFromAxisAngle(wrist.axis, rad(chi)))
+    times.push(ms / 1000)
+    vS.push(qS.x, qS.y, qS.z, qS.w)
+    vE.push(qE.x, qE.y, qE.z, qE.w)
+    vW.push(qW.x, qW.y, qW.z, qW.w)
+  }
+  push(0)
+  for (let ms = WAVE_KEY_MS; ms < total; ms += WAVE_KEY_MS) push(ms)
+  push(total)
+  const clip = new THREE.AnimationClip('wave', total / 1000, [
+    new THREE.QuaternionKeyframeTrack(shoulder.bone.name + '.quaternion', times, vS),
+    new THREE.QuaternionKeyframeTrack(elbow.bone.name + '.quaternion', times, vE),
+    new THREE.QuaternionKeyframeTrack(wrist.bone.name + '.quaternion', times, vW),
+  ])
+  // blArmRest：别再被 applyArmRestPose 的"按偏离量加权"改一遍（它的关键帧已经是最终姿势）
+  clip.userData = Object.assign({}, clip.userData, { blArmRest: true, blProcedural: true })
+  const after = probe(sign)
+  return {
+    clip,
+    info: {
+      procedural: true, keys: times.length, duration: +(total / 1000).toFixed(2),
+      fromDownBefore: +before.toFixed(1), fromDownPeak: after === null ? null : +after.toFixed(1),
+      raiseDeg: +raiseDeg.toFixed(1), wiperDeg: WAVE_WIPER_DEG, sign,
+    },
+  }
+}
+
+/**
+ * 把「自然下垂」基准叠到手臂上。
+ * @returns {null|{bones:number, clips:number, names:string[], degrees:number}} 诊断读数（stats().armRest）
+ */
+function applyArmRestPose(root, clips) {
+  if (!root) return null
+  root.updateWorldMatrix(true, true)
+  const bones = collectBones(root)
+  const offsets = new Map()
+  let totalDegrees = 0
+
+  for (const side of ['L', 'R']) {
+    const arm = bones.get(normalizeBoneKey('upperarm.' + side)) || null
+    const fore = bones.get(normalizeBoneKey('forearm.' + side)) || null
+    const hand = bones.get(normalizeBoneKey('hand.' + side)) || null
+    if (!arm || !hand) continue
+    const bindArm = arm.quaternion.clone()
+    const bindFore = fore ? fore.quaternion.clone() : null
+    const restore = () => {
+      arm.quaternion.copy(bindArm)
+      if (fore) fore.quaternion.copy(bindFore)
+      root.updateWorldMatrix(true, true)
+    }
+    // 下垂总量：量「肩 → 手」这条整臂方向与竖直向下的夹角，再取一个比例。
+    const head = new THREE.Vector3()
+    const tail = new THREE.Vector3()
+    arm.getWorldPosition(head)
+    hand.getWorldPosition(tail)
+    const span = tail.sub(head)
+    const total = span.length() > 1e-6
+      ? Math.acos(Math.max(-1, Math.min(1, span.normalize().dot(new THREE.Vector3(0, -1, 0))))) * ARM_DROP_FRACTION
+      : 0
+    if (!(total > 0)) continue
+    totalDegrees = THREE.MathUtils.radToDeg(total)
+    for (const joint of ARM_DROP_JOINTS) {
+      const bone = joint.key === 'upperarm' ? arm : fore
+      if (!bone) continue
+      restore()
+      // 轴一律按「整臂方向」算，两节才落在同一个平面里（各算各的会拧成麻花）
+      const local = solveArmDropRotation(arm, hand, root, total * joint.share, bone)
+      if (local) {
+        // 记「轴 + 角度」而不只是四元数：关键帧要按偏离量**缩放这个角度**（见下方加权）。
+        const axis = new THREE.Vector3(local.x, local.y, local.z)
+        const sin = axis.length()
+        const angle = 2 * Math.atan2(sin, local.w)
+        if (sin > 1e-6) axis.multiplyScalar(1 / sin)
+        else axis.set(1, 0, 0)
+        // neutral = 骨骼**改之前**（= T-pose 基准）的静息四元数：量每根关键帧"离基准多远"要用它。
+        // 必须 clone —— 下面会让这些骨骼自己转起来，引用同一对象会量出恒等于 0 的距离。
+        offsets.set(normalizeBoneKey(bone.name), {
+          name: bone.name, bone, local, axis, angle, neutral: bone.quaternion.clone(),
+        })
+      }
+    }
+    restore()
+  }
+  if (!offsets.size) return null
+
+  // 关键帧**按「离基准多远」加权左乘偏移**。
+  //   交付管线的烘焙关键帧 = "T-pose 基准 + 姿势偏移"，静止帧就等于 T-pose。
+  //   于是：越贴着 T-pose 的关键帧吃越多的下垂偏移（w→1），越自定义的姿势越保留原样（w→0）。
+  //   好处是挥手的**抬起高度仍然是美术作者定的**（不是我们猜一个角度叠上去），
+  //   而进场/收场会自然接回下垂静息：t=0 与末尾的关键帧等于静息值（w=1），
+  //   所以起止两端无缝，不会出现"抬手瞬间弹回 T-pose、收手再弹回来"。
+  //   （左乘对 slerp 无损：slerp(p·q0, p·q1) = p·slerp(q0,q1)，逐段插值不会漏。）
+  const inClip = new Set()
+  let clipCount = 0
+  const scratch = new THREE.Quaternion()
+  for (const clip of clips || []) {
+    if (clip.userData && clip.userData.blArmRest) { clipCount += 1; continue }
+    let touched = 0
+    for (const track of clip.tracks || []) {
+      const dot = String(track.name).lastIndexOf('.')
+      if (dot < 0) continue
+      const entry = offsets.get(normalizeBoneKey(track.name.slice(0, dot)))
+      if (!entry) continue
+      if (track.getValueTypeName && track.getValueTypeName() !== 'quaternion') continue
+      const values = track.values
+      const ref = entry.neutral
+      // 先量这条轨道"离基准最远"有多远（弧度），拿它当分母把权重归一到 0..1。
+      // 常量轨道的分母为 0 → 判为"没在动" → 全程 w=1（挥手期间左臂稳稳垂着，不会被推回 T-pose）。
+      let maxDev = 0
+      for (let k = 0; k + 3 < values.length; k += 4) {
+        const dev = quatAngle(values[k], values[k + 1], values[k + 2], values[k + 3], ref)
+        if (dev > maxDev) maxDev = dev
+      }
+      const animated = maxDev > ARM_CLIP_DEV_MIN
+      for (let k = 0; k + 3 < values.length; k += 4) {
+        const x = values[k]
+        const y = values[k + 1]
+        const z = values[k + 2]
+        const w = values[k + 3]
+        let weight = 1
+        if (animated) weight = Math.max(0, 1 - quatAngle(x, y, z, w, ref) / maxDev)
+        if (weight >= 0.999) scratch.copy(entry.local)
+        else scratch.setFromAxisAngle(entry.axis, entry.angle * weight)
+        const o = scratch
+        values[k] = o.w * x + o.x * w + o.y * z - o.z * y
+        values[k + 1] = o.w * y - o.x * z + o.y * w + o.z * x
+        values[k + 2] = o.w * z + o.x * y - o.y * x + o.z * w
+        values[k + 3] = o.w * w - o.x * x - o.y * y - o.z * z
+      }
+      inClip.add(entry.name)
+      touched += 1
+    }
+    if (clip.userData) clip.userData.blArmRest = true
+    if (touched) clipCount += 1
+  }
+
+  // **静息值也要带上偏移**：AnimationMixer 在动作停掉时会 restoreOriginalState()，
+  // 不改这里，"打断 / 停止"之后两臂会自己弹回 T-pose。
+  for (const entry of offsets.values()) {
+    try {
+      entry.bone.quaternion.premultiply(entry.local)
+      entry.bone.updateWorldMatrix(false, true)
+    } catch (error) { void error }
+  }
+  // 程序化招手要用的三件东西：肩/肘的**实测轴** + 下垂后的静息四元数（当基准姿势）。
+  // 腕部没有独立偏移（它不参与下垂），它的轴按"肘轴换算到手的父级坐标系"得出：
+  // 绕同一条轴 → 手腕摆动与前臂摆动共面，不会把手腕拧出去。
+  const uaR = offsets.get(normalizeBoneKey('upperarm.R'))
+  const foR = offsets.get(normalizeBoneKey('forearm.R'))
+  const handR = bones.get(normalizeBoneKey('hand.R'))
+  let gesture = null
+  if (uaR && foR && handR) {
+    gesture = {
+      shoulder: { bone: uaR.bone, axis: uaR.axis.clone(), base: uaR.bone.quaternion.clone() },
+      elbow: { bone: foR.bone, axis: foR.axis.clone(), base: foR.bone.quaternion.clone() },
+      wrist: {
+        bone: handR,
+        axis: foR.axis.clone().applyQuaternion(foR.bone.quaternion.clone().invert()),
+        base: handR.quaternion.clone(),
+      },
+    }
+  }
+  return {
+    bones: offsets.size,
+    clips: clipCount,
+    degrees: Math.round(totalDegrees),
+    names: [...offsets.values()].map((item) => item.name),
+    gesture,
+  }
+}
+
+
+
   async function load(gender, role, options) {
     const wantRole = role === 'delivery' ? 'delivery' : 'edit'
     const g = AVATAR_ASSET[gender] ? gender : DEFAULT_GENDER
@@ -885,6 +1276,21 @@ export function createFaceStage(opt) {
         actions = {}
         for (const clip of clips) actions[clip.name] = mixer.clipAction(clip)
       }
+      // 交付件静息是 T-pose：不叠这层「自然下垂」，挥手从平举起挥，怎么调都假。
+      armRestInfo = applyArmRestPose(root, clips)
+      // 招手用**同名程序化片段**替换交付件那一版（幅度实测只有 ±1cm，见 buildWaveGesture 注释）；
+      // 量不出轴时不动，playAnimation('wave') 就照旧放交付件的动画。
+      waveGestureInfo = null
+      const waved = buildWaveGesture(armRestInfo && armRestInfo.gesture)
+      // 规格里带着骨骼引用，用完立刻摘掉：stats() 会整个序列化 armRest，留着会带出整棵骨骼树
+      if (armRestInfo) delete armRestInfo.gesture
+      if (waved) {
+        if (!mixer) { mixer = new THREE.AnimationMixer(root); actions = {} }
+        clips = clips.filter((c) => c.name !== waved.clip.name)
+        clips.push(waved.clip)
+        actions[waved.clip.name] = mixer.clipAction(waved.clip)
+        waveGestureInfo = waved.info
+      }
       lastLoadMs = Date.now() - t0
       computeFocus()
       resize()
@@ -931,6 +1337,10 @@ export function createFaceStage(opt) {
       clips: clips.map((c) => c.name),
       playing: activeClipName,
       visemeWrites,
+      // 手臂基准姿势（A-pose）读数：bones>0 表示已经不在 T-pose 上站着了
+      armRest: armRestInfo,
+      // 招手读数：procedural=true 表示放的是程序化片段（含抬臂角/手部抬高的实测值）
+      gesture: waveGestureInfo,
       lastVisemeApplied,
     }
   }

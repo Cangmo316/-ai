@@ -241,3 +241,75 @@
              音频下发通道.md / 通话页接对话流.md
  端侧接线    端侧接线_通话页3D与招手互动.md / 形象页开放_性别切换保留捏脸下线.md
  其他        MetaHuman云端方案_改动面评估.md（为什么不走云端）
+
+================================================================================
+八、本轮第二轮（2026-10-06）：「没有具体的声音 / 挥手太假 / 只要进场挥一次 / 去掉两个按钮」
+    —— 代码已完成并验证；**尚未提交**
+================================================================================
+
+■ ① 真语音：先把「声音是怎么来的」讲清楚
+   H5 默认对接的是 **mock**（uni-app/api/config.js 的 DEFAULT_BASE_URL = http://127.0.0.1:8787），
+   所以「没有具体的声音」= 当时 mock 出的是 3 秒**蜂鸣音**（buildToneWav），不是人说话。
+   原来要加 --tts 才出人声 —— 太容易踩空，已改成**命令行默认就出真语音**：
+     · `node tools/mock-server.mjs`            → 真人语音（本机离线合成）
+     · `node tools/mock-server.mjs --no-tts`   → 回到蜂鸣音兜底（或显式 BILIN_MOCK_TTS=0）
+   合成器：本机 Windows SAPI5（Microsoft Huihui Desktop - Chinese (Simplified)），离线、免费。
+   · **为什么只有 CLI 默认开**：测试都是 `import { startMockServer }` 起 mock（tools/test-*.mjs 共 9 处），
+     根本不走 CLI 分支；而 CI 机器没有中文声部，绝不能让测试去 spawn 声部把 CI 拖慢搞脆。
+   · 合成失败**静默回落蜂鸣音**（每个原因只告警一次）——语音是锦上添花，绝不能拖垮对话链路。
+   · 实测（tools/test-audio-channel.mjs，默认启动）：音频**非静音**（峰值/RMS 达标）、
+     时长与文本同量级（0.05~0.5 秒/字）、durationMs 与字节算出的时长一致、口型轴盖到音频结束，20 项全绿。
+   · ⚠️ **真后端（:8000）不在此列**：server/.env 里没有 DASHSCOPE_API_KEY，也没有 BILIN_TTS_*，
+     所以 build_tts_provider() 落到 NullTtsProvider —— **一点音频都不发**，口型退回估算版。
+     换句话说：把 baseURL 指到 :8000 就是"没声音、也没唇形同步"。要让真后端出声必须先配 key（见 §五）。
+
+■ ② 顺手修掉自检脚本自己的 bug（它曾误报红）
+   tools/test-audio-channel.mjs 原按**固定 44 字节头**读 WAV：SAPI 的 fmt 块是 18 字节（带 cbSize），
+   真实头长 46，view.getUint32(40) 读到的是 'data' 这四个字节本身 → 时长算错、误报两条红。
+   已改为按 RIFF chunk 遍历（readWavHeader）；真语音 20/20、蜂鸣音 19/19 全绿。
+
+■ ③ 挥手太假：根因是**静息姿势**，不只是动画幅度
+   交付件 GLB 静息是 **T-pose**（取景到胸口，两臂平举像稻草人）；自带 wave 片段也极小 ——
+   用 GLB FK 复算：2.6 秒里上臂只摆 ±5°、腕 5°，**手部总位移约 1cm**。用户看到的"假"是这两条叠加。
+   修法（uni-app/common/face-gl/face-three.js，仅运行时逻辑，**没动资产**）：
+     · 静息姿势：量「肩→手」方向与竖直向下的夹角 ×0.85，按 0.72/0.28 分到肩/肘
+     · 关键帧按「离基准多远」加权左移偏移：贴 T-pose 的帧吃满下垂、美术定的姿势保留，
+       且 t=0/末帧 = 静息 → **起止无缝**（stopAnimation 后轮廓精确回到 75.0×93.5%）
+     · 招手片段改为**程序化生成**（同名 'wave'）：抬臂 148°、手部抬高 127.2°、摆动 ±22°、
+       腕 9°、3 个来回、2.34 秒；量不出轴时自动回落交付件 wave
+     · 坑：骨名被 PropertyBinding.sanitizeNodeName 规范化（upperarm.R → upperarmR），
+       还按原名取骨会**静默什么都不做**
+
+■ ④ 招手只在进场一次 + 去掉两个按钮
+   vision.vue 删除「让 TA 招手」「停一下」两个按钮及 waveToken/waving/waveTimer/onPlaying。
+   waveOnEntry() 幂等（wavedOnEntry），H5 在 stage 就绪后自动挥一次；renderjs 侧 waved 只播一次。
+   已核对：全仓 `playAnimation('wave')` 只有两处，都在进场路径，没有任何"说话就招手"的残留。
+   产品红线「老人可一键停止」由通话栏的**挂断**承担（stopSpeaking 保留给打断与验收 __blVisionStop）。
+
+■ 行为读数（本轮实测）
+   · 挥手：armRest={bones:4, clips:1, degrees:53}；
+     gesture={keys:40, duration:2.34s, fromDown 20.8°→148°, 摆动 22°, sign=-1}
+   · 静息轮廓 75.0×93.5% → 抬臂峰值 87.5% 宽 → 复位 75.0×93.5%
+   · 音频通道：真语音 20/20、蜂鸣音 19/19；npm test 167 项全绿；npm run test:face 32 项全绿
+
+■ 更正（前文作废）
+   本文档前面章节里关于「招手」的旧读数（含"手抬起 124.6mm"）与"交付件 wave 够用"的判断一律作废，
+   以本节 ③ 与「行为读数」为准。
+
+■ 下一步（未完成）
+   1) 用户复测：重启 mock（`node tools/mock-server.mjs`，现在默认人声）→ HBuilderX 重新"运行到浏览器"
+   2) 本轮改动**尚未提交**，待提交文件：
+        tools/mock-tts.ps1 / tools/mock-tts.mjs / tools/mock-tts-stub.mjs / tools/mock-server.mjs
+        tools/test-audio-channel.mjs
+        uni-app/pages/vision/vision.vue
+        uni-app/common/face-gl/face-three.js
+        数字人方案_已完成与待完成清单_20261005.txt
+      （**不要**带上 server/app/main.py、_shots/、_tts_probe/）
+   3) 真后端出声仍需 DASHSCOPE_API_KEY + BILIN_TTS_PROVIDER=qwen（见 §五）
+
+■ 本轮踩的坑（别再重走）
+   · 固定 44 字节 WAV 头：SAPI 的 fmt 块 18 字节 → 必须按 RIFF chunk 遍历
+   · "真语音默认关"的注释理由只对**测试 import** 成立；CLI 默认关会让"打开就能听见人话"变成踩坑
+   · 静息姿势也是观感契约：T-pose 会让挥手怎么调都假；改动画前先确认基准姿势
+   · 交付件动画幅度要用 FK 复算**量化**，别只看"通道里有没有这个 clip"
+   · 本会话中 exec 沙箱助手故障（apply deny-read ACLs），所有命令改走提权执行

@@ -15,6 +15,8 @@
  * 用法：
  *   node tools/mock-server.mjs                 # 默认 127.0.0.1:8787，逐字输出，110ms/字
  *   node tools/mock-server.mjs --port 9000
+ *   node tools/mock-server.mjs                 # 默认就出真中文语音（本机离线合成，失败回落蜂鸣音）
+ *   node tools/mock-server.mjs --no-tts        # 关掉真语音，回到蜂鸣音兜底
  *   node tools/mock-server.mjs --delay 0       # 不等待，便于压测/脚本联调
  *   node tools/mock-server.mjs --host 0.0.0.0  # 真机联调（手机与电脑同一局域网）
  *   node tools/mock-server.mjs --auth mytoken  # 模拟"服务端开了鉴权"
@@ -32,6 +34,8 @@ import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+// 语音：默认关（测试与本机装没装中文声部无关）；开了用本机离线真人语音，失败回落蜂鸣音。
+import { synthesizeSpeech, ttsEnabled, ttsStatus } from './mock-tts.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -645,7 +649,9 @@ function memorySettingsOf(elderId) {
         delayMs,
         auth: { required: Boolean(authToken) },
         // 与后端 /healthz 的 voice 字段同形状：让端侧与验收脚本用同一套判据
-        voice: { tts: 'MockTts', aligner: '（mock 自带字级时间戳）', ttsReady: true, alignReady: true }
+        voice: { tts: 'MockTts', aligner: '（mock 自带字级时间戳）', ttsReady: true, alignReady: true },
+        // 附加字段（不动原有字段形状）：把「现在听到的是人话还是蜂鸣音」如实报出来
+        mockVoice: ttsStatus()
       })
       return
     }
@@ -658,7 +664,8 @@ function memorySettingsOf(elderId) {
       const expired = !expires || expires * 1000 < Date.now()
       const badSignature = signature !== mockAudioSignature(audioId, expires)
       // 403/404 用同一句话，避免通过错误差异探测 id 是否存在（与后端一致）
-      if (expired || badSignature || !mockAudioIds.has(audioId)) {
+      const audioBuffer = mockAudioBuffers.get(audioId)
+      if (expired || badSignature || !audioBuffer) {
         sendJSON(res, 403, { code: 'audio_forbidden', message: '音频链接无效或已过期' })
         return
       }
@@ -667,10 +674,10 @@ function memorySettingsOf(elderId) {
         // 且**非静音**——"放出来没声音"与"播放链路坏了"必须能分辨），
         // 真后端发的是百炼的 MP3。两者都合法，端侧按 Content-Type 都能放。
         'Content-Type': 'audio/wav',
-        'Content-Length': MOCK_AUDIO_BYTES.length,
+        'Content-Length': audioBuffer.length,
         'Cache-Control': 'private, max-age=300'
       }, corsHeaders()))
-      res.end(MOCK_AUDIO_BYTES)
+      res.end(audioBuffer)
       return
     }
 
@@ -1307,6 +1314,7 @@ function appendHistory(body, turn) {
  * 为什么仍是 WAV：时长可以精确控制，任何浏览器都能解码，且不需要编码器。
  * 与真实现的差异：真后端发的是百炼 MP3，契约（`/v1/audio` + 签名）相同，mock 只是靶子。
  */
+// 兜底音：默认走它；开了真语音后，只在「合成失败/超时」时回落到它（见 tools/mock-tts.mjs）。
 function buildToneWav(seconds = 3, sampleRate = 16000) {
   const frames = Math.round(seconds * sampleRate)
   const dataBytes = frames * 2                      // 16bit 单声道
@@ -1345,7 +1353,10 @@ const MOCK_AUDIO_BYTES = buildToneWav(MOCK_AUDIO_SECONDS)
  * 已"发放"的音频 id 集合：只有发过音频事件的 id 才允许取。
  * 这样 mock 也能验证"**没发过的 id 取不到**"这条约束（而不是任何 id 都给音频）。
  */
-const mockAudioIds = new Set()
+const mockAudioBuffers = new Map()
+// 为什么按 id 存字节、而不是一个固定常量：开了真语音后每句话的时长都不同，
+// durationMs 必须来自**真实下发的那份字节**（见 prepareSpeech）。
+// 只有发过音频事件的 id 才在表里 —— 「没发过的 id 取不到」这条约束不变。
 /**
  * mock 的音频签名：与真实现**同形状**（`expires` + `sig` 查询参数）但不共用密钥。
  * 端侧只关心"这个 URL 能取到音频"，签名算法细节由各自服务端决定。
@@ -1489,10 +1500,45 @@ function buildLipsyncPayload(text, assistantMsgId, charMs, targetMs) {
   }
 }
 
+/** 合成失败只提醒一次（每个原因一条），不要每句话都刷屏 */
+const warnedTtsReasons = new Set()
+
+/**
+ * 这一轮要下发的音频。默认 = 3 秒蜂鸣音；开了真语音则用本机合成的人声。
+ * **任何失败都静默回落**：语音是锦上添花，绝不能因为它把对话链路拖垮。
+ */
+function prepareSpeech(text) {
+  const fallback = { bytes: MOCK_AUDIO_BYTES, durationMs: MOCK_AUDIO_SECONDS * 1000, source: 'buzz' }
+  if (!ttsEnabled()) return Promise.resolve(fallback)
+  const warnOnce = (reason) => {
+    if (warnedTtsReasons.has(reason)) return
+    warnedTtsReasons.add(reason)
+    console.warn('  [voice] 语音合成不可用，回落蜂鸣音：' + reason)
+  }
+  return synthesizeSpeech(text).then((result) => {
+    if (result && result.ok) {
+      return {
+        bytes: result.bytes,
+        durationMs: result.durationMs,
+        source: result.cached ? 'speech-cached' : 'speech'
+      }
+    }
+    warnOnce((result && result.reason) || 'unknown')
+    return fallback
+  }).catch((error) => {
+    warnOnce(String((error && error.message) || error))
+    return fallback
+  })
+}
+
 async function streamTurn(req, res, body, serverDelayMs) {
   const turn = buildTurn(body)
   // 逐字吐字的速度：默认按启动参数，__slow 触发词放大到 700ms/字，便于手动验证「停止」
   const perCharDelay = turn.slow ? Math.max(serverDelayMs, 700) : serverDelayMs
+
+  // 语音与吐字**并行**：合成要 0.3~0.8s，而逐字吐字本身就要好几秒。
+  // 把合成藏在吐字期间做，写 audio 事件时才 await —— 首字延迟一点不增加。
+  const speechPromise = prepareSpeech(turn.text)
 
   res.writeHead(200, Object.assign({
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -1553,18 +1599,21 @@ async function streamTurn(req, res, body, serverDelayMs) {
 
     // 音频 + 口型关键帧：都在 done 之前发，**顺序是 audio → lipsync**
     // （与后端一致：端侧要先把音频下载并起播，才能用音频时刻驱动口型，否则音画漂移）。
+    // 音频可能早就并行合成好了（见 prepareSpeech），这里只等结果。
+    // 时长一律取**这份字节自己的时长**，口型轴再按它缩放 —— 音画同长的唯一来源。
     if ((turn.text || '').trim()) {
+      const speech = await speechPromise
       const audioId = 'aud_' + turn.assistantMsgId
-      mockAudioIds.add(audioId)
+      mockAudioBuffers.set(audioId, speech.bytes)
       write('audio', {
         assistantMsgId: turn.assistantMsgId,
         url: buildMockAudioUrl(audioId),
-        durationMs: MOCK_AUDIO_SECONDS * 1000,   // 与 MOCK_AUDIO_BYTES 的时长严格对应
+        durationMs: speech.durationMs,
         format: 'wav',
-        bytes: MOCK_AUDIO_BYTES.length
+        bytes: speech.bytes.length
       })
       await wait(60)
-      write('lipsync', buildLipsyncPayload(turn.text, turn.assistantMsgId, perCharDelay, MOCK_AUDIO_SECONDS * 1000))
+      write('lipsync', buildLipsyncPayload(turn.text, turn.assistantMsgId, perCharDelay, speech.durationMs))
       await wait(60)
     }
     write('done', { assistantMsgId: turn.assistantMsgId, finishReason: 'stop' })
@@ -1604,12 +1653,26 @@ if (isDirectRun) {
   // --auth <token>：模拟"服务端开了鉴权"，用来验证端侧有没有带 Authorization
   const authToken = typeof flags.auth === 'string' ? flags.auth : ''
 
+  // 语音：**命令行直接跑时默认真中文语音**（本机离线合成，见 tools/mock-tts.mjs）。
+  // ⚠️ 为什么只有 CLI 默认开：测试是 `import { startMockServer }` 起 mock 的（见 tools/test-*.mjs），
+  //    根本不走这一段；而 CI 机器上多半没有中文声部，绝不能让测试去 spawn 声部把 CI 拖慢搞脆。
+  // 本机合成失败会**静默回落蜂鸣音**（每个原因只告警一次），所以默认开是安全的。
+  // 想要蜂鸣音：--no-tts，或显式设 BILIN_MOCK_TTS=0。
+  if (flags['no-tts']) process.env.BILIN_MOCK_TTS = '0'
+  else if (flags.tts || process.env.BILIN_MOCK_TTS === undefined) process.env.BILIN_MOCK_TTS = '1'
+  if (flags['tts-rate'] !== undefined) process.env.BILIN_MOCK_TTS_RATE = String(flags['tts-rate'])
+  if (typeof flags['tts-voice'] === 'string') process.env.BILIN_MOCK_TTS_VOICE = flags['tts-voice']
+
   startMockServer({ host, port, delayMs, authToken }).then((instance) => {
     console.log('比邻AI mock agent 已启动')
     console.log('  地址   : http://' + host + ':' + instance.port)
     console.log('  每字延迟: ' + delayMs + 'ms（--delay 0 可关闭）')
     console.log('  鉴权   : ' + (authToken ? '要求 Authorization: Bearer <token>' : '关闭（--auth <token> 可打开）'))
     console.log('  接口   : POST /v1/chat/stream · POST /v1/chat/send · GET /v1/chat/history')
+    const voice = ttsStatus()
+    console.log('  语音   : ' + (voice.enabled
+      ? '真人语音（' + voice.mode + '，声部 ' + voice.voice + '，语速 ' + voice.rate + '）'
+      : '蜂鸣音兜底（本机没找到中文声部；--no-tts 可显式关闭）'))
     console.log('')
     console.log('  端侧联调：uni-app/api/config.js 里把 DEFAULT_BASE_URL 指向这个地址')
     console.log('  真机联调：加 --host 0.0.0.0，并把 baseURL 改成电脑的局域网 IP')
