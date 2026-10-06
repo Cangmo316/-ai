@@ -114,8 +114,47 @@ if (audioEvent) {
     check('durationMs 与字节算出的时长一致（±0.2s）',
       Math.abs(seconds - payload.durationMs / 1000) <= 0.2,
       '声明 ' + (payload.durationMs / 1000).toFixed(3) + 's / 实际 ' + seconds.toFixed(3) + 's')
+
+    // ⚠️ 这里必须再加一层**行为断言**：能解码 + 够长 ≠ 有声。
+    //    mock 的第二版就是"3.000s、字节数正确、还能解码"的**全零静音** ——
+    //    端侧表现与"播放链路坏了"一模一样（都没声音），靠形状断言分辨不出来。
+    //    静音的峰值恰好是 0，所以用峰值 + RMS 判"到底有没有声音"最直接。
+    if (bits === 16) {
+      const pcmLength = Math.min(dataBytes, bytes.byteLength - 44)
+      const pcm = new DataView(bytes.buffer, bytes.byteOffset + 44, pcmLength)
+      let peak = 0
+      let sumSquares = 0
+      let sampleCount = 0
+      for (let offset = 0; offset + 1 < pcmLength; offset += 2) {
+        const value = pcm.getInt16(offset, true) / 32768
+        const magnitude = Math.abs(value)
+        if (magnitude > peak) peak = magnitude
+        sumSquares += value * value
+        sampleCount += 1
+      }
+      const rms = sampleCount ? Math.sqrt(sumSquares / sampleCount) : 0
+      check('音频**不是静音**（峰值 ≥ 5% 满量程）', peak >= 0.05, 'peak=' + peak.toFixed(4))
+      check('音频电平有效（RMS ≥ 1% 满量程）', rms >= 0.01, 'rms=' + rms.toFixed(4))
+    }
   } else if (looksMp3) {
     check('durationMs 合理（> 0）', payload.durationMs > 0, String(payload.durationMs))
+  }
+
+  // ④ 口型时间轴必须**盖到音频结束**（"音画同长"）
+  // ⚠️ 这同样是一条行为断言，而不是形状断言：
+  //    mock 的音频固定 3 秒，而按字数估算出来的口型轴只有 1~2 秒 ——
+  //    直接发出去就会「嘴先停、声音还在响」，用户看到的现象就是"唇形不同步"。
+  //    真后端的时间轴来自 TTS 对齐（天然等于音频长度）；mock 靠缩放对齐到音频时长。
+  if (lipsyncEvent) {
+    const cues = Array.isArray(lipsyncEvent.data.cues) ? lipsyncEvent.data.cues : []
+    const lastCueEnd = cues.reduce((max, cue) => Math.max(max, Number(cue.e) || 0), 0)
+    const audioMs = Number(payload.durationMs) || 0
+    check('口型关键帧盖到音频结束（不出现「嘴停声还在响」）',
+      cues.length > 0 && lastCueEnd >= audioMs - 200,
+      '最后口型 ' + lastCueEnd + 'ms / 音频 ' + audioMs + 'ms')
+    check('lipsync 的 durationMs 与音频时长一致（±0.3s）',
+      Math.abs((Number(lipsyncEvent.data.durationMs) || 0) - audioMs) <= 300,
+      'lipsync ' + (Number(lipsyncEvent.data.durationMs) || 0) + 'ms / 音频 ' + audioMs + 'ms')
   }
 
   // ③ 篡改一律取不到

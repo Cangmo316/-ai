@@ -2,7 +2,6 @@
   <view class="bl-vision" :class="{ 'bl-large': settings.largeFont }">
     <view class="bl-vision__lamp" />
     <view class="bl-vision__plant" />
-
     <view class="bl-vision__topbar">
       <view>
         <view class="bl-vision__tag">
@@ -219,6 +218,120 @@ function stopAudio() {
   }
 }
 
+// #ifdef H5
+/* ----------------------------------------------- H5 音频：直接用原生 <audio> */
+
+/**
+ * H5 下**不用** `uni.createInnerAudioContext()`，改为直接用原生 `<audio>`。
+ *
+ * ## 根因（HBuilderX 内置浏览器实测，2026-10-06）
+ *
+ * uni-app H5 的 `InnerAudioContext.play()` 实现只有一行：
+ *     `play() { this._stoping = false; this._audio.play() }`
+ * —— 内部 `<audio>.play()` 返回的 Promise **被直接丢掉**。
+ * 而浏览器的自动播放策略拒绝播放、或解码/取源失败时，**正是靠这个 Promise 的 reject 上报**；
+ * 丢掉之后既不会触发 onError、也没有任何日志。端侧看到的就是
+ * 「点了「问一句」→ 没声音，而且不知道为什么」。
+ * 口型这边又因为读不到音频时钟（`currentTime` 恒为 0）而**定格在句首**，
+ * 于是"没声音"与"没唇形"同时出现 —— 正是用户报的现象。
+ *
+ * 同一段 URL 的对照实测：普通 `new Audio()` 的 `play()` 能 resolve、`currentTime` 正常推进；
+ * 而 uni 那个内部元素停在 `readyState=0 / networkState=3(NETWORK_NO_SOURCE)` —— 连源都没选上。
+ *
+ * ## 做法
+ *
+ * 直接用原生 `<audio>`，把 `play()` 的 Promise **接住**：
+ *   · 成功 → 正常出声，口型跟着 `currentTime` 走；
+ *   · 被拒/失败 → 原因记进 `audioInfo.error`（`__blVisionAskStats()` 可读），
+ *     口型退回自有时钟把整句跑完 —— 不再"静默定格"。
+ *
+ * APP 端仍走 `uni.createInnerAudioContext()`（`#ifdef APP-PLUS`），行为不变。
+ */
+/** 一帧静音 WAV（data URI）：只为"解锁"音频用，不产生网络请求 */
+const SILENT_WAV_DATA_URI = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA='
+let h5AudioEl = null
+let h5AudioUnlocked = false
+
+function ensureH5AudioEl() {
+  if (!h5AudioEl && typeof document !== 'undefined') {
+    h5AudioEl = document.createElement('audio')
+    h5AudioEl.preload = 'auto'
+    h5AudioEl.setAttribute('playsinline', '')
+  }
+  return h5AudioEl
+}
+
+/**
+ * 首次用户手势里解锁音频。
+ * 移动端 Safari 只认"手势内成功 play() 过"的元素，之后 SSE 异步回来的音频才可能自动起播。
+ * ⚠️ 这里用**同一个元素**且**不静音**地播一帧静音 WAV：
+ *   · 换个元素播是没用的（Safari 认的是被播放过的那个元素）；
+ *   · 静音 play() 本来就允许，起不到解锁作用。
+ * 桌面 Chrome 本就是 sticky activation，这一步无害。
+ */
+function unlockH5Audio() {
+  if (h5AudioUnlocked) return
+  h5AudioUnlocked = true
+  try {
+    const el = ensureH5AudioEl()
+    if (!el || el.getAttribute('src')) return
+    el.src = SILENT_WAV_DATA_URI
+    const playing = el.play()
+    if (playing && typeof playing.catch === 'function') playing.catch(() => {})
+  } catch (error) { void error }
+}
+
+/**
+ * 把原生 `<audio>` 包成端侧用到的那个小接口
+ * （src / play / stop / destroy / currentTime / duration / paused / onCanplay / onPlay / onEnded / onError）。
+ * 包装的意义：口型时钟读的就是 `audioContext.currentTime`，
+ * 包完之后 H5 与 APP 共用同一段播放与口型代码，不必各写一套。
+ */
+function createH5AudioContext() {
+  const el = ensureH5AudioEl()
+  if (!el) return null
+  const handlers = { canplay: null, play: null, ended: null, error: null }
+  const listeners = {
+    canplay: () => { if (handlers.canplay) handlers.canplay() },
+    play: () => { if (handlers.play) handlers.play() },
+    ended: () => { if (handlers.ended) handlers.ended() },
+    error: () => {
+      const mediaError = el.error
+      if (handlers.error) handlers.error({ errMsg: 'audio element error', code: mediaError ? mediaError.code : 0 })
+    },
+  }
+  el.addEventListener('canplay', listeners.canplay)
+  el.addEventListener('play', listeners.play)
+  el.addEventListener('ended', listeners.ended)
+  el.addEventListener('error', listeners.error)
+  return {
+    _el: el,
+    get src() { return el.currentSrc || el.src || '' },
+    set src(value) {
+      el.src = value
+      try { el.load() } catch (error) { void error }
+    },
+    get currentTime() { return Number(el.currentTime || 0) },
+    get duration() { return Number(el.duration || 0) },
+    get paused() { return !!el.paused },
+    // ⚠️ 关键：把 Promise 原样交出去，调用方才能接住"起播失败"
+    play() {
+      const playing = el.play()
+      return playing && typeof playing.then === 'function' ? playing : Promise.resolve()
+    },
+    stop() { try { el.pause() } catch (error) { void error } },
+    destroy() {
+      Object.keys(listeners).forEach((name) => el.removeEventListener(name, listeners[name]))
+      try { el.pause() } catch (error) { void error }
+    },
+    onCanplay(fn) { handlers.canplay = fn },
+    onPlay(fn) { handlers.play = fn },
+    onEnded(fn) { handlers.ended = fn },
+    onError(fn) { handlers.error = fn },
+  }
+}
+// #endif
+
 /**
  * 播放一段合成音频，并让口型跟着音频走。
  *
@@ -231,7 +344,11 @@ function playSpeech(url, cues) {
   // 相对路径要拼成绝对地址：dev 是 5173、真机是后端地址，故用 API base（与 SSE 同源）
   const absolute = /^https?:/i.test(url) ? url : resolveApiUrl(url)
   try {
-    // #ifdef H5 || APP-PLUS
+    // #ifdef H5
+    // H5 直接创建原生 <audio>（uni 的 H5 封装会吞掉 play() 的失败，见上面说明）
+    audioContext = createH5AudioContext()
+    // #endif
+    // #ifdef APP-PLUS
     audioContext = uni.createInnerAudioContext()
     // #endif
   } catch (e) {
@@ -262,7 +379,30 @@ function playSpeech(url, cues) {
     if (audioInfo) audioInfo.error = lastAudioError
     stopAudio()
   })
-  audioContext.play()
+  // ⚠️ 必须接住 play() 的 Promise：
+  //    H5 原生 `<audio>.play()` 在"自动播放被拦 / 解码失败 / 源不可达"时会 **reject**；
+  //    不接住就又是"静默无声"（老代码丢的正是 uni 封装里那个 Promise，见上面根因）。
+  const ctx = audioContext
+  const playing = ctx.play()
+  if (playing && typeof playing.then === 'function') {
+    playing
+      .then(() => {
+        // 已被下一轮或"一键停止"取代：这条成功不再算数（否则会污染新那轮的诊断）
+        if (audioContext !== ctx) return
+        if (!audioInfo) return
+        audioInfo.played = true
+        audioInfo.duration = Number(ctx.duration || audioInfo.duration || 0)
+      })
+      .catch((error) => {
+        // 换 src / stop 会把上一轮挂起的 play() 打断成 AbortError —— 那不是真失败，直接忽略
+        if (audioContext !== ctx) return
+        lastAudioError = 'play() rejected: ' + ((error && (error.name || error.message)) || error)
+        if (audioInfo) audioInfo.error = lastAudioError
+        // 起播失败：口型退回自有时钟把整句跑完（有嘴动没声音，好过整体定格），
+        // 并在 stopAudio 里把元素与监听一并收掉，避免下一轮串音。
+        stopAudio()
+      })
+  }
   return { ok: true, url: absolute, lipsync: started }
 }
 
@@ -319,6 +459,18 @@ onMounted(() => {
   timer = setInterval(() => { seconds.value += 1 }, 1000)
   // #ifdef H5
   bootTick.value = 1
+  // 首次用户手势里解锁音频：移动端 Safari 只认"手势内同步 play()"，
+  // 桌面 Chrome 本就是 sticky activation，这一步无害。
+  // 不这么做的话，"点了按钮 → SSE 异步回来的音频"在 Safari 上会被自动播放策略拦掉。
+  if (typeof document !== 'undefined') {
+    const unlock = () => {
+      unlockH5Audio()
+      document.removeEventListener('pointerdown', unlock)
+      document.removeEventListener('keydown', unlock)
+    }
+    document.addEventListener('pointerdown', unlock, { passive: true })
+    document.addEventListener('keydown', unlock)
+  }
   const el = document.getElementById('blVisionStage')
   if (el) {
     try {
@@ -463,6 +615,23 @@ if (typeof window !== 'undefined') {
   window.__blVisionAsk = ask
   window.__blVisionStop = stopSpeaking
   window.__blVisionStopAudio = stopAudio
+  // 自动化验收：读"当前音频的真实播放状态"（位置/暂停/解码状态/错误）。
+  // 为什么需要它：`uni` 那条封装读不到底层元素状态，而 H5 原生元素的状态
+  // 才是"到底响了没有"的判据（旧验收只读 uni 的包装层，所以看不出静默失败）。
+  window.__blVisionAudioState = () => {
+    if (!audioContext) return null
+    const el = audioContext._el || null
+    return {
+      src: String(audioContext.src || ''),
+      pos: Number(audioContext.currentTime || 0),
+      paused: 'paused' in audioContext ? !!audioContext.paused : null,
+      readyState: el ? el.readyState : null,
+      networkState: el ? el.networkState : null,
+      volume: el ? el.volume : null,
+      muted: el ? el.muted : null,
+      mediaError: el && el.error ? { code: el.error.code, message: el.error.message } : null,
+    }
+  }
   // 行为探针：`__blVisionProbeStart()` → ask → `__blVisionProbeResult()`
   window.__blVisionProbeStart = probeStart
   window.__blVisionProbeResult = probeResult

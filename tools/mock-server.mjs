@@ -663,7 +663,8 @@ function memorySettingsOf(elderId) {
         return
       }
       res.writeHead(200, Object.assign({
-        // 与真实实现一致地**如实**声明类型：mock 发的是 WAV（静音可精确控制），
+        // 与真实实现一致地**如实**声明类型：mock 发的是 WAV（时长与内容可精确控制，
+        // 且**非静音**——"放出来没声音"与"播放链路坏了"必须能分辨），
         // 真后端发的是百炼的 MP3。两者都合法，端侧按 Content-Type 都能放。
         'Content-Type': 'audio/wav',
         'Content-Length': MOCK_AUDIO_BYTES.length,
@@ -1289,17 +1290,24 @@ function appendHistory(body, turn) {
 /* ------------------------------------------------------- 音频（合成结果） */
 
 /**
- * 一段**真实可播放的静音音频**（WAV，默认 3 秒），运行时生成。
+ * 一段**真实可播放、且听得见**的音频（WAV，默认 3 秒），运行时生成。
  *
- * ⚠️ 踩坑记录：第一版用"两帧静音 MP3"（417 字节 × 2），
- * 浏览器实测 `duration = 0.052125` —— **只有 52 毫秒**，等于没声音，
- * 口型也一闪而过。当时我用"字节像 MP3"这种形状断言就以为验过了，**是假验证**。
- * 改成 WAV：静音时长可以精确控制，任何浏览器都能解码，且不需要编码器。
+ * ⚠️ 踩坑记录（连着栽了两次，都是"形状断言"放过去的）：
+ *   ① 第一版用"两帧静音 MP3"（417 字节 × 2），浏览器实测 `duration = 0.052125`
+ *      —— **只有 52 毫秒**，等于没声音，口型也一闪而过。当时断言"字节像 MP3"就以为验过了。
+ *   ② 第二版换成 WAV、时长也对了，但**负载全 0 = 真静音**：`duration` 正确、能解码，
+ *      唯独放出来一点声音都没有。而"没声音"与"播放链路坏了"在观感上无法区分，
+ *      于是又骗过一轮验收（验收只断言"像 WAV + 够长"，没断言"非静音"）。
  *
- * 为什么 mock 要真发音频：端侧 `innerAudioContext` / `<audio>` 的播放链路
- * 只有拿到**能解码、且够长**的字节才算验证过。
+ * 所以现在生成的是**听得见的类人声**：180Hz 基频 + 奇次谐波（音色接近人声），
+ * 叠加 4 音节/秒的开口-闭合包络（听感像在说话），峰值约 -8.7dBFS。
+ * 这样"端侧到底响了没有"既能用耳朵判，也能用 PCM 峰值/RMS 自动判
+ * （见 `tools/test-audio-channel.mjs` 的非静音断言）。
+ *
+ * 为什么仍是 WAV：时长可以精确控制，任何浏览器都能解码，且不需要编码器。
+ * 与真实现的差异：真后端发的是百炼 MP3，契约（`/v1/audio` + 签名）相同，mock 只是靶子。
  */
-function buildSilentWav(seconds = 3, sampleRate = 16000) {
+function buildToneWav(seconds = 3, sampleRate = 16000) {
   const frames = Math.round(seconds * sampleRate)
   const dataBytes = frames * 2                      // 16bit 单声道
   const buffer = Buffer.alloc(44 + dataBytes)       // 44 字节是标准 WAV 头
@@ -1316,11 +1324,23 @@ function buildSilentWav(seconds = 3, sampleRate = 16000) {
   buffer.writeUInt16LE(16, 34)                      // 位深
   buffer.write('data', 36)
   buffer.writeUInt32LE(dataBytes, 40)
-  // 负载全 0 = 静音
+  // 负载：类人声脉冲串 × 音节包络（**非静音**）
+  const fundamental = 180                           // 基频：接近成年女声
+  const syllablesPerSecond = 4                      // 4 音节/秒，避免变成持续蜂鸣
+  for (let i = 0; i < frames; i += 1) {
+    const t = i / sampleRate
+    // 奇次谐波叠加近似方波 —— 比纯正弦更像"人声"（纯正弦听起来像蜂鸣器）
+    let sample = 0
+    for (let h = 1; h <= 9; h += 2) sample += Math.sin(2 * Math.PI * fundamental * h * t) / h
+    sample /= 1.27
+    const envelope = Math.pow(Math.max(0, Math.sin(2 * Math.PI * syllablesPerSecond * t)), 0.7)
+    const value = Math.round(sample * envelope * 12000)   // 12000/32767 ≈ -8.7dBFS
+    buffer.writeInt16LE(Math.max(-32767, Math.min(32767, value)), 44 + i * 2)
+  }
   return buffer
 }
 const MOCK_AUDIO_SECONDS = 3
-const MOCK_AUDIO_BYTES = buildSilentWav(MOCK_AUDIO_SECONDS)
+const MOCK_AUDIO_BYTES = buildToneWav(MOCK_AUDIO_SECONDS)
 /**
  * 已"发放"的音频 id 集合：只有发过音频事件的 id 才允许取。
  * 这样 mock 也能验证"**没发过的 id 取不到**"这条约束（而不是任何 id 都给音频）。
@@ -1429,8 +1449,17 @@ function visemesForChar(ch) {
   return deduped.slice(0, 2)
 }
 
-/** 生成 SSE `lipsync` 的 payload（字段与后端 build_lipsync_payload 一致） */
-function buildLipsyncPayload(text, assistantMsgId, charMs) {
+/**
+ * 生成 SSE `lipsync` 的 payload（字段与后端 build_lipsync_payload 一致）
+ *
+ * ⚠️ `targetMs`（音频时长）不是可有可无的参数：
+ * mock 的音频是**固定 3 秒**的假音（见 buildToneWav），而按字数估算出来的口型轴
+ * 往往只有 1~2 秒。直接发出去就是「嘴先停、声音还在响」——
+ * 用户看到的现象恰恰就是**唇形不同步**。
+ * 真后端的时间轴来自 TTS 对齐（`from_alignment`），天然等于音频长度；mock 没有
+ * 真对齐，就把估算时间轴**整体缩放**到音频时长，保住「音画同长」这条契约。
+ */
+function buildLipsyncPayload(text, assistantMsgId, charMs, targetMs) {
   const perChar = Number.isFinite(charMs) && charMs > 0 ? charMs : 110
   const cues = []
   let cursor = 0
@@ -1445,10 +1474,16 @@ function buildLipsyncPayload(text, assistantMsgId, charMs) {
     cues.push({ c: ch, b: start, e: cursor, v: visemes })
   }
   if (cursor > 0) cues.push({ c: '', b: cursor, e: cursor + 120, v: [VISEME_SILENCE] })
+  // 按字数估算出的总时长；给了音频时长就整体缩放（毫秒取整）→ 嘴和声音同时结束
+  const estimated = cursor > 0 ? cursor + 120 : 0
+  const scale = Number.isFinite(targetMs) && targetMs > 0 && estimated > 0 ? targetMs / estimated : 1
   return {
     assistantMsgId: assistantMsgId || '',
-    durationMs: cursor + 120,
-    cues,
+    durationMs: Math.round(estimated * scale),
+    cues: scale === 1 ? cues : cues.map((cue) => Object.assign({}, cue, {
+      b: Math.round(cue.b * scale),
+      e: Math.round(cue.e * scale)
+    })),
     version: 1,
     source: 'estimated'
   }
@@ -1524,12 +1559,12 @@ async function streamTurn(req, res, body, serverDelayMs) {
       write('audio', {
         assistantMsgId: turn.assistantMsgId,
         url: buildMockAudioUrl(audioId),
-        durationMs: MOCK_AUDIO_SECONDS * 1000,   // 与 MOCK_AUDIO_BYTES 的静音时长严格对应
+        durationMs: MOCK_AUDIO_SECONDS * 1000,   // 与 MOCK_AUDIO_BYTES 的时长严格对应
         format: 'wav',
         bytes: MOCK_AUDIO_BYTES.length
       })
       await wait(60)
-      write('lipsync', buildLipsyncPayload(turn.text, turn.assistantMsgId, perCharDelay))
+      write('lipsync', buildLipsyncPayload(turn.text, turn.assistantMsgId, perCharDelay, MOCK_AUDIO_SECONDS * 1000))
       await wait(60)
     }
     write('done', { assistantMsgId: turn.assistantMsgId, finishReason: 'stop' })
