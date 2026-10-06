@@ -41,6 +41,40 @@ let lastUserText = ''
 let lastUserMsgId = ''
 let idSeq = 0
 
+/**
+ * 实时事件订阅（**只给通话页用**）。
+ *
+ * 为什么需要：`audio` 与 `lipsync` 是"这一轮说完才发"的数据，
+ * 它们**不该进聊天历史**（历史里存的是文字/表情/卡片，音频链接几分钟后就过期），
+ * 但通话页需要**实时拿到**才能让数字人开口动嘴。
+ *
+ * 所以做成"订阅"而不是塞进 `chat.messages`：历史干净、通话页按需接。
+ * 回调收到的 payload：`{ text, audioUrl, cues, lipsyncSource, assistantMsgId }`
+ */
+const liveListeners = new Set()
+
+/**
+ * 订阅一轮"数字人说话"的完整数据（文字 + 音频 + 口型）。
+ * @param {(payload:object)=>void} listener
+ * @returns {()=>void} 取消订阅
+ */
+export function onLiveTurn(listener) {
+  if (typeof listener !== 'function') return () => {}
+  liveListeners.add(listener)
+  return () => liveListeners.delete(listener)
+}
+
+function emitLiveTurn(payload) {
+  for (const listener of liveListeners) {
+    try {
+      listener(payload)
+    } catch (error) {
+      // 一个订阅者出错不该影响其他订阅者（也不该影响对话本身）
+      console.warn('[chat] liveTurn 订阅者抛错：', error)
+    }
+  }
+}
+
 /** 当前这一轮的收集状态 */
 let turn = null
 
@@ -114,7 +148,7 @@ export function stop() {
 }
 
 function beginStream(text, clientMsgId) {
-  turn = { textMsg: null, produced: false, serverId: '' }
+  turn = { textMsg: null, produced: false, serverId: '', audioUrl: '', cues: null, lipsyncSource: '' }
   chat.streaming = true
   handle = chatStream({
     conversationId: chat.conversationId,
@@ -173,7 +207,28 @@ function handleEvent(event) {
       break
 
     case CHAT_EVENT.done:
+      // 先广播"这一轮说完"的完整数据（文字 + 音频 + 口型），再收尾。
+      // 顺序重要：通话页要靠 audio 先起播、再用音频时钟驱动口型，
+      // 所以这里必须把两者**一起**给出去，让调用方自己决定怎么起播。
+      emitLiveTurn({
+        assistantMsgId: turn.serverId || '',
+        text: turn.textMsg ? turn.textMsg.text : '',
+        audioUrl: turn.audioUrl || '',
+        cues: turn.cues || null,
+        lipsyncSource: turn.lipsyncSource || ''
+      })
       finishTurn('sent')
+      break
+
+    case CHAT_EVENT.audio:
+      // 合成音频的**短期签名 URL**（端侧播放器能直取，不需要请求头）
+      turn.audioUrl = event.url || ''
+      break
+
+    case CHAT_EVENT.lipsync:
+      // 口型关键帧（服务端已把 viseme 收敛到 ≤2 个）；`source` 区分估算/真对齐
+      turn.cues = event.cues || null
+      turn.lipsyncSource = event.source || 'estimated'
       break
 
     case CHAT_EVENT.error:

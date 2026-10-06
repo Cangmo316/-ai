@@ -45,11 +45,32 @@
       <text class="bl-vision__caption-text">{{ caption }}</text>
     </view>
 
-    <!-- 招手互动：老人主动点一下，数字人就招手。放在通话按钮上方、按钮更大更好按。 -->
+    <!-- 老人可以随时停下（产品红线）。放在招手与通话按钮之间，够大够显眼。 -->
     <view class="bl-vision__wave">
+      <view class="bl-wave-btn bl-wave-btn--stop" @click="stopSpeaking">
+        <bl-icon name="muted" color="#FFFFFF" :size="48" />
+        <text class="bl-wave-btn__text">停一下</text>
+      </view>
       <view class="bl-wave-btn" :class="{ 'is-busy': waving }" @click="wave">
-        <bl-icon name="person" color="#FFFFFF" :size="52" />
+        <bl-icon name="person" color="#FFFFFF" :size="48" />
         <text class="bl-wave-btn__text">{{ waving ? '招手打招呼…' : '让 TA 招手' }}</text>
+      </view>
+    </view>
+
+    <!-- 问一句：走**真对话流**（SSE 流式文字 → 服务端合成音频 + 口型 → 端侧边说边动嘴）。
+         现在还没有语音识别，"说"用输入框代替；等 ASR 接上后这里换成按住说话即可。 -->
+    <view class="bl-vision__ask">
+      <input
+        v-model="question"
+        class="bl-vision__ask-input"
+        type="text"
+        confirm-type="send"
+        placeholder="想说什么，写在这里"
+        placeholder-class="bl-vision__ask-ph"
+        @confirm="askNow"
+      />
+      <view class="bl-vision__ask-btn" :class="{ 'is-busy': chat.streaming }" @click="askNow">
+        <text class="bl-vision__ask-btn-text">{{ chat.streaming ? '正在说…' : '问一句' }}</text>
       </view>
     </view>
 
@@ -73,6 +94,7 @@ import { settings } from '@/common/store.js'
 import { UI_COPY } from '@/common/face/face-index.js'
 import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
 import { getBaseURL } from '@/api/config.js'
+import { chat, send as sendChat, stop as stopChat, onLiveTurn, DEFAULT_CONVERSATION_ID } from '@/stores/chat.js'
 // 口型驱动：把 SSE `lipsync` 事件的关键帧变成逐帧的 viseme 权重。
 // 「渲染器只管把权重写进形态键」，插值 / 交叉淡化 / 最多混 2 个 的规则都在这个模块里。
 import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'// #ifdef H5
@@ -88,6 +110,12 @@ const waveToken = ref(0)
 const waving = ref(false)
 let stageRef = null
 let waveTimer = null
+/** 对话流订阅的取消函数（卸载时必须取消，否则页面销毁后回调仍会跑） */
+let unsubscribeLive = null
+/** 这一轮是"音频+口型"还是"只有口型"（诊断用；后端没配 TTS 时会是后者） */
+let lastSpeechSource = ''
+/** 最近一轮的原始数据（诊断用：回答"音频到底有没有到端侧"） */
+let lastTurnInfo = null
 
 /**
  * 口型播放器：把「服务端给的关键帧」变成逐帧的 viseme 权重，交给渲染器写形态键。
@@ -186,6 +214,8 @@ function resolveApiUrl(url) {
 }
 
 const caption = ref('妈，今天药按时吃了没')
+/** 输入框内容（暂时用"打字"代替说话；等 ASR 接上后换成按住说话） */
+const question = ref('')
 
 const seconds = ref(42)
 const muted = ref(false)
@@ -258,6 +288,36 @@ onMounted(() => {
       .catch(() => onStageError())
   }
   // #endif
+
+  // 接对话流：订阅"这一轮数字人说完"的完整数据（文字 + 音频 + 口型）。
+  //
+  // 为什么走 store 的订阅而不是在本页另起一条 SSE：
+  // 仓库约定"家人端与老人端共用 `uni-app/api/` 那一层客户端"，
+  // 而 `stores/chat.js` 已经把 SSE 解析、幂等、停止、重试都处理好了。
+  // 在本页再写一套 = 两份实现，日后必然走偏。
+  unsubscribeLive = onLiveTurn((payload) => {
+    if (!payload) return
+    // 记下这一轮的原始数据（诊断用：能回答"音频到底有没有到端侧"这个问题）
+    lastTurnInfo = {
+      text: payload.text || '',
+      audioUrl: payload.audioUrl || '',
+      cueCount: payload.cues ? payload.cues.length : 0,
+      lipsyncSource: payload.lipsyncSource || '',
+      at: Date.now(),
+    }
+    if (payload.text) caption.value = payload.text
+    if (payload.audioUrl) {
+      // 有音频：音频 + 口型一起起播（口型以音频时钟为基准）
+      lastSpeechSource = 'audio+lipsync'
+      playTurn(payload.audioUrl, payload.cues)
+    } else if (payload.cues) {
+      // 没有音频（后端没配 TTS）：只动嘴，用自有时钟 —— 比完全不动好，但要如实标注
+      lastSpeechSource = 'lipsync-only'
+      playLipsync(payload.cues)
+    } else {
+      lastSpeechSource = 'text-only'
+    }
+  })
 })
 
 // 形象性别变化（在「数字人形象」页切换）→ 这里跟着换模型。watch 优于快照，避免回页面看不到新形象。
@@ -268,6 +328,7 @@ watch(gender, (g) => {
 onUnmounted(() => {
   if (timer) { clearInterval(timer); timer = null }
   if (waveTimer) { clearTimeout(waveTimer); waveTimer = null }
+  if (unsubscribeLive) { unsubscribeLive(); unsubscribeLive = null }
   lipsync.stop()
   stopAudio()
   // #ifdef H5
@@ -275,6 +336,43 @@ onUnmounted(() => {
   stageRef = null
   // #endif
 })
+
+/**
+ * 问一句，让数字人回答（真跑一轮对话流）。
+ *
+ * 这一句会走完整链路：SSE 流式文字 → 服务端合成音频 + 口型关键帧 →
+ * 端侧一边上屏一边等齐音频与口型，然后**边说边动嘴**。
+ */
+function ask(text) {
+  const question = String(text || '').trim()
+  if (!question) return { ok: false, reason: '没有内容' }
+  if (chat.streaming) return { ok: false, reason: '还在说上一句' }
+  caption.value = '…'          // 先给个反馈，避免点了没反应
+  lastSpeechSource = ''
+  try {
+    sendChat(question)
+  } catch (error) {
+    caption.value = '连不上，稍后再试'
+    return { ok: false, reason: String(error && error.message ? error.message : error) }
+  }
+  return { ok: true, question, conversationId: chat.conversationId || DEFAULT_CONVERSATION_ID }
+}
+
+/** 一键停止（产品红线：老人可随时停下）。 */
+function stopSpeaking() {
+  stopAudio()
+  lipsync.stop()
+  if (chat.streaming) {
+    try { stopChat() } catch (e) { void e }
+  }
+}
+
+/** 输入框里的问题提交流程（点按钮或回车都走这里）。 */
+function askNow() {
+  const result = ask(question.value)
+  if (result && result.ok) question.value = ''
+  else if (result && result.reason) uni.showToast({ title: result.reason, icon: 'none' })
+}
 
 /**
  * 播放"一整轮说话"：音频 + 口型一起（对话流收到 audio / lipsync 事件后调用）。
@@ -299,7 +397,19 @@ if (typeof window !== 'undefined') {
   window.__blVisionPlayLipsync = playLipsync
   // 自动化验收：喂"音频 + 口型"一整轮（音频用后端给的签名 URL）
   window.__blVisionPlayTurn = playTurn
+  // 自动化验收：真跑一轮对话流（问一句 → 服务端合成 → 端侧边说边动嘴）
+  window.__blVisionAsk = ask
+  window.__blVisionStop = stopSpeaking
   window.__blVisionStopAudio = stopAudio
+  window.__blVisionAskStats = () => ({
+    streaming: !!chat.streaming,
+    caption: caption.value,
+    lastSpeechSource,
+    lastTurn: lastTurnInfo,
+    audioError: lastAudioError,
+    conversationId: chat.conversationId || '',
+    messages: (chat.messages || []).length,
+  })
   window.__blVisionLipsyncStats = () => Object.assign({}, lipsync.stats(), {
     frameCount: lipsyncFrameCount,
     lastFrame: lastLipsyncFrame,
@@ -534,27 +644,69 @@ export default {
   text-align: center;
 }
 
-/* 招手互动按钮：比通话按钮更宽、更好按（适老） */
+/* 招手 / 停一下：两个等宽按钮并排（比通话按钮更宽更好按，适老） */
 .bl-vision__wave {
   position: relative;
   display: flex;
   justify-content: center;
-  margin-top: 24rpx;
+  gap: 20rpx;
+  margin-top: 20rpx;
+  padding: 0 32rpx;
 }
 .bl-wave-btn {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16rpx;
-  min-width: 420rpx;
-  min-height: 96rpx;
-  padding: 20rpx 40rpx;
+  gap: 12rpx;
+  min-height: 92rpx;
+  padding: 18rpx 20rpx;
   border-radius: var(--bl-radius-pill);
   background-color: rgba(7, 193, 96, .92);
 }
 .bl-wave-btn:active { background-color: rgba(6, 170, 84, .95); }
 .bl-wave-btn.is-busy { background-color: rgba(255, 255, 255, .3); }
+.bl-wave-btn--stop { background-color: rgba(255, 255, 255, .26); }
+.bl-wave-btn--stop:active { background-color: rgba(255, 255, 255, .4); }
 .bl-wave-btn__text {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #FFFFFF;
+}
+
+/* 问一句：输入框 + 提交（这一条走真对话流，数字人会边说边动嘴） */
+.bl-vision__ask {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 16rpx;
+  padding: 0 32rpx;
+}
+.bl-vision__ask-input {
+  flex: 1;
+  height: 88rpx;
+  padding: 0 28rpx;
+  border-radius: var(--bl-radius-pill);
+  background-color: rgba(255, 255, 255, .92);
+  color: #1F2A24;
+  font-size: 30rpx;
+}
+.bl-vision__ask-ph { color: #8B968F; }
+.bl-vision__ask-btn {
+  flex: none;
+  min-width: 176rpx;
+  height: 88rpx;
+  padding: 0 28rpx;
+  border-radius: var(--bl-radius-pill);
+  background-color: #07C160;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bl-vision__ask-btn:active { background-color: #06AA54; }
+.bl-vision__ask-btn.is-busy { background-color: rgba(255, 255, 255, .3); }
+.bl-vision__ask-btn-text {
   font-size: 30rpx;
   font-weight: 600;
   color: #FFFFFF;
