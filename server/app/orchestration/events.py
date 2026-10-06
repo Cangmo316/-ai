@@ -21,6 +21,10 @@ EVENT_META = "meta"
 EVENT_TOKEN = "token"
 EVENT_STICKER = "sticker"
 EVENT_CARD = "card"
+# 口型关键帧：**在 done 之前发一次**。端侧据此驱动 3D 数字人的 viseme 形态键。
+# 老端侧对未知事件是静默忽略的（uni-app/api/chat.js 的 normalize 有 default 分支），
+# 所以新增这个事件对旧端向后兼容。
+EVENT_LIPSYNC = "lipsync"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
 
@@ -53,6 +57,16 @@ def sticker_frame(token: str) -> str:
 
 def card_frame(card: dict) -> str:
     return frame(EVENT_CARD, {"card": card})
+
+
+def lipsync_frame(payload: dict) -> str:
+    """口型关键帧帧（payload 由 `app/avatar/visemes.py` 产出）。
+
+    字段：`assistantMsgId` / `durationMs` / `cues[{c,b,e,v[]}]` / `version` / `source`。
+    `source: "estimated"` 表示时间轴是按字数估算的（真 TTS 对齐后应为 `"tts-aligned"`），
+    端侧可据此决定要不要额外做平滑。
+    """
+    return frame(EVENT_LIPSYNC, payload)
 
 
 def done_frame(assistant_msg_id: str, finish_reason: str = "stop") -> str:

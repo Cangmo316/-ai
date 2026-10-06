@@ -72,6 +72,9 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings } from '@/common/store.js'
 import { UI_COPY } from '@/common/face/face-index.js'
 import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
+// 口型驱动：把 SSE `lipsync` 事件的关键帧变成逐帧的 viseme 权重。
+// 「渲染器只管把权重写进形态键」，插值 / 交叉淡化 / 最多混 2 个 的规则都在这个模块里。
+import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'
 // #ifdef H5
 import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
 // #endif
@@ -85,6 +88,25 @@ const waveToken = ref(0)
 const waving = ref(false)
 let stageRef = null
 let waveTimer = null
+
+/**
+ * 口型播放器：把「服务端给的关键帧」变成逐帧的 viseme 权重，交给渲染器写形态键。
+ *
+ * 时钟是**自建的** `performance.now()`（`lipsync.js` 内部），不是音频时钟 ——
+ * 因为当前还没有音频（后端暂无 TTS）。真 TTS 就绪后要改成"以音频播放时刻为基准"，
+ * 否则音画会漂移；届时只需给 `player.start(cues, audioStartMs)` 传音频基准。
+ */
+const lipsync = createLipsyncPlayer({
+  fps: 30,
+  onFrame(frame) {
+    lipsyncFrameCount += 1
+    lastLipsyncFrame = frame
+    if (stageRef && typeof stageRef.setVisemes === 'function') stageRef.setVisemes(frame)
+  },
+})
+/** 诊断：驱动层回调计数 + 最近一帧（用来区分"驱动层没跑"和"渲染层没写"） */
+let lipsyncFrameCount = 0
+let lastLipsyncFrame = null
 
 const caption = ref('妈，今天药按时吃了没')
 
@@ -169,11 +191,37 @@ watch(gender, (g) => {
 onUnmounted(() => {
   if (timer) { clearInterval(timer); timer = null }
   if (waveTimer) { clearTimeout(waveTimer); waveTimer = null }
+  lipsync.stop()
   // #ifdef H5
   unmountFaceStage()
   stageRef = null
   // #endif
 })
+
+/**
+ * 播放一段口型（对话流收到 SSE `lipsync` 事件时调用）。
+ *
+ * 调用方约定：`cues` 就是事件里的 `cues` 原样传进来，本页不做任何解读——
+ * 字→viseme 的换算在服务端（见 `server/app/avatar/visemes.py`）。
+ */
+function playLipsync(cues) {
+  if (!cues || !cues.length) return { ok: false, reason: '没有口型关键帧' }
+  return lipsync.start(cues)
+}
+
+// 自动化验收入口：H5 下把播放函数挂到 window，
+// 便于"无头浏览器给一段 cues → 看形态键是否真的动了"（渲染出的画面截图抓不到 WebGL）。
+// #ifdef H5
+if (typeof window !== 'undefined') {
+  window.__blVisionPlayLipsync = playLipsync
+  window.__blVisionLipsyncStats = () => Object.assign({}, lipsync.stats(), {
+    frameCount: lipsyncFrameCount,
+    lastFrame: lastLipsyncFrame,
+    hasStage: !!stageRef,
+    setVisemes: stageRef ? typeof stageRef.setVisemes : 'no-stage',
+  })
+}
+// #endif
 
 function toggleMute() {
   muted.value = !muted.value

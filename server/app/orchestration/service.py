@@ -29,6 +29,7 @@ import logging
 import re
 from collections.abc import AsyncIterator
 
+from ..avatar.visemes import build_lipsync_payload
 from ..llm.base import LLMError, LLMProvider
 from ..models.elder import DEFAULT_ELDER_ID
 from ..models.message import (
@@ -317,6 +318,14 @@ class ChatService:
                     await self.after_turn(elder_id, text)
                 except Exception:  # noqa: BLE001 —— 记忆整理失败不能影响这一轮对话
                     logger.warning("本轮记忆整理失败，已忽略", exc_info=True)
+
+            # 口型关键帧：放在 done 之前发一次（端侧按 assistantMsgId 与这条回复关联）。
+            # 只在**有正文**时发：纯表情/卡片不需要口型，发了反而让数字人"对空气张嘴"。
+            if (reply_text or "").strip():
+                try:
+                    yield events.EVENT_LIPSYNC, build_lipsync_payload(reply_text, assistant_id)
+                except Exception:  # noqa: BLE001 —— 口型是增强项，绝不能因为它失败而中断对话
+                    logger.warning("口型关键帧生成失败，已忽略", exc_info=True)
 
             yield events.EVENT_DONE, {"assistantMsgId": assistant_id, "finishReason": "stop"}
 

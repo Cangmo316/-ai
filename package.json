@@ -1,23 +1,24 @@
 {
-    "name":  "bilin-ai-tools",
-    "private":  true,
-    "type":  "module",
-    "description":  "仓库级 Node 工具与校验脚本。注意：这不是 uni-app 工程的依赖清单——App 端仍为零 npm 依赖，本文件只为 tools/ 下的脚本提供 ESM 运行环境与快捷命令。",
-    "scripts":  {
-                    "mock":  "node tools/mock-server.mjs",
-                    "quality":  "node tools/check-chat-quality.mjs",
-                    "seed":  "node tools/seed-plan.mjs",
-                    "test":  "node tools/test-chat-api.mjs \u0026\u0026 node tools/test-quality-patterns.mjs \u0026\u0026 node tools/test-chat-store.mjs \u0026\u0026 node tools/test-plan-store.mjs \u0026\u0026 node tools/test-reminder-store.mjs \u0026\u0026 node tools/test-push-store.mjs \u0026\u0026 node tools/test-memory-store.mjs \u0026\u0026 node tools/test-auth.mjs \u0026\u0026 node tools/test-family-flows.mjs \u0026\u0026 node tools/test-family-ui.mjs \u0026\u0026 node tools/test-face-params.mjs",
-                    "test:auth":  "node tools/test-auth.mjs",
-                    "test:chat-api":  "node tools/test-chat-api.mjs",
-                    "test:chat-store":  "node tools/test-chat-store.mjs",
-                    "test:plan-store":  "node tools/test-plan-store.mjs",
-                    "test:reminder":  "node tools/test-reminder-store.mjs",
-                    "test:push":  "node tools/test-push-store.mjs",
-                    "test:memory":  "node tools/test-memory-store.mjs",
-                    "test:quality":  "node tools/test-quality-patterns.mjs",
-                    "test:family":  "node tools/test-family-flows.mjs",
-                    "test:family-ui":  "node tools/test-family-ui.mjs",
-                    "test:face":  "node tools/test-face-params.mjs"
-                }
+  "name": "bilin-ai-tools",
+  "private": true,
+  "type": "module",
+  "description": "仓库级 Node 工具与校验脚本。注意：这不是 uni-app 工程的依赖清单——App 端仍为零 npm 依赖，本文件只为 tools/ 下的脚本提供 ESM 运行环境与快捷命令。",
+  "scripts": {
+    "mock": "node tools/mock-server.mjs",
+    "quality": "node tools/check-chat-quality.mjs",
+    "seed": "node tools/seed-plan.mjs",
+    "test": "node tools/test-chat-api.mjs && node tools/test-quality-patterns.mjs && node tools/test-chat-store.mjs && node tools/test-plan-store.mjs && node tools/test-reminder-store.mjs && node tools/test-push-store.mjs && node tools/test-memory-store.mjs && node tools/test-auth.mjs && node tools/test-family-flows.mjs && node tools/test-family-ui.mjs && node tools/test-face-params.mjs",
+    "test:auth": "node tools/test-auth.mjs",
+    "test:chat-api": "node tools/test-chat-api.mjs",
+    "test:chat-store": "node tools/test-chat-store.mjs",
+    "test:plan-store": "node tools/test-plan-store.mjs",
+    "test:reminder": "node tools/test-reminder-store.mjs",
+    "test:push": "node tools/test-push-store.mjs",
+    "test:memory": "node tools/test-memory-store.mjs",
+    "test:quality": "node tools/test-quality-patterns.mjs",
+    "test:family": "node tools/test-family-flows.mjs",
+    "test:family-ui": "node tools/test-family-ui.mjs",
+    "test:face": "node tools/test-face-params.mjs && node tools/test-lipsync.mjs",
+    "test:lipsync": "node tools/test-lipsync.mjs"
+  }
 }

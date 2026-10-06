@@ -1261,6 +1261,115 @@ function appendHistory(body, turn) {
 
 /* ------------------------------------------------------------------- SSE */
 
+/* --------------------------------------------------------------- 口型关键帧 */
+
+/**
+ * 文字 → 口型关键帧（viseme cues）。
+ *
+ * ⚠️ 这是**后端 `server/app/avatar/visemes.py` 的等价实现**，两者必须给出**同样的口径**
+ * （字段名、时间单位、最多 2 个 viseme）。改动任一侧都要同步另一侧 + 契约文档。
+ *
+ * 这里是**精简版**：只收录日常对话高频字的拼音，未收录的回退 `vis_AA`（开口）。
+ * 真实现（后端那份）收录更全；mock 的作用只是把「契约 + 端侧驱动」这条链跑通。
+ *
+ * 时间轴按字数估算（与 mock 逐字吐字的节奏一致：默认 110ms/字），
+ * **不是真实语音对齐** —— 真 TTS 就绪后这个字段会由真时间戳取代。
+ */
+const VISEME_INITIALS = {
+  b: 'vis_MBP', p: 'vis_MBP', m: 'vis_MBP', f: 'vis_FV',
+  d: 'vis_L', t: 'vis_L', n: 'vis_NN', l: 'vis_L',
+  g: 'vis_KK', k: 'vis_KK', h: 'vis_KK',
+  j: 'vis_SS', q: 'vis_SS', x: 'vis_SS',
+  zh: 'vis_SS', ch: 'vis_SS', sh: 'vis_SS', r: 'vis_RR',
+  z: 'vis_SS', c: 'vis_SS', s: 'vis_SS', y: 'vis_I', w: 'vis_WQ'
+}
+const VISEME_FINALS = {
+  a: ['vis_AA'], o: ['vis_O'], e: ['vis_E'], i: ['vis_I'], u: ['vis_U'], v: ['vis_U'],
+  er: ['vis_RR'],
+  ai: ['vis_AA', 'vis_I'], ei: ['vis_E', 'vis_I'], ao: ['vis_AA', 'vis_O'], ou: ['vis_O', 'vis_U'],
+  an: ['vis_AA'], en: ['vis_E'], ang: ['vis_AA'], eng: ['vis_E'], ong: ['vis_O'],
+  ia: ['vis_I', 'vis_AA'], ie: ['vis_I', 'vis_E'], iao: ['vis_I', 'vis_AA', 'vis_O'],
+  iu: ['vis_I', 'vis_U'], ian: ['vis_I'], in: ['vis_I'], iang: ['vis_I'], ing: ['vis_I'],
+  iong: ['vis_I'], ua: ['vis_U', 'vis_AA'], uo: ['vis_U', 'vis_O'],
+  uai: ['vis_U', 'vis_AA', 'vis_I'], ui: ['vis_U', 'vis_I'], uan: ['vis_U'], un: ['vis_U'],
+  uang: ['vis_U'], ueng: ['vis_U'], ve: ['vis_U', 'vis_E'], van: ['vis_U'], vn: ['vis_U']
+}
+/** 常用字 → 无声调拼音（与后端表同口径，仅收录高频字） */
+const PINYIN = {
+  妈: 'ma', 爸: 'ba', 你: 'ni', 我: 'wo', 他: 'ta', 她: 'ta', 们: 'men', 的: 'de',
+  了: 'le', 是: 'shi', 在: 'zai', 有: 'you', 不: 'bu', 和: 'he', 就: 'jiu', 都: 'dou',
+  也: 'ye', 还: 'hai', 要: 'yao', 会: 'hui', 能: 'neng', 可: 'ke', 以: 'yi', 好: 'hao',
+  很: 'hen', 这: 'zhe', 那: 'na', 个: 'ge', 什: 'shen', 么: 'me', 样: 'yang', 谁: 'shui',
+  哪: 'na', 里: 'li', 吃: 'chi', 喝: 'he', 睡: 'shui', 觉: 'jiao', 走: 'zou', 来: 'lai',
+  去: 'qu', 回: 'hui', 到: 'dao', 看: 'kan', 听: 'ting', 说: 'shuo', 做: 'zuo', 给: 'gei',
+  拿: 'na', 放: 'fang', 开: 'kai', 关: 'guan', 今: 'jin', 天: 'tian', 明: 'ming', 昨: 'zuo',
+  早: 'zao', 晚: 'wan', 上: 'shang', 下: 'xia', 中: 'zhong', 午: 'wu', 点: 'dian', 分: 'fen',
+  年: 'nian', 月: 'yue', 日: 'ri', 号: 'hao', 星: 'xing', 期: 'qi', 药: 'yao', 医: 'yi',
+  生: 'sheng', 院: 'yuan', 病: 'bing', 身: 'shen', 体: 'ti', 血: 'xue', 压: 'ya', 糖: 'tang',
+  心: 'xin', 脏: 'zang', 头: 'tou', 疼: 'teng', 痛: 'tong', 舒: 'shu', 服: 'fu', 饭: 'fan',
+  菜: 'cai', 水: 'shui', 汤: 'tang', 果: 'guo', 茶: 'cha', 子: 'zi', 女: 'nv', 儿: 'er',
+  孙: 'sun', 家: 'jia', 人: 'ren', 老: 'lao', 太: 'tai', 爷: 'ye', 奶: 'nai', 姨: 'yi',
+  叔: 'shu', 朋: 'peng', 友: 'you', 邻: 'lin', 居: 'ju', 行: 'xing', 对: 'dui', 没: 'mei',
+  事: 'shi', 别: 'bie', 请: 'qing', 谢: 'xie', 再: 'zai', 见: 'jian', 您: 'nin', 一: 'yi',
+  二: 'er', 三: 'san', 四: 'si', 五: 'wu', 六: 'liu', 七: 'qi', 八: 'ba', 九: 'jiu',
+  十: 'shi', 百: 'bai', 千: 'qian', 坐: 'zuo', 站: 'zhan', 起: 'qi', 躺: 'tang', 慢: 'man',
+  快: 'kuai', 多: 'duo', 少: 'shao', 大: 'da', 小: 'xiao', 高: 'gao', 低: 'di', 冷: 'leng',
+  热: 're', 暖: 'nuan', 凉: 'liang', 风: 'feng', 雨: 'yu', 雪: 'xue', 晴: 'qing', 阴: 'yin',
+  记: 'ji', 得: 'de', 忘: 'wang', 想: 'xiang', 念: 'nian', 喜: 'xi', 欢: 'huan', 爱: 'ai',
+  怕: 'pa', 累: 'lei', 忙: 'mang', 闲: 'xian', 帮: 'bang', 等: 'deng', 着: 'zhe', 先: 'xian',
+  后: 'hou', 现: 'xian', 已: 'yi', 经: 'jing', 刚: 'gang', 才: 'cai', 正: 'zheng', 马: 'ma',
+  挺: 'ting', 真: 'zhen', 特: 'te', 问: 'wen', 题: 'ti', 办: 'ban', 法: 'fa', 需: 'xu',
+  准: 'zhun', 备: 'bei', 完: 'wan', 成: 'cheng', 始: 'shi', 电: 'dian', 话: 'hua', 视: 'shi',
+  频: 'pin', 聊: 'liao', 通: 'tong', 照: 'zhao', 片: 'pian'
+}
+const VISEME_DEFAULT = 'vis_AA'
+const VISEME_SILENCE = 'vis_silence'
+
+function visemesForChar(ch) {
+  const syllable = PINYIN[ch]
+  if (!syllable) return [VISEME_DEFAULT]
+  let initial = ''
+  let rest = syllable
+  if (VISEME_INITIALS[syllable.slice(0, 2)]) {
+    initial = syllable.slice(0, 2)
+    rest = syllable.slice(2)
+  } else if (VISEME_INITIALS[syllable.slice(0, 1)]) {
+    initial = syllable.slice(0, 1)
+    rest = syllable.slice(1)
+  }
+  const out = []
+  if (initial) out.push(VISEME_INITIALS[initial])
+  const finals = VISEME_FINALS[rest] || VISEME_FINALS[rest.slice(0, 2)] || [VISEME_DEFAULT]
+  out.push(...finals)
+  const deduped = out.filter((v, i) => i === 0 || out[i - 1] !== v)
+  return deduped.slice(0, 2)
+}
+
+/** 生成 SSE `lipsync` 的 payload（字段与后端 build_lipsync_payload 一致） */
+function buildLipsyncPayload(text, assistantMsgId, charMs) {
+  const perChar = Number.isFinite(charMs) && charMs > 0 ? charMs : 110
+  const cues = []
+  let cursor = 0
+  for (const ch of Array.from(text || '')) {
+    if (/\s/.test(ch)) { cursor += 40; continue }
+    if ('。！？!?…'.includes(ch)) { cursor += 380; continue }
+    if ('，,、；;：:'.includes(ch)) { cursor += 220; continue }
+    const isCjk = /[\u4e00-\u9fff]/.test(ch)
+    const visemes = isCjk ? visemesForChar(ch) : [VISEME_DEFAULT]
+    const start = cursor
+    cursor += perChar
+    cues.push({ c: ch, b: start, e: cursor, v: visemes })
+  }
+  if (cursor > 0) cues.push({ c: '', b: cursor, e: cursor + 120, v: [VISEME_SILENCE] })
+  return {
+    assistantMsgId: assistantMsgId || '',
+    durationMs: cursor + 120,
+    cues,
+    version: 1,
+    source: 'estimated'
+  }
+}
+
 async function streamTurn(req, res, body, serverDelayMs) {
   const turn = buildTurn(body)
   // 逐字吐字的速度：默认按启动参数，__slow 触发词放大到 700ms/字，便于手动验证「停止」
@@ -1323,6 +1432,12 @@ async function streamTurn(req, res, body, serverDelayMs) {
       await wait(perCharDelay)
     }
 
+    // 口型关键帧：done 之前发一次（与后端 server/app/orchestration/service.py 的位置一致）。
+    // 时序跟逐字吐字对齐（perCharDelay），这样口型与「正在打字」的节奏是一致的。
+    if ((turn.text || '').trim()) {
+      write('lipsync', buildLipsyncPayload(turn.text, turn.assistantMsgId, perCharDelay))
+      await wait(60)
+    }
     write('done', { assistantMsgId: turn.assistantMsgId, finishReason: 'stop' })
     appendHistory(body, turn)
   } catch (e) {

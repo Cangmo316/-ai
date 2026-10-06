@@ -18,6 +18,8 @@ export const CHAT_EVENT = {
   token: 'token',
   sticker: 'sticker',
   card: 'card',
+  /** 口型关键帧（3D 数字人唇形同步用，在 done 之前发一次） */
+  lipsync: 'lipsync',
   done: 'done',
   error: 'error'
 }
@@ -170,6 +172,21 @@ function normalize(rawEvent) {
       return { type: CHAT_EVENT.sticker, token: payload.token || payload.id || '' }
     case 'card':
       return { type: CHAT_EVENT.card, card: payload.card || payload }
+    case 'lipsync':
+      // 口型关键帧（3D 数字人用）。契约见 uni-app/api/README.md 的事件表。
+      // 只做**形状校验**：cues 必须是数组、每项要有 b/e/v（少一个就整帧丢弃，
+      // 免得半截数据把口型驱动带偏 —— 驱动层假定 cues 结构完整）。
+      return {
+        type: CHAT_EVENT.lipsync,
+        assistantMsgId: payload.assistantMsgId || '',
+        durationMs: Number(payload.durationMs) || 0,
+        source: payload.source || 'estimated',
+        version: Number(payload.version) || 1,
+        cues: Array.isArray(payload.cues)
+          ? payload.cues.filter((cue) => cue && typeof cue.b === 'number'
+            && typeof cue.e === 'number' && Array.isArray(cue.v))
+          : []
+      }
     case 'done':
       return {
         type: CHAT_EVENT.done,

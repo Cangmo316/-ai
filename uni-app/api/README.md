@@ -74,6 +74,7 @@ X-Accel-Buffering: no          ← 少了这行，上了 nginx 会变成「一�
 | 2..n | `token` | `{"t":"妈"}` | 增量文本。`t` 与 `text` 都接受 |
 | 任意 | `sticker` | `{"token":"pill"}` | 受控表情 id，**必须是端侧白名单里的 token**，不能发 URL |
 | 任意 | `card` | `{"card":{"kind":"plan_item","plan":{...}}}` | 结构化卡片（计划卡 / 内容卡） |
+| 末（`done` 之前） | `lipsync` | `{"assistantMsgId":"a_1","durationMs":2340,"source":"estimated","version":1,"cues":[{"c":"妈","b":0,"e":180,"v":["vis_MBP","vis_AA"]}]}` | **口型关键帧**（3D 数字人唇形同步用）。`cues[].b`/`e` 是毫秒区间，`v` 是该字对应的 viseme 形态键（**服务端已收敛到 ≤2 个、权重和 ≤1**，端侧只做时间插值）。`source`：`estimated`（时间轴按字数估算）/ `tts-aligned`（真语音对齐）。`version` 用于将来扩展 |
 | 末 | `done` | `{"assistantMsgId":"...","finishReason":"stop"}` | 正常结束 |
 | 末 | `error` | `{"code":"server_error","message":"...","retryable":true}` | 可恢复错误；端侧会删掉空气泡并给「重发」入口 |
 

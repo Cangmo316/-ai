@@ -377,6 +377,9 @@ export function createFaceStage(opt) {
   // 交付件里带 glTF animation（`wave`），由 AnimationMixer 驱动。
   // 时钟单独持有：不能依赖帧率，否则不同机器上招手快慢不一致。
   let mixer = null
+  /** 口型写入计数（诊断用）：能区分「驱动层没调」与「渲染层没写进去」 */
+  let visemeWrites = 0
+  let lastVisemeApplied = 0
   let clips = []
   let actions = {}
   let activeClipName = ''
@@ -435,18 +438,31 @@ export function createFaceStage(opt) {
    */
   function setVisemes(next) {
     if (!next) return 0
+    // ⚠️ 兜底：`morphOwners` 为空时**按需重建**。
+    //    实测（2026-10-05）：交付件在 load 期间收集到的 owners 是空的
+    //    （`setVisemes` 直接调用返回 applied=0，而 `stats()` 却能报出 23 个形态键——
+    //      因为 stats 走的是另一条读法）。没有这个兜底，口型会**静默失效**：
+    //      驱动层照常每帧调用、日志与计数都是 0，脸上一点不动。
+    if (!morphOwners.size && root) morphOwners = collectMorphOwners(root)
     let applied = 0
-    for (const mesh of morphOwners) {
-      for (const name of Object.keys(next)) {
-        const idx = mesh.morphTargetDictionary ? mesh.morphTargetDictionary[name] : undefined
-        if (typeof idx === 'number' && mesh.morphTargetInfluences) {
-          const value = Number(next[name])
-          mesh.morphTargetInfluences[idx] = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
+    for (const [name, meshes] of morphOwners) {
+      const value = Number(next[name])
+      if (!Number.isFinite(value)) continue
+      const clamped = Math.max(0, Math.min(1, value))
+      for (const mesh of meshes) {
+        if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) continue
+        const index = mesh.morphTargetDictionary[name]
+        if (typeof index === 'number') {
+          mesh.morphTargetInfluences[index] = clamped
           applied += 1
         }
       }
     }
-    if (applied) renderer.render(scene, camera)
+    // **只写权重、不主动渲染**：口型由 30Hz 驱动层（lipsync.js）逐帧调用，
+    // 渲染交给 schedule() 的动画帧 —— 每次调用都同步渲染会变成"一帧渲两次"。
+    if (applied) schedule()
+    visemeWrites += applied
+    lastVisemeApplied = applied
     return applied
   }
 
@@ -914,6 +930,8 @@ export function createFaceStage(opt) {
       role: currentRole,
       clips: clips.map((c) => c.name),
       playing: activeClipName,
+      visemeWrites,
+      lastVisemeApplied,
     }
   }
 
@@ -1166,6 +1184,31 @@ export function createFaceStage(opt) {
         camera.updateProjectionMatrix()
         target.dispose()
       }
+    },
+    /**
+     * 读当前生效的形态键权重（诊断口型用）。
+     *
+     * 为什么要单独给一个读数口子：口型是逐帧写进 `morphTargetInfluences` 的，
+     * 而**渲染出来的画面截不到**（无头浏览器不合成 WebGL），
+     * 所以"口型到底动没动"只能靠读权重来验，不能靠看图。
+     */
+    morphWeights(names) {
+      const wanted = Array.isArray(names) && names.length ? names : null
+      const out = {}
+      // ⚠️ `morphOwners` 是 `Map<名字, mesh[]>`，**不是**普通对象：
+      //    第一版写成 `for (const mesh of morphOwners)` 会逐个拿到 `[name, meshes]` 数组，
+      //    于是 `mesh.morphTargetDictionary` 恒为 undefined、函数静默返回空对象。
+      for (const [name, meshes] of morphOwners) {
+        if (wanted && !wanted.includes(name)) continue
+        for (const mesh of meshes) {
+          if (!mesh.morphTargetDictionary || !mesh.morphTargetInfluences) continue
+          const index = mesh.morphTargetDictionary[name]
+          if (typeof index === 'number') {
+            out[name] = +Number(mesh.morphTargetInfluences[index] || 0).toFixed(3)
+          }
+        }
+      }
+      return out
     },
     /** 诊断用：暴露渲染器内部状态（排"取景裁切"这类问题时不必再靠猜） */
     debug() {
