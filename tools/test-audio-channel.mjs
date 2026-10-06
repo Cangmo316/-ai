@@ -89,10 +89,34 @@ if (audioEvent) {
   check('签名 URL 能取到音频（HTTP 200）', audioResponse.status === 200, 'HTTP ' + audioResponse.status)
   check('Content-Type 是音频', /audio\//.test(contentType), contentType)
   check('返回了非空音频字节', bytes.length > 100, bytes.length + ' bytes')
-  // MP3 帧头：0xFF 0xEx/0xFx
-  check('字节像 MP3（帧同步字 0xFF 0xF?）',
-    bytes.length > 2 && bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0,
-    bytes.slice(0, 4).join(','))
+
+  // ⚠️ 这里原本是**形状断言**（"字节像 MP3"）——它放过了两个真 bug：
+  //    ① mock 的音频实际只有 0.052 秒（形状对、时长错）→ 用户"听不到声音"
+  //    ② 口型在音频就绪前就演完 → 用户"看不到唇形同步"
+  //    所以现在改成**行为断言**：字节要与声明格式一致 + 时长要与字节数对得上。
+  const declaredFormat = String(payload.format || '').toLowerCase()
+  const looksWav = bytes.length > 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+  const looksMp3 = bytes.length > 2 && bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0
+  check('字节与声明的格式一致（' + declaredFormat + '）',
+    declaredFormat === 'wav' ? looksWav : looksMp3,
+    'content-type=' + contentType + ' bytes0-3=' + bytes.slice(0, 4).join(','))
+
+  if (looksWav) {
+    // WAV 头里有采样率/声道/位深/数据长度 → 可以**精确算出**时长
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    const sampleRate = view.getUint32(24, true)
+    const channels = view.getUint16(22, true)
+    const bits = view.getUint16(34, true)
+    const dataBytes = view.getUint32(40, true)
+    const seconds = dataBytes / (sampleRate * channels * (bits / 8))
+    check('音频实际时长 ≥ 2 秒（防"看起来像音频但只有几十毫秒"）', seconds >= 2, seconds.toFixed(3) + 's')
+    check('durationMs 与字节算出的时长一致（±0.2s）',
+      Math.abs(seconds - payload.durationMs / 1000) <= 0.2,
+      '声明 ' + (payload.durationMs / 1000).toFixed(3) + 's / 实际 ' + seconds.toFixed(3) + 's')
+  } else if (looksMp3) {
+    check('durationMs 合理（> 0）', payload.durationMs > 0, String(payload.durationMs))
+  }
 
   // ③ 篡改一律取不到
   const tamperedSig = await fetch(baseUrl + payload.url.replace(/sig=[0-9a-f]+/, 'sig=deadbeef'))

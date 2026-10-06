@@ -663,7 +663,9 @@ function memorySettingsOf(elderId) {
         return
       }
       res.writeHead(200, Object.assign({
-        'Content-Type': 'audio/mpeg',
+        // 与真实实现一致地**如实**声明类型：mock 发的是 WAV（静音可精确控制），
+        // 真后端发的是百炼的 MP3。两者都合法，端侧按 Content-Type 都能放。
+        'Content-Type': 'audio/wav',
         'Content-Length': MOCK_AUDIO_BYTES.length,
         'Cache-Control': 'private, max-age=300'
       }, corsHeaders()))
@@ -1287,22 +1289,38 @@ function appendHistory(body, turn) {
 /* ------------------------------------------------------- 音频（合成结果） */
 
 /**
- * 一段**真实可播放的静音 MP3**（两帧，约 830 字节），运行时生成。
+ * 一段**真实可播放的静音音频**（WAV，默认 3 秒），运行时生成。
+ *
+ * ⚠️ 踩坑记录：第一版用"两帧静音 MP3"（417 字节 × 2），
+ * 浏览器实测 `duration = 0.052125` —— **只有 52 毫秒**，等于没声音，
+ * 口型也一闪而过。当时我用"字节像 MP3"这种形状断言就以为验过了，**是假验证**。
+ * 改成 WAV：静音时长可以精确控制，任何浏览器都能解码，且不需要编码器。
  *
  * 为什么 mock 要真发音频：端侧 `innerAudioContext` / `<audio>` 的播放链路
- * **只有拿到能解码的字节才算验证过** —— 给一段假字节，播放器会报错、端侧走降级分支，
- * 表面上看不出问题。所以这里给一个 MPEG1 Layer3 的合法帧头 + 静音负载。
+ * 只有拿到**能解码、且够长**的字节才算验证过。
  */
-function buildSilentMp3() {
-  const frameLength = 417          // 128kbps / 44.1kHz 的 MPEG1 L3 帧长 = 144*128000/44100
-  const frame = Buffer.alloc(frameLength)
-  frame[0] = 0xFF
-  frame[1] = 0xFB
-  frame[2] = 0x90
-  frame[3] = 0x64
-  return Buffer.concat([frame, frame])
+function buildSilentWav(seconds = 3, sampleRate = 16000) {
+  const frames = Math.round(seconds * sampleRate)
+  const dataBytes = frames * 2                      // 16bit 单声道
+  const buffer = Buffer.alloc(44 + dataBytes)       // 44 字节是标准 WAV 头
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataBytes, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)                      // fmt 块长度
+  buffer.writeUInt16LE(1, 20)                       // PCM
+  buffer.writeUInt16LE(1, 22)                       // 声道数
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * 2, 28)          // 字节率
+  buffer.writeUInt16LE(2, 32)                       // 块对齐
+  buffer.writeUInt16LE(16, 34)                      // 位深
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataBytes, 40)
+  // 负载全 0 = 静音
+  return buffer
 }
-const MOCK_AUDIO_BYTES = buildSilentMp3()
+const MOCK_AUDIO_SECONDS = 3
+const MOCK_AUDIO_BYTES = buildSilentWav(MOCK_AUDIO_SECONDS)
 /**
  * 已"发放"的音频 id 集合：只有发过音频事件的 id 才允许取。
  * 这样 mock 也能验证"**没发过的 id 取不到**"这条约束（而不是任何 id 都给音频）。
@@ -1506,8 +1524,8 @@ async function streamTurn(req, res, body, serverDelayMs) {
       write('audio', {
         assistantMsgId: turn.assistantMsgId,
         url: buildMockAudioUrl(audioId),
-        durationMs: 1000,          // 两帧静音 MP3 ≈ 1 秒，与 MOCK_AUDIO_BYTES 对应
-        format: 'mp3',
+        durationMs: MOCK_AUDIO_SECONDS * 1000,   // 与 MOCK_AUDIO_BYTES 的静音时长严格对应
+        format: 'wav',
         bytes: MOCK_AUDIO_BYTES.length
       })
       await wait(60)

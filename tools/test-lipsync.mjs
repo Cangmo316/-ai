@@ -118,6 +118,63 @@ test('createLipsyncPlayer：没有 cues 时返回失败而不是静默', () => {
   assert.ok(typeof r.reason === 'string' && r.reason.length > 0)
 })
 
+/* ─────────── 外部时钟（音频位置）驱动 —— 音画同步的核心 ─────────── */
+// 为什么这几条最重要：口型与声音必须是**同一根时间轴**。
+// 第一版让播放器自己跑时钟、音频异步加载，结果"嘴在声音出来前就演完了"
+// （用户实测反馈："没看到唇形同步"）。所以这里断言"嘴真的跟着外部时钟走"。
+
+test('外部时钟：嘴跟的是音频位置（墙钟固定也能出正确口型）', () => {
+  const frames = []
+  const audioMs = 10               // 模拟音频播放位置：10ms
+  const player = createLipsyncPlayer({
+    fps: 30,
+    clock: () => audioMs,
+    now: () => 1e9,                // 墙钟故意设成一个巨大定值，证明"没有用墙钟"
+    onFrame: (f) => frames.push(f),
+  })
+  player.start(CUES)
+  player.stop()
+  assert.ok(frames.length >= 1, 'start 后应立刻出一帧')
+  // 10ms 落在第一个字（0~180ms）内 → 应是"妈"的口型
+  assert.ok(frames[0].vis_MBP > 0, '10ms 时应是第一个字（妈）的口型')
+  assert.equal(player.stats().clockSource, 'audio')
+})
+
+test('外部时钟：音频没就绪（clock 返回 null）时退回自有时钟，而不是卡在句首', () => {
+  // ⚠️ 这条是踩坑的直接防线：音频要下载+解码，那几帧若被当成"时间=0"，
+  // 嘴会卡住不动；而没有音频时（后端未配 TTS）更会整句都不动。
+  const frames = []
+  let wall = 0
+  const player = createLipsyncPlayer({
+    fps: 30,
+    clock: () => null,
+    now: () => { wall += 40; return wall },
+    onFrame: (f) => frames.push(f),
+  })
+  player.start(CUES)
+  const stats = player.stats()
+  player.stop()
+  assert.ok(frames.length >= 1)
+  assert.equal(stats.clockSource, 'self', 'clock 返回 null 时应退回自有时钟')
+  assert.equal(stats.hasExternalClock, true, '已注入外部时钟这件事要如实反映')
+})
+
+test('外部时钟：没注入 clock 时报 self；注入后报 audio', () => {
+  const selfOnly = createLipsyncPlayer({ fps: 30, onFrame: () => {} })
+  selfOnly.start(CUES)
+  const noClock = selfOnly.stats()
+  selfOnly.stop()
+  assert.equal(noClock.clockSource, 'self')
+  assert.equal(noClock.hasExternalClock, false)
+
+  const withClock = createLipsyncPlayer({ fps: 30, clock: () => 100, onFrame: () => {} })
+  withClock.start(CUES)
+  const yes = withClock.stats()
+  withClock.stop()
+  assert.equal(yes.clockSource, 'audio')
+  assert.equal(yes.hasExternalClock, true)
+})
+
 for (const [name, fn] of cases) {
   try {
     fn()

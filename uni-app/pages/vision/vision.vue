@@ -97,7 +97,8 @@ import { getBaseURL } from '@/api/config.js'
 import { chat, send as sendChat, stop as stopChat, onLiveTurn, DEFAULT_CONVERSATION_ID } from '@/stores/chat.js'
 // 口型驱动：把 SSE `lipsync` 事件的关键帧变成逐帧的 viseme 权重。
 // 「渲染器只管把权重写进形态键」，插值 / 交叉淡化 / 最多混 2 个 的规则都在这个模块里。
-import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'// #ifdef H5
+import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'
+// #ifdef H5
 import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
 // #endif
 
@@ -120,12 +121,27 @@ let lastTurnInfo = null
 /**
  * 口型播放器：把「服务端给的关键帧」变成逐帧的 viseme 权重，交给渲染器写形态键。
  *
- * 时钟是**自建的** `performance.now()`（`lipsync.js` 内部），不是音频时钟 ——
- * 因为当前还没有音频（后端暂无 TTS）。真 TTS 就绪后要改成"以音频播放时刻为基准"，
- * 否则音画会漂移；届时只需给 `player.start(cues, audioStartMs)` 传音频基准。
+ * ## ⚠️ 时间源只有**一个**：音频位置
+ *
+ * 这是踩过坑之后定下的设计。第一版让播放器从 `start()` 那刻起跑一个自有时钟，
+ * 音频另外异步加载 —— 而音频要**下载 + 解码**（实测几百毫秒到几秒），
+ * 结果**嘴在这段时间里已经把整句演完了**，等声音出来时嘴已经停了，
+ * 表现为"完全看不到唇形同步"。
+ *
+ * 根因是"两个时钟各自跑，再想办法对齐"。正确做法是**单一时间源**：
+ * 音频播到第几毫秒，嘴就摆到第几毫秒 —— 这样不存在漂移，也不需要"校准"。
+ *
+ * 没有音频时（后端未配 TTS）才退回自有时钟：嘴照样动，只是与声音无关。
  */
 const lipsync = createLipsyncPlayer({
   fps: 30,
+  // 读"当前音频播放位置"；没有音频时返回 null → 播放器退回自有时钟
+  clock: () => {
+    if (!audioContext) return null
+    const seconds = Number(audioContext.currentTime)
+    if (!Number.isFinite(seconds)) return null
+    return seconds * 1000
+  },
   onFrame(frame) {
     lipsyncFrameCount += 1
     lastLipsyncFrame = frame
@@ -139,16 +155,63 @@ let lastLipsyncFrame = null
 /**
  * 合成音频（后端给的是**短期签名 URL**，播放器能直取，不需要请求头）。
  *
- * ⚠️ 端侧时钟的关键：有音频时口型要**跟着音频走**，不能用 `performance.now()` 自由跑
- * ——否则音画必然漂移（网络抖动、缓冲都会让两者错开，且误差会累积）。
- * 这里用 `onTimeUpdate` 把音频的当前播放位置喂给驱动层做**校准**，
- * 帧与帧之间仍由 30fps 的自有时钟平滑推进（`onTimeUpdate` 回调粒度粗，不能直接驱动 30fps）。
+ * ⚠️ 口型与音频**共用同一根时间轴**：播放器的 `clock` 直接读 `currentTime`（见上面
+ * `createLipsyncPlayer` 的说明）。所以这里**不需要**猜测"音频什么时候开始"，
+ * 也不需要定时校准 —— 音频没就绪时 `currentTime` 为 0，嘴就停在句首；
+ * 一旦开始播，嘴自然跟着走。这比"自有时钟 + 事后校准"简单也更可靠。
  */
 let audioContext = null
-let audioTimer = null
+let lastAudioError = ''
+/** 诊断：本次播放的音频信息（时长/是否真的在播）—— 用来回答"到底响了没有" */
+let audioInfo = null
+/**
+ * 行为探针：说话期间定时采「音频位置 + 当前形态键权重」。
+ *
+ * 为什么要有它：上一版的验收只断言"收到了音频 URL / cues"，那是**形状断言**，
+ * 结果放过了两个真 bug（音频只有 52ms；口型在音频就绪前就演完）。
+ * 真正的判据必须是**行为**：播放中嘴有没有摆、摆的时候时钟是不是音频、说完有没有回静止。
+ * 探针只在被显式开启时采样（`__blVisionProbeStart()`），不影响正常运行。
+ */
+let probeSamples = []
+let probeTimer = null
+
+function probeStart() {
+  probeStop()
+  probeSamples = []
+  probeTimer = setInterval(() => {
+    const morph = (stageRef && typeof stageRef.morphWeights === 'function')
+      ? stageRef.morphWeights(['vis_AA', 'vis_MBP', 'vis_I', 'vis_L', 'vis_silence'])
+      : null
+    const active = morph ? Object.entries(morph).filter(([, v]) => v > 0.01) : []
+    probeSamples.push({
+      t: audioContext ? Number(audioContext.currentTime || 0) : -1,
+      active: active.map(([k, v]) => k + '=' + Number(v).toFixed(2)),
+      clock: lipsync.stats().clockSource,
+    })
+  }, 200)
+  return { ok: true }
+}
+
+function probeStop() {
+  if (probeTimer) { clearInterval(probeTimer); probeTimer = null }
+}
+
+function probeResult() {
+  probeStop()
+  const moved = probeSamples.filter((s) => s.active.length > 0)
+  return {
+    sampleCount: probeSamples.length,
+    movedSampleCount: moved.length,
+    mouthMoved: moved.length > 0,
+    clockFromAudio: probeSamples.some((s) => s.clock === 'audio'),
+    duration: audioInfo ? Number(audioInfo.duration || 0) : 0,
+    played: audioInfo ? !!audioInfo.played : false,
+    error: audioInfo ? audioInfo.error : '',
+    samples: probeSamples.slice(0, 10),
+  }
+}
 
 function stopAudio() {
-  if (audioTimer) { clearInterval(audioTimer); audioTimer = null }
   if (audioContext) {
     try { audioContext.stop() } catch (e) { void e }
     try { audioContext.destroy() } catch (e) { void e }
@@ -157,14 +220,12 @@ function stopAudio() {
 }
 
 /**
- * 播放一段合成音频，并让口型以音频时钟为基准。
+ * 播放一段合成音频，并让口型跟着音频走。
  *
  * @param {string} url      服务端给的签名地址（相对路径）
  * @param {Array}  cues     同一轮的口型关键帧
- * @param {number} baseMs   音频在服务端时间轴上的起点（当前恒为 0：
- *                          `lipsync` 的 `b` 就是从音频开头算的）
  */
-function playSpeech(url, cues, baseMs) {
+function playSpeech(url, cues) {
   if (!url) return { ok: false, reason: '没有音频地址' }
   stopAudio()
   // 相对路径要拼成绝对地址：dev 是 5173、真机是后端地址，故用 API base（与 SSE 同源）
@@ -178,31 +239,32 @@ function playSpeech(url, cues, baseMs) {
   }
   if (!audioContext) return { ok: false, reason: '当前环境没有音频上下文' }
 
+  audioInfo = { url: absolute, duration: 0, played: false, error: '' }
   audioContext.src = absolute
-  // 口型**先用自有时钟起跑**（等音频真正开始播再校准）：这样网络慢时嘴也不会干等
+  // 口型**立刻挂上**：音频没就绪时 currentTime 为 0（嘴停在句首），
+  // 开始播之后自然跟着走 —— 不需要等 onPlay 再启动，也就不会"漏掉开头"
   const started = lipsync.start(cues)
-  audioContext.onPlay(() => {
-    // 音频真的开始播了 —— 把驱动层的时间基准对齐到"此刻"
-    lipsync.resync()
-    // 之后按 `onTimeUpdate` 的音频位置持续校准
-    if (audioTimer) clearInterval(audioTimer)
-    audioTimer = setInterval(() => {
-      if (!audioContext) return
-      // `currentTime` 单位秒 → 毫秒；这是音频的真实播放位置
-      const ms = Math.max(0, Number(audioContext.currentTime || 0) * 1000) + (baseMs || 0)
-      lipsync.resync(ms)
-    }, 100)
+  // #ifdef H5 || APP-PLUS
+  audioContext.onCanplay(() => {
+    if (audioInfo) audioInfo.duration = Number(audioContext.duration || 0)
   })
+  audioContext.onPlay(() => {
+    if (audioInfo) {
+      audioInfo.played = true
+      audioInfo.duration = Number(audioContext.duration || audioInfo.duration || 0)
+    }
+  })
+  // #endif
   audioContext.onEnded(() => { stopAudio() })
-  audioContext.onError(() => {
-    // 音频失败不该静默：口型退回自有时钟继续跑完，并记一条状态
-    lastAudioError = 'audio error'
+  audioContext.onError((error) => {
+    // 音频失败不该静默：口型退回自有时钟继续跑完，并把原因记下来给验收读
+    lastAudioError = 'audio error ' + ((error && (error.errMsg || error.code)) || '')
+    if (audioInfo) audioInfo.error = lastAudioError
     stopAudio()
   })
   audioContext.play()
   return { ok: true, url: absolute, lipsync: started }
 }
-let lastAudioError = ''
 
 /** 把服务端给的**相对**签名地址拼成绝对地址（dev 是 5173/8787、真机是内网地址）。 */
 function resolveApiUrl(url) {
@@ -401,12 +463,21 @@ if (typeof window !== 'undefined') {
   window.__blVisionAsk = ask
   window.__blVisionStop = stopSpeaking
   window.__blVisionStopAudio = stopAudio
+  // 行为探针：`__blVisionProbeStart()` → ask → `__blVisionProbeResult()`
+  window.__blVisionProbeStart = probeStart
+  window.__blVisionProbeResult = probeResult
   window.__blVisionAskStats = () => ({
     streaming: !!chat.streaming,
     caption: caption.value,
     lastSpeechSource,
     lastTurn: lastTurnInfo,
     audioError: lastAudioError,
+    /** 音频的**真实播放情况**（时长/是否真的起播）—— "到底响了没有"看这里 */
+    audio: audioInfo,
+    lipsync: lipsync.stats(),
+    morph: stageRef && typeof stageRef.morphWeights === 'function'
+      ? stageRef.morphWeights(['vis_AA', 'vis_MBP', 'vis_I', 'vis_L', 'vis_silence'])
+      : null,
     conversationId: chat.conversationId || '',
     messages: (chat.messages || []).length,
   })

@@ -158,16 +158,27 @@ export function sampleAt(track, tMs) {
  * 创建一个口型播放器。
  *
  * @param {object} options
+ *   · `clock()`        → **时间源**：返回"当前应显示到第几毫秒"。
+ *                        有真音频时**必须传音频时钟**（`() => audio.currentTime * 1000`），
+ *                        这样口型与声音是同一根时间轴，不可能漂移。
+ *                        不传则用自有时钟（`performance.now()`）—— 只在没有音频时用。
  *   · `heightOf(key)`  → 该 viseme 的开口幅度上限（默认 1；可用于压低某些音的幅度）
  *   · `onFrame(frame)` → 每帧回调，把完整权重表交给渲染器
- *   · `now()`          → 取当前时间（默认真实时钟，测试时可注入）
+ *   · `now()`          → 取"墙钟"时间（默认 `performance.now()`，测试时可注入）
  *   · `fps`            → 驱动频率，默认 30（与 `uni-app` 的 30Hz 下发口径一致）
+ *
+ * ⚠️ **为什么把时间源做成可注入（踩坑记录）**：
+ * 第一版让播放器自己从 `start()` 那刻起跑一个自有时钟，音频另外异步加载。
+ * 结果音频要下载+解码（几百毫秒到几秒），**嘴在这段时间里已经把整句演完了**，
+ * 等到声音出来时嘴已经停了 —— 表现为"没看到唇形同步"。
+ * 根因是"两个时钟各自跑、再想办法对齐"，正确做法是**只有一个时间源**：音频播到哪，嘴就到哪。
  */
 export function createLipsyncPlayer(options) {
   const opt = options || {}
   const fps = Math.max(10, Math.min(60, opt.fps || 30))
   const interval = 1000 / fps
   const now = typeof opt.now === 'function' ? opt.now : () => performance.now()
+  const externalClock = typeof opt.clock === 'function' ? opt.clock : null
   const onFrame = typeof opt.onFrame === 'function' ? opt.onFrame : () => {}
   const heightOf = typeof opt.heightOf === 'function' ? opt.heightOf : () => 1
 
@@ -176,10 +187,33 @@ export function createLipsyncPlayer(options) {
   let timer = null
   let playing = false
   let lastResyncAt = 0
+  /** 本帧用的是外部时钟还是退回了自有时钟（诊断用：能回答"嘴跟的是不是声音"） */
+  let usingExternalClock = false
+
+  /**
+   * 当前应显示的时间（毫秒）。
+   *
+   * 有外部时钟（音频位置）就用它 —— 那是唯一真相。
+   * ⚠️ 外部时钟返回 `null`/非数字时**退回自有时钟**，而不是当作 0：
+   * 音频还没就绪的那几帧如果当成 0，嘴会"卡在第一帧"；
+   * 而没有音频时（后端未配 TTS）更要能靠自有时钟把整句演完。
+   */
+  function currentTimeMs() {
+    if (externalClock) {
+      const raw = externalClock()
+      const value = Number(raw)
+      if (raw !== null && raw !== undefined && Number.isFinite(value) && value >= 0) {
+        usingExternalClock = true
+        return value
+      }
+    }
+    usingExternalClock = false
+    return now() - startedAt
+  }
 
   function tick() {
     if (!playing) return
-    const t = now() - startedAt
+    const t = currentTimeMs()
     if (t >= track.durationMs) {
       stop()
       // 收尾必须送一帧全静止：否则最后一句的口型会一直挂在脸上
@@ -208,15 +242,13 @@ export function createLipsyncPlayer(options) {
   }
 
   /**
-   * 用**外部时钟**校准内部时钟。
+   * 用**外部时钟**校准内部时钟（仅在没接外部时钟时才有意义）。
    *
-   * 为什么必须要有这个：有真音频时，口型不能靠 `performance.now()` 自由跑 ——
-   * 网络抖动、缓冲、播放器起播延迟都会让音画错开，而且**误差会累积**。
-   * 音频播放器能告诉我们"现在放到第几毫秒"（`innerAudioContext.currentTime`），
-   * 用它把内部基准挪正即可。
+   * ⚠️ 更推荐的做法是直接给 `clock()`（见 `createLipsyncPlayer` 的说明）：
+   * 那样口型与声音是**同一根时间轴**，不存在"漂移了再校准"这件事。
+   * 这个 `resync()` 保留给"时钟由回调式播放器提供、必须由外部推"的场景。
    *
-   * @param {number} positionMs 音频当前播放位置（毫秒）。不传则用"此刻"作为 0 点
-   *                            （音频刚开始播时用）。
+   * @param {number} positionMs 音频当前播放位置（毫秒）。不传则用"此刻"作为 0 点。
    */
   function resync(positionMs) {
     const target = typeof positionMs === 'number' && positionMs >= 0 ? positionMs : 0
@@ -240,7 +272,10 @@ export function createLipsyncPlayer(options) {
       playing,
       cues: track.cues.length,
       durationMs: track.durationMs,
-      elapsedMs: playing ? Math.round(now() - startedAt) : 0,
+      elapsedMs: playing ? Math.round(currentTimeMs()) : 0,
+      /** 本帧的嘴跟的是**音频位置**还是自有时钟 —— "有没有对上声音"就看它 */
+      clockSource: usingExternalClock ? 'audio' : 'self',
+      hasExternalClock: !!externalClock,
       lastResyncAgoMs: lastResyncAt ? Math.round(now() - lastResyncAt) : null,
     }),
   }
