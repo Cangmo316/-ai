@@ -31,6 +31,7 @@ from collections.abc import AsyncIterator
 
 from ..avatar.visemes import build_lipsync_payload, from_alignment
 from ..llm.base import LLMError, LLMProvider
+from ..voice import audio_store
 from ..voice.gateway import NullTtsProvider
 from ..models.elder import DEFAULT_ELDER_ID
 from ..models.message import (
@@ -171,6 +172,13 @@ class ChatService:
             from ..voice import gateway as voice_gateway
             voice = voice_gateway.build_tts_provider()
         self.voice = voice
+        # 音频暂存（进程内 + TTL）：TTS 产出音频后放进来，音频事件只带签名 URL。
+        # 放在实例上而不是全局单例，是为了测试能注入自己的 store。
+        from ..voice.audio_store import get_store
+        self.audio_store = get_store()
+        # `_build_lipsync()` 顺手把"这一轮要下发的音频事件 payload"放这里，
+        # 由 generate() 在 lipsync **之前**取走发出（顺序：audio → lipsync → done）。
+        self._last_audio_payload: dict | None = None
 
     # ------------------------------------------------------------ 事件流
 
@@ -338,6 +346,12 @@ class ChatService:
             # 语音是**增强项**：任何失败都只记日志，绝不中断对话。
             if (reply_text or "").strip():
                 try:
+                    # **音频先发、口型后发**：端侧要先把音频下载并起播，
+                    # 才能用"音频播放时刻"驱动口型（否则音画会漂移）。
+                    audio_payload = self._last_audio_payload
+                    self._last_audio_payload = None
+                    if audio_payload:
+                        yield events.EVENT_AUDIO, audio_payload
                     payload = await self._build_lipsync(reply_text, assistant_id)
                     yield events.EVENT_LIPSYNC, payload
                 except Exception:  # noqa: BLE001 —— 口型是增强项，绝不能因为它失败而中断对话
@@ -427,6 +441,9 @@ class ChatService:
             # 编排层只看 "有没有 word_segments"。
             result = await provider.synthesize(reply_text)
             if result.ok:
+                # 音频落进暂存、拼出短期签名 URL，交给 generate() 在 lipsync 之前发。
+                # 读文件失败不该影响对话，所以整段包在 try 里。
+                self._last_audio_payload = self._store_audio(result, assistant_id)
                 segments = (result.extra or {}).get("word_segments") or []
                 if segments:
                     return from_alignment(segments, assistant_id)
@@ -435,6 +452,36 @@ class ChatService:
                 logger.info("TTS 未产出音频（%s）→ 口型回退估算版", result.reason)
         # ② 估算版（本机没有 TTS 时的默认，也是上面所有失败的兜底）
         return build_lipsync_payload(reply_text, assistant_id)
+
+    def _store_audio(self, result, assistant_id: str) -> dict | None:
+        """把 TTS 产出的音频放进暂存，拼出端侧可直取的**签名 URL**。
+
+        返回 `None` 表示"没有可用音频"（读文件失败/内容为空）——
+        这时**不发音频事件**，端侧会退回"用估算时钟驱动口型"，对话照常。
+        """
+        path = getattr(result, "audio_path", "") or ""
+        if not path:
+            return None
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            logger.warning("读取合成音频失败：%s", path, exc_info=True)
+            return None
+        if not data:
+            return None
+        audio_id = self.audio_store.put(data)
+        if not audio_id:
+            return None
+        settings = getattr(self, "settings", None)
+        return {
+            "assistantMsgId": assistant_id,
+            "url": audio_store.build_audio_url(audio_id, settings),
+            # 时长：TTS 若给了就用（百炼 MP3 头我们没解析），否则 0 由端侧按音频实际时长处理
+            "durationMs": int(getattr(result, "duration_ms", 0) or 0),
+            "format": "mp3",
+            "bytes": len(data),
+        }
 
     async def reply_once(
         self,

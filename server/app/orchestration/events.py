@@ -25,6 +25,9 @@ EVENT_CARD = "card"
 # 老端侧对未知事件是静默忽略的（uni-app/api/chat.js 的 normalize 有 default 分支），
 # 所以新增这个事件对旧端向后兼容。
 EVENT_LIPSYNC = "lipsync"
+# 合成音频（**在 lipsync 之前发**：端侧要先拿到音频、起播，再按音频时钟驱动口型）。
+# `url` 是**短期签名 URL**：端侧播放器带不了 Authorization 头，所以鉴权信息编进 URL。
+EVENT_AUDIO = "audio"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
 
@@ -57,6 +60,15 @@ def sticker_frame(token: str) -> str:
 
 def card_frame(card: dict) -> str:
     return frame(EVENT_CARD, {"card": card})
+
+
+def audio_frame(payload: dict) -> str:
+    """合成音频帧。payload：`{assistantMsgId, url, durationMs, format}`。
+
+    `url` 是**相对路径**（端侧自己拼 base），带 `expires` 与 `sig` 查询参数 ——
+    播放器直接当 `src` 用，不需要任何请求头（见 `app/voice/audio_store.py`）。
+    """
+    return frame(EVENT_AUDIO, payload)
 
 
 def lipsync_frame(payload: dict) -> str:

@@ -42,9 +42,13 @@ MODE_OFF = "off"
 
 # 公开接口：健康检查与错误码表。探针要能用，错误码表本身不含敏感信息
 PUBLIC_PATHS = ("/healthz", "/v1/errors", "/docs", "/openapi.json", "/redoc")
+# `/v1/audio/` 放在公开前缀里**不是"不鉴权"**，而是"鉴权方式不同"：
+# 端侧播音频用 innerAudioContext / <audio>，**两者都带不了 Authorization 请求头**，
+# 所以音频走**短期签名 URL**（`app/voice/audio_store.py`），由端点自己校验签名。
+# 端点内部会 `verify()`，签名不对一律 403 —— 比"忘了加鉴权"更严，而不是更松。
+PUBLIC_PREFIXES = ("/docs", "/redoc", "/family", "/uni-app/api", "/v1/audio")
 # 家人端静态页与它依赖的 api 模块也必须公开：HTML/JS 先拿到手，才有机会带着 token 去调接口。
 # 注意只放开 /uni-app/api（那一层客户端），不放开整个 uni-app 目录
-PUBLIC_PREFIXES = ("/docs", "/redoc", "/family", "/uni-app/api")
 
 
 def parse_tokens(raw: str) -> list[str]:

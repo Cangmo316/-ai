@@ -19,6 +19,7 @@
     "test:family": "node tools/test-family-flows.mjs",
     "test:family-ui": "node tools/test-family-ui.mjs",
     "test:face": "node tools/test-face-params.mjs && node tools/test-lipsync.mjs",
-    "test:lipsync": "node tools/test-lipsync.mjs"
+    "test:lipsync": "node tools/test-lipsync.mjs",
+    "test:audio": "node tools/test-audio-channel.mjs"
   }
 }

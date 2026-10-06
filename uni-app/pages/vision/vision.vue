@@ -72,10 +72,10 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { settings } from '@/common/store.js'
 import { UI_COPY } from '@/common/face/face-index.js'
 import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
+import { getBaseURL } from '@/api/config.js'
 // 口型驱动：把 SSE `lipsync` 事件的关键帧变成逐帧的 viseme 权重。
 // 「渲染器只管把权重写进形态键」，插值 / 交叉淡化 / 最多混 2 个 的规则都在这个模块里。
-import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'
-// #ifdef H5
+import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'// #ifdef H5
 import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
 // #endif
 
@@ -107,6 +107,83 @@ const lipsync = createLipsyncPlayer({
 /** 诊断：驱动层回调计数 + 最近一帧（用来区分"驱动层没跑"和"渲染层没写"） */
 let lipsyncFrameCount = 0
 let lastLipsyncFrame = null
+
+/**
+ * 合成音频（后端给的是**短期签名 URL**，播放器能直取，不需要请求头）。
+ *
+ * ⚠️ 端侧时钟的关键：有音频时口型要**跟着音频走**，不能用 `performance.now()` 自由跑
+ * ——否则音画必然漂移（网络抖动、缓冲都会让两者错开，且误差会累积）。
+ * 这里用 `onTimeUpdate` 把音频的当前播放位置喂给驱动层做**校准**，
+ * 帧与帧之间仍由 30fps 的自有时钟平滑推进（`onTimeUpdate` 回调粒度粗，不能直接驱动 30fps）。
+ */
+let audioContext = null
+let audioTimer = null
+
+function stopAudio() {
+  if (audioTimer) { clearInterval(audioTimer); audioTimer = null }
+  if (audioContext) {
+    try { audioContext.stop() } catch (e) { void e }
+    try { audioContext.destroy() } catch (e) { void e }
+    audioContext = null
+  }
+}
+
+/**
+ * 播放一段合成音频，并让口型以音频时钟为基准。
+ *
+ * @param {string} url      服务端给的签名地址（相对路径）
+ * @param {Array}  cues     同一轮的口型关键帧
+ * @param {number} baseMs   音频在服务端时间轴上的起点（当前恒为 0：
+ *                          `lipsync` 的 `b` 就是从音频开头算的）
+ */
+function playSpeech(url, cues, baseMs) {
+  if (!url) return { ok: false, reason: '没有音频地址' }
+  stopAudio()
+  // 相对路径要拼成绝对地址：dev 是 5173、真机是后端地址，故用 API base（与 SSE 同源）
+  const absolute = /^https?:/i.test(url) ? url : resolveApiUrl(url)
+  try {
+    // #ifdef H5 || APP-PLUS
+    audioContext = uni.createInnerAudioContext()
+    // #endif
+  } catch (e) {
+    audioContext = null
+  }
+  if (!audioContext) return { ok: false, reason: '当前环境没有音频上下文' }
+
+  audioContext.src = absolute
+  // 口型**先用自有时钟起跑**（等音频真正开始播再校准）：这样网络慢时嘴也不会干等
+  const started = lipsync.start(cues)
+  audioContext.onPlay(() => {
+    // 音频真的开始播了 —— 把驱动层的时间基准对齐到"此刻"
+    lipsync.resync()
+    // 之后按 `onTimeUpdate` 的音频位置持续校准
+    if (audioTimer) clearInterval(audioTimer)
+    audioTimer = setInterval(() => {
+      if (!audioContext) return
+      // `currentTime` 单位秒 → 毫秒；这是音频的真实播放位置
+      const ms = Math.max(0, Number(audioContext.currentTime || 0) * 1000) + (baseMs || 0)
+      lipsync.resync(ms)
+    }, 100)
+  })
+  audioContext.onEnded(() => { stopAudio() })
+  audioContext.onError(() => {
+    // 音频失败不该静默：口型退回自有时钟继续跑完，并记一条状态
+    lastAudioError = 'audio error'
+    stopAudio()
+  })
+  audioContext.play()
+  return { ok: true, url: absolute, lipsync: started }
+}
+let lastAudioError = ''
+
+/** 把服务端给的**相对**签名地址拼成绝对地址（dev 是 5173/8787、真机是内网地址）。 */
+function resolveApiUrl(url) {
+  const text = String(url || '')
+  if (/^https?:/i.test(text)) return text
+  let base = ''
+  try { base = getBaseURL() } catch (e) { base = '' }
+  return (base || '').replace(/\/+$/, '') + '/' + text.replace(/^\/+/, '')
+}
 
 const caption = ref('妈，今天药按时吃了没')
 
@@ -192,6 +269,7 @@ onUnmounted(() => {
   if (timer) { clearInterval(timer); timer = null }
   if (waveTimer) { clearTimeout(waveTimer); waveTimer = null }
   lipsync.stop()
+  stopAudio()
   // #ifdef H5
   unmountFaceStage()
   stageRef = null
@@ -199,11 +277,16 @@ onUnmounted(() => {
 })
 
 /**
- * 播放一段口型（对话流收到 SSE `lipsync` 事件时调用）。
+ * 播放"一整轮说话"：音频 + 口型一起（对话流收到 audio / lipsync 事件后调用）。
  *
- * 调用方约定：`cues` 就是事件里的 `cues` 原样传进来，本页不做任何解读——
- * 字→viseme 的换算在服务端（见 `server/app/avatar/visemes.py`）。
+ * 顺序很关键：先 `audio` 后 `lipsync`（服务端按这个顺序发），
+ * 端侧攒齐两者再一起起播 —— 这样口型与音频**从一开始就对齐**。
  */
+function playTurn(audioUrl, cues) {
+  return playSpeech(audioUrl, cues || [], 0)
+}
+
+/** 只播口型（没有音频时；用自有时钟，会与真实语音不同步但比不动好）。 */
 function playLipsync(cues) {
   if (!cues || !cues.length) return { ok: false, reason: '没有口型关键帧' }
   return lipsync.start(cues)
@@ -214,11 +297,15 @@ function playLipsync(cues) {
 // #ifdef H5
 if (typeof window !== 'undefined') {
   window.__blVisionPlayLipsync = playLipsync
+  // 自动化验收：喂"音频 + 口型"一整轮（音频用后端给的签名 URL）
+  window.__blVisionPlayTurn = playTurn
+  window.__blVisionStopAudio = stopAudio
   window.__blVisionLipsyncStats = () => Object.assign({}, lipsync.stats(), {
     frameCount: lipsyncFrameCount,
     lastFrame: lastLipsyncFrame,
     hasStage: !!stageRef,
     setVisemes: stageRef ? typeof stageRef.setVisemes : 'no-stage',
+    audioError: lastAudioError,
   })
 }
 // #endif

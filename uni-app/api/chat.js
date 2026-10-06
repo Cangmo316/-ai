@@ -20,6 +20,8 @@ export const CHAT_EVENT = {
   card: 'card',
   /** 口型关键帧（3D 数字人唇形同步用，在 done 之前发一次） */
   lipsync: 'lipsync',
+  /** 合成音频（短期签名 URL；端侧播放器不带请求头，故鉴权编在 URL 里） */
+  audio: 'audio',
   done: 'done',
   error: 'error'
 }
@@ -172,6 +174,21 @@ function normalize(rawEvent) {
       return { type: CHAT_EVENT.sticker, token: payload.token || payload.id || '' }
     case 'card':
       return { type: CHAT_EVENT.card, card: payload.card || payload }
+    case 'audio': {
+      // 合成音频（3D 数字人说话用）。契约见 uni-app/api/README.md 的事件表。
+      // `url` 是服务端给的**短期签名地址**（相对路径）——鉴权信息在查询参数里，
+      // 因为端侧播放器（innerAudioContext / <audio>）**带不了 Authorization 头**。
+      // 缺 url 就整帧丢弃（没有音频这一步不影响对话，口型会退回估算时钟）。
+      const url = payload.url || ''
+      if (!url) return null
+      return {
+        type: CHAT_EVENT.audio,
+        assistantMsgId: payload.assistantMsgId || '',
+        url,
+        durationMs: Number(payload.durationMs) || 0,
+        format: payload.format || 'mp3',
+      }
+    }
     case 'lipsync':
       // 口型关键帧（3D 数字人用）。契约见 uni-app/api/README.md 的事件表。
       // 只做**形状校验**：cues 必须是数组、每项要有 b/e/v（少一个就整帧丢弃，

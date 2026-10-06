@@ -643,8 +643,31 @@ function memorySettingsOf(elderId) {
         ok: true,
         service: 'bilin-mock-agent',
         delayMs,
-        auth: { required: Boolean(authToken) }
+        auth: { required: Boolean(authToken) },
+        // 与后端 /healthz 的 voice 字段同形状：让端侧与验收脚本用同一套判据
+        voice: { tts: 'MockTts', aligner: '（mock 自带字级时间戳）', ttsReady: true, alignReady: true }
       })
+      return
+    }
+
+    // ── 合成音频（短期签名 URL，**播放器带不了 Authorization 头**，故靠签名自证）──
+    if (url.pathname.startsWith('/v1/audio/') && req.method === 'GET') {
+      const audioId = decodeURIComponent(url.pathname.slice('/v1/audio/'.length))
+      const expires = Number(url.searchParams.get('expires') || 0)
+      const signature = url.searchParams.get('sig') || ''
+      const expired = !expires || expires * 1000 < Date.now()
+      const badSignature = signature !== mockAudioSignature(audioId, expires)
+      // 403/404 用同一句话，避免通过错误差异探测 id 是否存在（与后端一致）
+      if (expired || badSignature || !mockAudioIds.has(audioId)) {
+        sendJSON(res, 403, { code: 'audio_forbidden', message: '音频链接无效或已过期' })
+        return
+      }
+      res.writeHead(200, Object.assign({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': MOCK_AUDIO_BYTES.length,
+        'Cache-Control': 'private, max-age=300'
+      }, corsHeaders()))
+      res.end(MOCK_AUDIO_BYTES)
       return
     }
 
@@ -1261,6 +1284,49 @@ function appendHistory(body, turn) {
 
 /* ------------------------------------------------------------------- SSE */
 
+/* ------------------------------------------------------- 音频（合成结果） */
+
+/**
+ * 一段**真实可播放的静音 MP3**（两帧，约 830 字节），运行时生成。
+ *
+ * 为什么 mock 要真发音频：端侧 `innerAudioContext` / `<audio>` 的播放链路
+ * **只有拿到能解码的字节才算验证过** —— 给一段假字节，播放器会报错、端侧走降级分支，
+ * 表面上看不出问题。所以这里给一个 MPEG1 Layer3 的合法帧头 + 静音负载。
+ */
+function buildSilentMp3() {
+  const frameLength = 417          // 128kbps / 44.1kHz 的 MPEG1 L3 帧长 = 144*128000/44100
+  const frame = Buffer.alloc(frameLength)
+  frame[0] = 0xFF
+  frame[1] = 0xFB
+  frame[2] = 0x90
+  frame[3] = 0x64
+  return Buffer.concat([frame, frame])
+}
+const MOCK_AUDIO_BYTES = buildSilentMp3()
+/**
+ * 已"发放"的音频 id 集合：只有发过音频事件的 id 才允许取。
+ * 这样 mock 也能验证"**没发过的 id 取不到**"这条约束（而不是任何 id 都给音频）。
+ */
+const mockAudioIds = new Set()
+/**
+ * mock 的音频签名：与真实现**同形状**（`expires` + `sig` 查询参数）但不共用密钥。
+ * 端侧只关心"这个 URL 能取到音频"，签名算法细节由各自服务端决定。
+ * 用简单哈希而不是 HMAC：mock 不引入 crypto 依赖，且它不承载真实数据。
+ */
+const MOCK_AUDIO_SECRET = 'mock-audio-secret'
+function mockAudioSignature(id, expires) {
+  const text = id + '.' + expires + '.' + MOCK_AUDIO_SECRET
+  let hash = 0
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+function buildMockAudioUrl(id, ttlSeconds = 600) {
+  const expires = Math.floor(Date.now() / 1000) + ttlSeconds
+  return '/v1/audio/' + id + '?expires=' + expires + '&sig=' + mockAudioSignature(id, expires)
+}
+
 /* --------------------------------------------------------------- 口型关键帧 */
 
 /**
@@ -1432,9 +1498,19 @@ async function streamTurn(req, res, body, serverDelayMs) {
       await wait(perCharDelay)
     }
 
-    // 口型关键帧：done 之前发一次（与后端 server/app/orchestration/service.py 的位置一致）。
-    // 时序跟逐字吐字对齐（perCharDelay），这样口型与「正在打字」的节奏是一致的。
+    // 音频 + 口型关键帧：都在 done 之前发，**顺序是 audio → lipsync**
+    // （与后端一致：端侧要先把音频下载并起播，才能用音频时刻驱动口型，否则音画漂移）。
     if ((turn.text || '').trim()) {
+      const audioId = 'aud_' + turn.assistantMsgId
+      mockAudioIds.add(audioId)
+      write('audio', {
+        assistantMsgId: turn.assistantMsgId,
+        url: buildMockAudioUrl(audioId),
+        durationMs: 1000,          // 两帧静音 MP3 ≈ 1 秒，与 MOCK_AUDIO_BYTES 对应
+        format: 'mp3',
+        bytes: MOCK_AUDIO_BYTES.length
+      })
+      await wait(60)
       write('lipsync', buildLipsyncPayload(turn.text, turn.assistantMsgId, perCharDelay))
       await wait(60)
     }

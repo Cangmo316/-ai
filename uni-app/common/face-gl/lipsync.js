@@ -175,6 +175,7 @@ export function createLipsyncPlayer(options) {
   let startedAt = 0
   let timer = null
   let playing = false
+  let lastResyncAt = 0
 
   function tick() {
     if (!playing) return
@@ -206,6 +207,24 @@ export function createLipsyncPlayer(options) {
     return { ok: true, durationMs: track.durationMs, fps }
   }
 
+  /**
+   * 用**外部时钟**校准内部时钟。
+   *
+   * 为什么必须要有这个：有真音频时，口型不能靠 `performance.now()` 自由跑 ——
+   * 网络抖动、缓冲、播放器起播延迟都会让音画错开，而且**误差会累积**。
+   * 音频播放器能告诉我们"现在放到第几毫秒"（`innerAudioContext.currentTime`），
+   * 用它把内部基准挪正即可。
+   *
+   * @param {number} positionMs 音频当前播放位置（毫秒）。不传则用"此刻"作为 0 点
+   *                            （音频刚开始播时用）。
+   */
+  function resync(positionMs) {
+    const target = typeof positionMs === 'number' && positionMs >= 0 ? positionMs : 0
+    startedAt = now() - target
+    lastResyncAt = now()
+    return { positionMs: target }
+  }
+
   function stop() {
     playing = false
     if (timer) { clearInterval(timer); timer = null }
@@ -214,13 +233,15 @@ export function createLipsyncPlayer(options) {
   return {
     start,
     stop,
+    resync,
     isPlaying: () => playing,
-    /** 诊断用：当前进度（毫秒）与总时长 */
+    /** 诊断用：当前进度（毫秒）、总时长、最近一次校准距今多久 */
     stats: () => ({
       playing,
       cues: track.cues.length,
       durationMs: track.durationMs,
       elapsedMs: playing ? Math.round(now() - startedAt) : 0,
+      lastResyncAgoMs: lastResyncAt ? Math.round(now() - lastResyncAt) : null,
     }),
   }
 }

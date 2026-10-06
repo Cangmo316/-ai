@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -32,6 +32,7 @@ from .api.reminders import router as reminders_router
 from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, warn_if_open
 from .config import Settings, get_settings
 from .errors import api_error
+from .voice import audio_store
 from .voice import gateway as voice_gateway
 from .errors import code_for_status
 from .errors import table as error_table
@@ -288,6 +289,33 @@ def create_app(
         app.mount("/family", StaticFiles(directory=str(family_dir), html=True), name="family")
     if api_dir.is_dir():
         app.mount("/uni-app/api", StaticFiles(directory=str(api_dir)), name="uni-app-api")
+
+    @app.get("/v1/audio/{audio_id}", tags=["voice"])
+    async def get_audio(audio_id: str, request: Request):
+        """取合成音频（**短期签名 URL**，端侧播放器直接当 src 用）。
+
+        为什么不用普通鉴权：`uni.createInnerAudioContext().src` 与 H5 `<audio>`
+        **都带不了 Authorization 请求头**（见 `auth.py` 里 `/v1/audio` 的说明）。
+        所以鉴权信息编进 URL 本身（`expires` + `sig`），端点自己校验。
+
+        返回 403/404 **不区分原因**（签名错/过期/不存在都给同一句话），
+        避免通过错误差异探测音频 id 是否存在。
+        """
+        settings = request.app.state.settings
+        expires = request.query_params.get("expires", "")
+        signature = request.query_params.get("sig", "")
+        ok, reason = audio_store.verify(audio_id, expires, signature, settings)
+        if not ok:
+            logger.warning("音频拒绝：%s（id 前缀 %s）", reason, audio_id[:8])
+            return JSONResponse({"code": "audio_forbidden", "message": "音频链接无效或已过期"},
+                                status_code=403)
+        data = audio_store.get_store().get(audio_id)
+        if not data:
+            return JSONResponse({"code": "audio_gone", "message": "音频链接无效或已过期"},
+                                status_code=404)
+        # media_type 用 audio/mpeg：百炼默认输出 MP3；端侧按扩展名/Content-Type 都能放
+        return Response(content=data, media_type="audio/mpeg",
+                        headers={"Cache-Control": "private, max-age=300"})
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
