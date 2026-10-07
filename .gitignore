@@ -67,3 +67,27 @@ server/**/*.bin
 3D建模/**/textures/*.png
 # 资产修复前的备份（276MB）：只是本地保险，不进仓库
 3D建模/_backup_*/
+
+# ===== 3D 建模工作区：整目录不入库（2026-10-07）=====
+# 这个目录是 3D 资产的生产现场：
+#   · 交付方原始工程件（.blend / .fbx / .obj / .zip），单个 100~306 MB
+#   · 编辑期备份与 mid-work 中间件
+#   · 大量排查截图与临时脚本
+# 合计 1 GB 以上。端侧真正需要的只有 uni-app/static/avatar/ 里那两份 .glb，
+# 本目录从未入库，保持现状。
+# 另外：其中单文件 >100 MB 的会被 GitHub 直接拒收，所以必须整体排除。
+3D建模/
+
+# 高清数字人形象（306 MB，超过 GitHub 单文件 100 MB 硬上限）
+# 端侧实际用的是 QDoctor_60k.glb（15 MB，已对齐渲染器契约）。
+# 需要在别的机器上跑高清件时，从交付包手工拷入 static/avatar/。
+uni-app/static/avatar/QDoctor_hires.glb
+
+# ===== 病例原件（2026-10-07）=====
+# 与 server/data/ 同类：**运行时数据**，不是源码。
+# 里面是用户上传的医院单据（图片/PDF），必须留在本机、不进仓库。
+# 端侧按账号隔离读取，路径由 CaseStore.base_dir 决定。
+server/case_files/
+
+# 试听样本（换音色时临时产物，不入库）
+server/_voice_samples/

@@ -61,6 +61,75 @@ def mesh_points(obj):
     return [matrix @ v.co for v in obj.data.vertices]
 
 
+def _otsu_threshold(values, bins=64):
+    """一维 Otsu 阈值：把明度分布切成「暗 / 亮」两簇（头发 vs 皮肤）。"""
+    import numpy as _np
+    hist, edges = _np.histogram(values, bins=bins)
+    total = int(hist.sum())
+    if total <= 0:
+        return 0.0
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    w_bg = _np.cumsum(hist)
+    w_fg = total - w_bg
+    cum = _np.cumsum(hist * centers)
+    mean_bg = cum / _np.maximum(w_bg, 1)
+    mean_fg = (cum[-1] - cum) / _np.maximum(w_fg, 1)
+    between = w_bg * w_fg * (mean_bg - mean_fg) ** 2
+    between[(w_bg <= 0) | (w_fg <= 0)] = -1.0
+    return float(centers[int(_np.argmax(between))])
+
+
+def texture_luminance(obj, count):
+    """采样每顶点的 albedo 明度与红度；宽高不符时返回 (None, None)。
+
+    必须取 **Principled BSDF 的 Base Color** 上的那张图：OBJ 导入后节点树里有 4 张
+    （base color / metallic / roughness / normal），按「第一个 TEX_IMAGE」取是靠运气。
+    """
+    import numpy as _np
+    material = obj.data.materials[0] if obj.data.materials else None
+    node_tree = material.node_tree if material is not None else None
+    if node_tree is None or not obj.data.uv_layers.active:
+        return None, None
+    image = None
+    for node in node_tree.nodes:
+        if node.type != "BSDF_PRINCIPLED":
+            continue
+        socket = node.inputs.get("Base Color")
+        link = socket.links[0] if (socket is not None and socket.is_linked) else None
+        if link is not None and link.from_node.type == "TEX_IMAGE" and link.from_node.image:
+            image = link.from_node.image
+            break
+    if image is None:
+        image = next((n.image for n in node_tree.nodes
+                      if n.type == "TEX_IMAGE" and n.image), None)
+    if image is None:
+        return None, None
+    size = 1024
+    working = image.copy()
+    working.scale(size, size)
+    pixels = _np.empty(size * size * 4, dtype=_np.float32)
+    working.pixels.foreach_get(pixels)
+    rgb = pixels.reshape(size, size, 4)[:, :, :3]
+    uvs = _np.empty(len(obj.data.loops) * 2, dtype=_np.float32)
+    obj.data.uv_layers.active.data.foreach_get("uv", uvs)
+    uvs = uvs.reshape(-1, 2)
+    vindex = _np.empty(len(obj.data.loops), dtype=_np.int32)
+    obj.data.loops.foreach_get("vertex_index", vindex)
+    uniq, first = _np.unique(vindex, return_index=True)
+    vertex_uv = _np.zeros((len(obj.data.vertices), 2), dtype=_np.float32)
+    vertex_uv[uniq] = uvs[first]
+    px = _np.clip((vertex_uv[:, 0] % 1.0) * (size - 1), 0, size - 1).astype(_np.int32)
+    py = _np.clip((vertex_uv[:, 1] % 1.0) * (size - 1), 0, size - 1).astype(_np.int32)
+    sampled = rgb[py, px]
+    bpy.data.images.remove(working)
+    luminance = 0.299 * sampled[:, 0] + 0.587 * sampled[:, 1] + 0.114 * sampled[:, 2]
+    redness = sampled[:, 0] - sampled[:, 2]
+    if len(luminance) != count:
+        return None, None
+    return luminance, redness
+
+
+
 def find_anchors(points):
     """解剖锚点：**优先按网格自身实测**（通用），量不出来时才回退到既有女性骨骼表。
 
@@ -103,12 +172,39 @@ def find_anchors(points):
     ys = [p.y for p in points]
     top, bottom = max(zs), min(zs)
     height = top - bottom
-    midline = [p for p in points if abs(p.x) < 0.004]
+    mid_index = [i for i, p in enumerate(points) if abs(p.x) < 0.004]
+    midline = [points[i] for i in mid_index]
     print(f"  [通用锚点] 网格高 {height:.4f}（z {bottom:.4f}~{top:.4f}），中线顶点 {len(midline)}")
+
+    # 贴图明度：**刘海/发卡比鼻子更靠前**（Q 版大头尤其明显），只按「最靠前」取鼻尖会锚到
+    # 头发上，后续 eye / mouth / chin / jaw 全部跟着跑偏 —— 口型形态键就打在刘海上。皮肤亮、
+    # 头发暗，用明度把头发从中线候选里剔掉。采样失败就退回原判据，不阻断流程。
+    luminance = None
+    redness_map = None
+    try:
+        _mesh_obj = bpy.context.view_layer.objects.active or next(
+            (o for o in bpy.data.objects if o.type == "MESH"), None)
+        if _mesh_obj is not None:
+            luminance, redness_map = texture_luminance(_mesh_obj, len(points))
+    except Exception as error:  # noqa: BLE001
+        print("  [通用锚点] 贴图明度采样跳过：" + str(error))
 
     measured = {}
     if len(midline) > 20:
-        nose_tip = min(midline, key=lambda p: p.y)
+        nose_index = None
+        if luminance is not None:
+            import numpy as _np
+            values = _np.array([float(luminance[i]) for i in mid_index])
+            threshold = min(max(_otsu_threshold(values), 0.30), 0.75)
+            skin = [i for i in mid_index if luminance[i] >= threshold]
+            # 皮肤点太少 = 这张贴图分不出头发（或整张都是皮肤），退回原判据
+            if len(skin) >= max(24, int(len(mid_index) * 0.05)):
+                nose_index = min(skin, key=lambda i: points[i].y)
+                print(f"  [通用锚点] 明度剔除头发：阈值 {threshold:.3f}，"
+                      f"中线皮肤 {len(skin)}/{len(mid_index)}")
+        if nose_index is None:
+            nose_index = min(mid_index, key=lambda i: points[i].y)
+        nose_tip = points[nose_index]
         measured["nose_tip"] = (nose_tip.x, nose_tip.y, nose_tip.z)
         base_z = nose_tip.z
         print(f"  [通用锚点] 鼻尖 {tuple(round(v, 4) for v in measured['nose_tip'])}")
@@ -148,44 +244,25 @@ def find_anchors(points):
         if len(ear_band) > 20:
             measured["ear_root_x"] = max(abs(p.x) for p in ear_band)
         measured["base_z"] = base_z
-
-    # 用 albedo 红度找嘴（卡通脸也有效）
-    try:
-        import numpy as _np
-        obj = bpy.context.view_layer.objects.active or next(o for o in bpy.data.objects if o.type == "MESH")
-        node_tree = obj.data.materials[0].node_tree if obj.data.materials else None
-        image = next((n.image for n in node_tree.nodes if n.type == "TEX_IMAGE" and n.image), None) if node_tree else None
-        if image is not None and obj.data.uv_layers.active and "base_z" in measured:
-            size = 1024
-            working = image.copy(); working.scale(size, size)
-            pixels = _np.empty(size * size * 4, dtype=_np.float32)
-            working.pixels.foreach_get(pixels)
-            rgb = pixels.reshape(size, size, 4)[:, :, :3]
-            uvs = _np.empty(len(obj.data.loops) * 2, dtype=_np.float32)
-            obj.data.uv_layers.active.data.foreach_get("uv", uvs); uvs = uvs.reshape(-1, 2)
-            vindex = _np.empty(len(obj.data.loops), dtype=_np.int32)
-            obj.data.loops.foreach_get("vertex_index", vindex)
-            uniq, first = _np.unique(vindex, return_index=True)
-            vertex_uv = _np.zeros((len(obj.data.vertices), 2), dtype=_np.float32)
-            vertex_uv[uniq] = uvs[first]
-            px = _np.clip((vertex_uv[:, 0] % 1.0) * (size - 1), 0, size - 1).astype(_np.int32)
-            py = _np.clip((vertex_uv[:, 1] % 1.0) * (size - 1), 0, size - 1).astype(_np.int32)
-            sampled = rgb[py, px]
-            _np_redness = sampled[:, 0] - sampled[:, 2]
+    # 用 albedo 红度找唇缝（卡通脸也有效）；纵向基准是上面**已剔除头发**的鼻尖。
+    if redness_map is not None and "base_z" in measured:
+        try:
+            import numpy as _np
             co = _np.array([[p.x, p.y, p.z] for p in points])
             base_z = measured["base_z"]
-            below = (co[:, 2] < base_z - 0.005) & (co[:, 2] > base_z - 0.075)                 & (_np.abs(co[:, 0]) < 0.06) & (co[:, 1] < -0.03)
+            below = ((co[:, 2] < base_z - 0.005) & (co[:, 2] > base_z - 0.075)
+                     & (_np.abs(co[:, 0]) < 0.06) & (co[:, 1] < -0.03))
             if below.sum() > 50:
-                values = _np_redness[below]
+                values = redness_map[below]
                 threshold = _np.percentile(values, 92)
-                lip = below & (_np_redness >= threshold)
+                lip = below & (redness_map >= threshold)
                 if lip.sum() > 20:
                     sel = co[lip]
                     measured["mouth"] = tuple(sel.mean(axis=0))
-                    print("  [通用锚点] 嘴（红度>p92）%s" % (tuple(round(v, 4) for v in measured["mouth"]),))
-            bpy.data.images.remove(working)
-    except Exception as error:  # noqa: BLE001
-        print("  [通用锚点] 嘴定位跳过：" + str(error))
+                    print("  [通用锚点] 嘴（红度>p92）%s"
+                          % (tuple(round(v, 4) for v in measured["mouth"]),))
+        except Exception as error:  # noqa: BLE001
+            print("  [通用锚点] 嘴定位跳过：" + str(error))
 
     # ── 组装 anchors：实测优先，缺失项用女性模板的相对偏移兜底 ──
     # 模板里"模板鼻尖"= lip_upper 上方一点，用它算实测与模板的 z 差，整体平移兜底项
@@ -396,10 +473,10 @@ def build_bones(a):
     for side, sign in (("L", 1.0), ("R", -1.0)):
         c = eye_center(sign)
         add(f"eye.{side}", c, (c[0], c[1] - 0.036, c[2]), "head", "bone", "眼球转动（枢轴=球心）")
-        add(f"eyelid_upper.{side}", (c[0], c[1] + 0.0064, ref["eyelid_upper_z"]),
-            (c[0], c[1] - 0.0216, ref["eyelid_upper_z"] + 0.002), "head", "bone", "上眼睑（眨眼/眼型）")
-        add(f"eyelid_lower.{side}", (c[0], c[1] + 0.0064, ref["eyelid_lower_z"]),
-            (c[0], c[1] - 0.0136, ref["eyelid_lower_z"] - 0.003), "head", "bone", "下眼睑（卧蚕/眼袋）")
+        add(f"eyelid_upper.{side}", (c[0], c[1] + 0.0064, a["eye_upper_z"]),
+            (c[0], c[1] - 0.0216, a["eye_upper_z"] + 0.002), "head", "bone", "上眼睑（眨眼/眼型）")
+        add(f"eyelid_lower.{side}", (c[0], c[1] + 0.0064, a["eye_lower_z"]),
+            (c[0], c[1] - 0.0136, a["eye_lower_z"] - 0.003), "head", "bone", "下眼睑（卧蚕/眼袋）")
         add(f"brow.{side}", (c[0] * 0.86, a["brow_front_y"] + 0.019, brow_z),
             (c[0] * 1.15, a["brow_front_y"] + 0.019, brow_z + 0.001), "head", "bone", "眉毛")
         # 骨相骨（粗轮廓）——位置放在体积内部，靠权重场推挤表面
@@ -409,8 +486,8 @@ def build_bones(a):
             (temple_x * sign, face_front + 0.055, eye_z + 0.028), "head", "shape", "太阳穴宽窄")
         add(f"jaw_width.{side}", (jaw_x * sign * 0.7, face_front + 0.05, chin_z + 0.014),
             (jaw_x * sign, face_front + 0.05, chin_z + 0.016), "jaw", "shape", "下颌宽窄/下颌角")
-        add(f"cheek_fat.{side}", (cheek_x * sign * 0.62, face_front + 0.02, ref["cheek_z"]),
-            (cheek_x * sign * 0.9, face_front + 0.02, ref["cheek_z"]), "head", "shape", "脸颊饱满/面部脂肪")
+        add(f"cheek_fat.{side}", (cheek_x * sign * 0.62, face_front + 0.02, eye_z - 0.018),
+            (cheek_x * sign * 0.9, face_front + 0.02, eye_z - 0.018), "head", "shape", "脸颊饱满/面部脂肪")
         add(f"eye_socket.{side}", (c[0], c[1] + 0.008, c[2]), (c[0], c[1] + 0.028, c[2]), "head", "shape", "眼窝深浅")
         add(f"ear.{side}", ref["ear_head"] if sign > 0 else (-ref["ear_head"][0], ref["ear_head"][1], ref["ear_head"][2]),
             ref["ear_tail"] if sign > 0 else (-ref["ear_tail"][0], ref["ear_tail"][1], ref["ear_tail"][2]), "head", "bone", "耳朵")
@@ -426,7 +503,7 @@ def build_bones(a):
         (0, a["mouth_front_y"] - 0.008, a["lip_upper_z"]), "head", "bone", "上唇")
     add("lip_lower", (0, a["mouth_front_y"] + 0.020, a["lip_lower_z"]),
         (0, a["mouth_front_y"] - 0.006, a["lip_lower_z"]), "head", "bone", "下唇")
-    add("tongue", (0, -0.030, 1.030), (0, -0.056, 1.034), "jaw", "bone", "舌头（口型）")
+    add("tongue", (0, a["mouth_front_y"] + 0.030, a["mouth_z"] + 0.006), (0, a["mouth_front_y"] + 0.004, a["mouth_z"] + 0.010), "jaw", "bone", "舌头（口型）")
 
 
 def make_armature():

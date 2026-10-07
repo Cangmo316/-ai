@@ -40,10 +40,17 @@ from .gateway import TtsProvider, TtsResult
 
 logger = logging.getLogger(__name__)
 
-# 文档示例用的模型名；实际可用 `BILIN_TTS_MODEL` 覆盖（百炼的模型名会随版本变化）
-DEFAULT_MODEL = "qwen-audio-3.0-tts-flash"
-# 默认音色（文档示例音色）
-DEFAULT_VOICE = "longanhuan_v3.6"
+# 模型与默认音色。
+#
+# 为什么是 `plus` 而不是更便宜的 `flash`：**flash 的系统音色里没有年轻成年男声**
+# （只有一个 40 岁的"龙川叔"，且是川普口音，与"年轻男医"的形象不匹配）。
+# plus 有 `longanlufeng`（龙安鲁风）：25 岁、男、明亮开朗 —— 正好对上。
+# 音色**不能跨模型混用**，混用会返回
+# `InvalidParameter / [cosyvoice:]Engine error [411]`。
+# 官方音色表：https://www.alibabacloud.com/help/zh/model-studio/qwen-audio-tts-voice-list
+DEFAULT_MODEL = "qwen-audio-3.0-tts-plus"
+# 默认音色：龙安鲁风（25 岁男声，明亮开朗）
+DEFAULT_VOICE = "longanlufeng"
 
 
 def sdk_available() -> bool:

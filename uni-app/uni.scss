@@ -1,23 +1,33 @@
-/* 比邻AI · SCSS 变量层
-   运行时用的设计 Token 在 App.vue 的 :root / page 上以 CSS 变量暴露，
-   这里保留一份 SCSS 变量，方便在编译期做计算。 */
+/* 比邻AI · SCSS 变量层（水墨版）
+   运行时用的设计 Token 在 App.vue 的 page{...} 上以 CSS 变量暴露，
+   这里保留一份 SCSS 变量，方便在编译期做计算。
+   注意：本文件必须与 App.vue 的 page 选择器保持一致，改一处要同步另一处。 */
 
-$bl-primary: #07C160;
-$bl-primary-pressed: #06AD56;
-$bl-bg: #EDEDED;
-$bl-surface: #FFFFFF;
-$bl-text: #1A1A1A;
-$bl-text-2: #8C8C8C;
-$bl-warm: #F5A623;
-$bl-danger: #E64340;
-$bl-divider: #E5E5E5;
-$bl-bubble-me: #95EC69;
-$bl-icon-muted: #C4C4C4;
+$bl-primary: #2F5D4E;
+$bl-primary-pressed: #264A3E;
+$bl-primary-soft: rgba(47, 93, 78, .10);
+$bl-bg: #F6F3EA;
+$bl-surface: #FFFDF8;
+$bl-surface-2: #F4F2E9;
+$bl-text: #1F211D;
+$bl-text-2: #6E6A5E;
+$bl-text-3: #B9B3A4;
+$bl-warm: #955600;
+$bl-danger: #B23A2E;
+$bl-success: #48714F;
+$bl-divider: #E7E1D2;
+$bl-border: #E7E1D2;
+$bl-border-strong: #827C6D;
+$bl-bubble-me: #DDE9DF;
+$bl-bubble-ai: #FFFDF8;
+$bl-icon-muted: #B9B3A4;
+$bl-overlay: rgba(31, 33, 29, .42);
 
 $bl-font-caption: 28rpx; // 14px
-$bl-font-body: 32rpx;    // 16px
+$bl-font-body: 32rpx;    // 16px ← 适老化下限，不得再降
 $bl-font-title: 40rpx;   // 20px
 $bl-font-display: 48rpx; // 24px
+$bl-font-tab: 26rpx;     // 13px ← TabBar 标签，原 22rpx(11px) 不合规
 
 $bl-radius-bubble: 24rpx;
 $bl-radius-card: 32rpx;
@@ -27,6 +37,9 @@ $bl-touch: 96rpx;        // 48px
 $bl-row: 112rpx;         // 56px
 $bl-tabbar: 112rpx;      // 56px
 $bl-avatar: 104rpx;      // 52px
+
+$bl-shadow-card: 0 2rpx 4rpx rgba(31, 33, 29, .05), 0 8rpx 24rpx rgba(31, 33, 29, .07);
+$bl-shadow-lift: 0 4rpx 12rpx rgba(31, 33, 29, .08), 0 16rpx 40rpx rgba(31, 33, 29, .10);
 
 /* uni-app 内置变量的兜底，避免编译告警 */
 $uni-color-primary: $bl-primary;

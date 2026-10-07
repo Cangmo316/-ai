@@ -148,6 +148,8 @@ class ChatService:
         plan_cards=None,
         idempotency: IdempotencyStore | None = None,
         memory_provider=None,
+        health_provider=None,
+        case_provider=None,
         after_turn=None,
         voice=None,
     ) -> None:
@@ -163,6 +165,13 @@ class ChatService:
         # 记忆检索回调：(elder_id, 这一轮老人说的话) → 已格式化的记忆短句。
         # 做成回调而不是直接依赖 memory 模块，是为了让编排层仍然只依赖接口
         self.memory_provider = memory_provider
+        # 健康数值回调：elder_id → 最近几次测量的短句（血压/血糖/体重…）。
+        # 同样是回调而不是直接 import health 模块：编排层只依赖接口，
+        # 而且"健康数据没接上"时对话必须照常工作。
+        self.health_provider = health_provider
+        # 病例病史回调：elder_id → 最近几份病历的标题级信息（诊断/就诊日期）。
+        # 与 health_provider 同一个理由：编排层只依赖接口
+        self.case_provider = case_provider
         # 一轮成功产出后的钩子（自动整理记忆用）。它在 done 事件之前执行，
         # 所以**必须很快**——慢一步老人就多等一步（模型抽取那部分由 main.py 另行后台跑）
         self.after_turn = after_turn
@@ -575,8 +584,27 @@ class ChatService:
             except Exception:  # noqa: BLE001 —— 记忆取不到绝不能影响对话本身
                 logger.exception("记忆检索失败，本轮不注入记忆")
                 memories = []
+        # 身体测量数值：最近几次（取不到就什么都不注入，不影响对话）
+        health: list[str] = []
+        if self.health_provider and elder_id:
+            try:
+                health = self.health_provider(elder_id) or []
+            except Exception:  # noqa: BLE001
+                logger.exception("健康数值取不到，本轮不注入")
+                health = []
+        # 病例病史：最近几份（同样取不到就不注入）
+        cases: list[str] = []
+        if self.case_provider and elder_id:
+            try:
+                cases = self.case_provider(elder_id) or []
+            except Exception:  # noqa: BLE001
+                logger.exception("病例病史取不到，本轮不注入")
+                cases = []
         messages: list[dict] = [
-            {"role": "system", "content": build_system_prompt(persona, elder, memories)}
+            {
+                "role": "system",
+                "content": build_system_prompt(persona, elder, memories, health, cases),
+            }
         ]
         limit = max(2, self.settings.history_turns * 2 + 2)
         for message in self.store.history(conversation_id, limit=limit):

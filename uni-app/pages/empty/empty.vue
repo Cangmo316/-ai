@@ -41,5 +41,5 @@ function toRoles() {
 .bl-empty__cta {
   margin-top: var(--bl-space-xs);
 }
-.bl-empty__cta-text { color: #FFFFFF; }
+.bl-empty__cta-text { color: var(--bl-surface); }
 </style>

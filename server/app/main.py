@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,6 +26,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
+from .api.accounts import router as accounts_router
+from .api.conversations import router as conversations_router
+from .api.family import router as family_router
+from .api.health import router as health_router
+from .api.cases import router as cases_router
 from .api.chat import router as chat_router
 from .api.memories import router as memories_router
 from .api.plans import router as plans_router
@@ -32,6 +39,7 @@ from .api.reminders import router as reminders_router
 from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, warn_if_open
 from .config import Settings, get_settings
 from .errors import api_error
+from .asr import gateway as asr_gateway
 from .voice import audio_store
 from .voice import gateway as voice_gateway
 from .errors import code_for_status
@@ -48,6 +56,11 @@ from .memory import (
     search,
 )
 from .storage import open_database
+from .accounts import AccountStore, SqlAccountStore, ensure_dev_account
+from .messaging import MessagingStore, SqlMessagingStore
+from .health import HealthStore, SqlHealthStore
+from .docs import CaseStore, SqlCaseStore
+from .vision import build_vision_provider
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .models.push_client import PushClientRegistry
@@ -98,6 +111,35 @@ def create_app(
     idempotency = IdempotencyStore()
     # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）
     memories = SqlMemoryStore(database) if database.enabled else MemoryStore()
+    # 账号（注册 / 登录）：编号必须跨重启不复用，所以有库就落库并加载
+    accounts = SqlAccountStore(database) if database.enabled else AccountStore()
+    if isinstance(accounts, SqlAccountStore):
+        accounts.init_schema()
+        loaded = accounts.load()
+        if loaded:
+            logger.info("已加载账号 %s 个，下一个编号 %s", loaded, accounts.peek_next_number())
+    # 测试开发账号（比邻AI / BILINAI0316，编号 00000000）：幂等写入，已存在则不动
+    ensure_dev_account(accounts)
+    # 会话与消息：支持两个账号共享一条会话（家人之间互发消息）
+    messaging = SqlMessagingStore(database) if database.enabled else MessagingStore()
+    if isinstance(messaging, SqlMessagingStore):
+        messaging.init_schema()
+        messaging.load()
+    # 健康档案：结构化的身体数据（血压/血糖/体重…），作为智能体主动关心的依据
+    health = SqlHealthStore(database) if database.enabled else HealthStore()
+    if isinstance(health, SqlHealthStore):
+        health.init_schema()
+        health.load()
+    # 病例病史：医院单据（图片/PDF）。**文件字节落盘**（base_dir 用 server 目录），
+    # 库里只存路径与解析出的文字——SQLite 存大 BLOB 会让库膨胀、备份变慢
+    case_base = Path(__file__).resolve().parents[1]
+    cases = SqlCaseStore(database, base_dir=case_base) if database.enabled else CaseStore(base_dir=case_base)
+    if isinstance(cases, SqlCaseStore):
+        cases.init_schema()
+        cases.load()
+    # 识图：读医院单据的照片。没配 DASHSCOPE_API_KEY 时是 Null 实现——
+    # 功能不可用会如实告诉老人，其余功能完全不受影响
+    vision = build_vision_provider()
 
     if knowledge is None:
         try:
@@ -200,6 +242,11 @@ def create_app(
         plan_cards=plan_cards_for,
         idempotency=idempotency,
         memory_provider=memories_for,
+        # 健康数值注入：有了它，智能体的"关心"才说得出具体内容
+        # （"昨天 158/96，今天量了吗"），而不是永远只会说"注意身体"
+        health_provider=lambda elder_id: health.snapshot_for_prompt(elder_id),
+        # 病例病史：让智能体知道「医生说过什么」（诊断 / 就诊日期 / 医院）
+        case_provider=lambda elder_id: cases.snapshot_for_prompt(elder_id),
         after_turn=after_turn,
     )
 
@@ -259,6 +306,11 @@ def create_app(
     app.state.push_clients = push_clients
     app.state.idempotency = idempotency
     app.state.memories = memories
+    app.state.accounts = accounts
+    app.state.messaging = messaging
+    app.state.health = health
+    app.state.cases = cases
+    app.state.vision = vision
     app.state.database = database
     # 全局时间源：调度器与各路由都用它取"现在"，避免出现"路由按真实时间、调度按注入时间"
     # 这种只有测试才会暴露的分裂（踩过一次：手动 tick 到 15 点，打卡却按真实日期去找提醒）
@@ -278,6 +330,11 @@ def create_app(
     app.include_router(reminders_router)
     app.include_router(push_router)
     app.include_router(memories_router)
+    app.include_router(accounts_router)
+    app.include_router(conversations_router)
+    app.include_router(family_router)
+    app.include_router(health_router)
+    app.include_router(cases_router)
 
     # 家人端最小版（静态页）：只用浏览器就能确认计划，不用装 HBuilderX。
     # 它 import 的是 /uni-app/api 那一层客户端，所以契约只有一份实现。
@@ -316,6 +373,49 @@ def create_app(
         # media_type 用 audio/mpeg：百炼默认输出 MP3；端侧按扩展名/Content-Type 都能放
         return Response(content=data, media_type="audio/mpeg",
                         headers={"Cache-Control": "private, max-age=300"})
+
+    @app.post("/v1/asr/transcribe", tags=["voice"])
+    async def transcribe(request: Request):
+        """语音识别（老人端「按住说话」用）。
+
+        收 `multipart/form-data` 的 `file` 字段（音频），返回 `{ok, text, reason, ...}`。
+
+        **为什么用 multipart 而不是 base64**：录音动辄几十到几百 KB，
+        base64 平白多 33% 体积，而老人端往往是弱网。
+
+        **失败要明确**：没配 ASR 或引擎失败时返回 `ok: false` + 中文原因，
+        端侧据此提示"暂时听不清"，**老人仍可打字** —— 语音是增强项，不是唯一入口。
+        失败返 200 而不是 4xx/5xx：这是**业务结果**，端侧按 `ok` 字段处理更简单。
+        """
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            return JSONResponse({"ok": False, "reason": "没有收到音频文件"}, status_code=400)
+        content = await upload.read()
+        if not content:
+            return JSONResponse({"ok": False, "reason": "音频是空的"}, status_code=400)
+        # 大小上限：60 秒 16bit/16kHz 单声道 ≈ 1.9MB，留足余量
+        if len(content) > 8 * 1024 * 1024:
+            return JSONResponse({"ok": False, "reason": "录音太长了，一次说短一点"},
+                                status_code=413)
+
+        suffix = asr_gateway.suffix_for(getattr(upload, "filename", ""),
+                                        getattr(upload, "content_type", ""))
+        workdir = tempfile.mkdtemp(prefix="bilin-asr-upload-")
+        audio_path = os.path.join(workdir, "input" + suffix)
+        with open(audio_path, "wb") as handle:
+            handle.write(content)
+
+        provider = asr_gateway.build_asr_provider()
+        result = await provider.transcribe(audio_path, language="zh")
+        return JSONResponse({
+            "ok": result.ok,
+            "text": result.text,
+            "reason": result.reason,
+            "language": result.language,
+            "bytes": len(content),
+            "engine": type(provider).__name__,
+        })
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -371,6 +471,8 @@ def create_app(
             # 部署方必须能从 /healthz 一眼看出真实状态，而不是猜）。
             # 未配置时口型走估算版（source=estimated），对话完全不受影响。
             "voice": voice_gateway.describe(),
+            # 语音识别（老人端"按住说话"）：同样如实报，未配置时端侧提示"暂时听不清"
+            "asr": asr_gateway.describe(),
             "storage": database.describe(),
             "storageDurable": database.enabled,
             "endpoints": [

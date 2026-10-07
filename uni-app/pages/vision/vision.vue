@@ -1,24 +1,41 @@
 <template>
   <view class="bl-vision" :class="{ 'bl-large': settings.largeFont }">
-    <view class="bl-vision__lamp" />
-    <view class="bl-vision__plant" />
+    <!-- 教室场景：**纯 CSS 画**，零依赖、不加载外部图片。
+         为什么不用 3D 背景：渲染器只做人物（`scene.background` 是空的），
+         背景一直是 CSS 层。沿用这个分层就不必动渲染器，换场景也只是换样式。
+         层次（从后到前）：墙 → 黑板 → 墙上挂钟 → 窗户 → 课桌 → 人物 -->
+    <view class="bl-room">
+      <view class="bl-room__board">
+        <view class="bl-room__chalk" />
+        <view class="bl-room__tray" />
+      </view>
+      <view class="bl-room__clock">
+        <view class="bl-room__clock-hand" />
+        <view class="bl-room__clock-hand bl-room__clock-hand--short" />
+      </view>
+      <view class="bl-room__window">
+        <view class="bl-room__mullion-v" />
+        <view class="bl-room__mullion-h" />
+      </view>
+      <view class="bl-room__desk" />
+    </view>
     <view class="bl-vision__topbar">
-      <view>
-        <view class="bl-vision__tag">
-          <text class="bl-vision__tag-text">AI 数字人通话</text>
+      <view class="bl-vision__topbar-left">
+        <!-- AI 身份标识：与「AI 数字人通话」**并排同一行**（产品红线：不冒充真人）。
+             两者一起说明"这是 AI 通话、对面是数字人"，一眼看完。
+             原来是居中独立一行、浮在人物额头附近——既遮脸又占一行高度。 -->
+        <view class="bl-vision__topbar-row">
+          <view class="bl-vision__tag">
+            <text class="bl-vision__tag-text">AI 数字人通话</text>
+          </view>
+          <view class="bl-vision__aibadge">
+            <text class="bl-vision__aibadge-text">{{ UI_COPY.aiBadge }}</text>
+          </view>
         </view>
         <text class="bl-vision__timer">通话中 {{ clock }}</text>
       </view>
-      <view class="bl-vision__selfview">
-        <bl-icon name="person" color="#FFFFFF" :size="88" />
-      </view>
     </view>
 
-    <!-- AI 标识常驻（产品红线：不冒充真人）。数字人换成了真 3D 交付件后，
-         这行提示比原来更要紧——它明确告诉老人"对面不是真人实时画面"。 -->
-    <view class="bl-vision__aibadge">
-      <text class="bl-vision__aibadge-text">{{ UI_COPY.aiBadge }}</text>
-    </view>
 
     <!-- 真 3D 数字人（交付件：vis_* / expr_* 口型表情 + `wave` 招手动画）。
          App 端由 renderjs 模块 visionGl 接管；H5 端由本文件 onMounted 接管。
@@ -409,7 +426,14 @@ const caption = ref('妈，今天药按时吃了没')
 /** 输入框内容（暂时用"打字"代替说话；等 ASR 接上后换成按住说话） */
 const question = ref('')
 
-const seconds = ref(42)
+/**
+ * 通话计时（秒）。
+ *
+ * ⚠️ 初值必须是 **0**：这里曾经硬编码 `ref(42)`（原型期为了看效果随手填的），
+ * 结果是"一进通话页就显示 00:42"，看起来像已经通了 42 秒——
+ * 当演示值用久了会被当成真的。
+ */
+const seconds = ref(0)
 const muted = ref(false)
 const spkOff = ref(false)
 let timer = null
@@ -438,9 +462,45 @@ function waveOnEntry() {
   wavedOnEntry = true
   if (!stageRef || typeof stageRef.playAnimation !== 'function') return
   const result = stageRef.playAnimation('wave', { loop: false })
-  // 编辑期资产没有这段动画：进场挥手失败**不打扰老人**（原来的 toast 是给手动按钮用的反馈）
+  // 编辑期资产没有这段动画：进场挥手失败**不打扰老人**（原来的 toast 是给手动按钮用的反馈）。
+  // 但要打印**资产实际有哪些片段**：历史上交付件用过 `Wave`（大写），
+  // 渲染器只认小写 `wave`——只报"没有动画"会让人往错方向查。
   if (result && result.ok === false && typeof console !== 'undefined') {
-    console.info('[vision] 该形象没有进场招手动画')
+    console.info('[vision] 进场招手没播成：', result.reason, '| 该资产的片段：', clipNamesOf())
+  }
+}
+
+/** 当前资产里有哪些动画片段（进场招手失败时打印，便于判断是不是命名对不上） */
+function clipNamesOf() {
+  try {
+    const stats = stageRef && typeof stageRef.stats === 'function' ? stageRef.stats() : null
+    return (stats && stats.clips && stats.clips.join(',')) || '(读不到)'
+  } catch (e) {
+    return '(读不到)'
+  }
+}
+
+/**
+ * 开始待机动作。
+ *
+ * 待机驱动**骨骼动画**，口型写**形态键**——两条独立通道，互不覆盖，
+ * 所以说话时底层的 `Idle` 循环不用停。
+ * 但**一次性动作**（点头/招手）在说话时会跳过：嘴里在动、人还在点头，
+ * 看着不像在听人说话。这个判断做在渲染层的待机控制器里（它才知道谁在播）。
+ */
+function startIdle() {
+  if (!stageRef || typeof stageRef.startIdle !== 'function') return
+  const result = stageRef.startIdle()
+  if (!result || !result.ok) {
+    if (typeof console !== 'undefined') {
+      console.info('[vision] 待机动作没起起来：', (result && result.reason) || '未知原因')
+    }
+    return
+  }
+  if (!result.pool || !result.pool.length) {
+    if (typeof console !== 'undefined') {
+      console.info('[vision] 该资产没有可用的待机动作片段 | 片段：', clipNamesOf())
+    }
   }
 }
 
@@ -477,7 +537,20 @@ onMounted(() => {
     //   演进过程：只有头（用户："只有一个头"）→ 全身（用户："人太小"）→ **半身**。
     //   实测全身取景下人物只占画面高度约 53%；半身取景截"胯以上"，高度约占身高 60%，
     //   再配合 `fitMargin: 1.15`（捏脸页默认 2.2 太松）让人物撑满画面。
-    stageRef.load(gender.value, 'delivery', { frameMode: 'bust', fitMargin: 1.15 })
+    // #ifdef H5
+    // 调试钩子：渲染器的 stats 在模块闭包里，出错时（"待机到底有没有在触发"、
+    // "招手为什么不播"）在控制台拿不到任何读数。挂到 window 上，
+    // 端到端测试与线上排查都能直接读。**只在 H5**，不影响 App 端。
+    if (typeof window !== 'undefined') window.__blStage = stageRef
+    // #endif
+    stageRef.load(gender.value, 'delivery', {
+      // **全身取景**：需求是「头顶顶到黑板上沿、脚落在黑板底部」，
+      // 那画面里就必须有脚 —— 原来的 bust（半身，截到胯）根本看不到腿。
+
+      frameMode: 'body',
+      fitMargin: 1.72,
+      frameLiftY: 0,
+    })
       .then(() => {
         // 皮肤偏油亮：只压**镜面反射**（不碰漫反射，所以不会把脸调暗）。
         // 为什么是 0.55：全身取景下扫出来的拐点——
@@ -489,6 +562,9 @@ onMounted(() => {
         if (typeof stageRef.setSpecular === 'function') stageRef.setSpecular(0.55)
         // 模型**就绪之后**才挥手：资产还没加载完就播会定格在第一帧（看起来更假）
         waveOnEntry()
+        // 待机动作：起身先起 `Idle` 循环，然后不定时随机点头/转身/招手。
+        // 放在 waveOnEntry 之后——招手是"接通时的招呼"，待机是之后的常态。
+        startIdle()
       })
       .catch(() => onStageError())
   }
@@ -525,14 +601,23 @@ onMounted(() => {
   })
 })
 
-// 形象性别变化（在「数字人形象」页切换）→ 这里跟着换模型。watch 优于快照，避免回页面看不到新形象。
+// 形象变化（在「数字人形象」页切换）→ 这里跟着换模型。watch 优于快照，避免回页面看不到新形象。
+// 换模型后要**重新起待机**：渲染层的 load() 会停掉待机（片段表变了），
+// 不重起的话切完形象人物就静止不动了。
 watch(gender, (g) => {
-  if (stageRef) stageRef.load(g, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => onStageError())
+  if (!stageRef) return
+  // 构图参数要跟首次加载一致：`load()` 的幂等判断也看 frameLiftY，
+  // 少传一个就会在切形象时把人物位置还原。
+  stageRef.load(g, 'delivery', { frameMode: 'body', fitMargin: 1.72, frameLiftY: 0 })
+    .then(() => startIdle())
+    .catch(() => onStageError())
 })
 
 onUnmounted(() => {
   if (timer) { clearInterval(timer); timer = null }
   if (unsubscribeLive) { unsubscribeLive(); unsubscribeLive = null }
+  // 待机定时器必须先停：它会去碰 stageRef 里的骨骼，而下面就要把它拆掉了
+  if (stageRef && typeof stageRef.stopIdle === 'function') stageRef.stopIdle()
   lipsync.stop()
   stopAudio()
   // #ifdef H5
@@ -709,7 +794,7 @@ export default {
         })
       }
       const g = state.gender || DEFAULT_GENDER
-      this.gl.load(g, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).then(() => {
+      this.gl.load(g, 'delivery', { frameMode: 'body', fitMargin: 1.72, frameLiftY: 0 }).then(() => {
         if (typeof this.gl.setSpecular === 'function') this.gl.setSpecular(0.55)
         // 进场招手只播一次：切性别会重载模型，但**不该再挥一次**（与 H5 同口径）
         if (!this.waved) {
@@ -723,7 +808,7 @@ export default {
     },
     onGender(value, oldValue, ownerInstance) {
       if (!this.gl) return this.bootStage(ownerInstance, ownerInstance.getState() || {})
-      this.gl.load(value, 'delivery', { frameMode: 'bust', fitMargin: 1.15 }).catch(() => ownerInstance.callMethod('onStageError'))
+      this.gl.load(value, 'delivery', { frameMode: 'body', fitMargin: 1.72, frameLiftY: 0 }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     // #endif
 
@@ -744,30 +829,153 @@ export default {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: linear-gradient(170deg, #6E5B4A 0%, #3E332A 55%, #241E18 100%);
+  /* 教室墙面：上浅下深的暖白，靠窗一侧偏冷 */
+  background: linear-gradient(180deg, #D9CFBD 0%, #C4B7A1 46%, #A79A83 100%);
   color: #FFFFFF;
   box-sizing: border-box;
 }
 
-/* 房间氛围：暖色落地灯光 + 虚化的绿植 */
-.bl-vision__lamp {
+/* ═══════════ 教室场景（纯 CSS）═══════════
+   全部用 rpx 与百分比定位，不依赖外部图片；
+   人物由 3D 画布画在上层（canvas 在 .bl-vision__stage 里，`position: relative`），
+   所以这些元素天然在人物**后面**。 */
+.bl-room {
   position: absolute;
-  left: 68rpx;
-  top: 120rpx;
-  width: 300rpx;
-  height: 300rpx;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 214, 150, .55) 0%, rgba(255, 190, 110, 0) 70%);
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
-.bl-vision__plant {
+
+/* 黑板：居中挂在墙上，人物正好站在它前面（像老师站在讲台前）。
+   ⚠️ `top` 必须避开顶栏：顶栏（标签 + 计时）占到约 190rpx，
+   黑板从 300rpx 起才不会被"AI 数字人通话"和计时压住。 */
+.bl-room__board {
   position: absolute;
-  right: -40rpx;
-  bottom: 300rpx;
-  width: 260rpx;
-  height: 420rpx;
-  border-radius: 50% 50% 20% 20%;
-  background: radial-gradient(circle at 40% 30%, #4E7A4A 0%, #2F4A2D 70%);
-  opacity: .5;
+  left: 50%;
+  top: calc(300rpx + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  width: 660rpx;
+  height: 660rpx;
+  /* 深绿板面 + 一点高光，避免纯色看着像色块 */
+  background:
+    radial-gradient(120% 80% at 30% 18%, rgba(255, 255, 255, .08) 0%, rgba(255, 255, 255, 0) 60%),
+    linear-gradient(180deg, #354F3F 0%, #2B4133 60%, #243528 100%);
+  border: 16rpx solid #8A6A45;          /* 木框 */
+  border-radius: 12rpx;
+  box-shadow:
+    inset 0 0 60rpx rgba(0, 0, 0, .35),
+    0 14rpx 30rpx rgba(0, 0, 0, .22);
+  box-sizing: border-box;
+}
+/* 粉笔字：几道淡白痕，暗示"写过字"，不写具体内容（写了会跟对话打架）。
+   放在**左上方**：人物挡中间，右侧留给挂钟，左上最空。 */
+.bl-room__chalk {
+  position: absolute;
+  left: 56rpx;
+  top: 64rpx;
+  width: 300rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  background: rgba(255, 255, 255, .22);
+  box-shadow:
+    0 46rpx 0 rgba(255, 255, 255, .16),
+    0 92rpx 0 rgba(255, 255, 255, .13),
+    0 138rpx 0 rgba(255, 255, 255, .10);
+}
+/* 粉笔槽：黑板下沿的一道木条 */
+.bl-room__tray {
+  position: absolute;
+  left: 24rpx;
+  right: 24rpx;
+  bottom: -34rpx;
+  height: 22rpx;
+  border-radius: 6rpx;
+  background: linear-gradient(180deg, #A07C51 0%, #7A5B39 100%);
+  box-shadow: 0 6rpx 12rpx rgba(0, 0, 0, .25);
+}
+
+/* 墙上挂钟：靠右上，**在黑板之上**（原来 top 434rpx 掉到板面中间去了） */
+.bl-room__clock {
+  position: absolute;
+  right: 46rpx;
+  top: calc(122rpx + env(safe-area-inset-top));
+  width: 104rpx;
+  height: 104rpx;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #FFFFFF 0%, #E8E2D6 70%, #CFC7B8 100%);
+  border: 8rpx solid #6E5A42;
+  box-shadow: 0 8rpx 16rpx rgba(0, 0, 0, .22);
+  box-sizing: border-box;
+}
+.bl-room__clock-hand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4rpx;
+  height: 32rpx;
+  margin-left: -2rpx;
+  margin-top: -32rpx;
+  border-radius: 2rpx;
+  background: #4A4038;
+  transform-origin: 50% 100%;
+  transform: rotate(38deg);
+}
+.bl-room__clock-hand--short {
+  height: 22rpx;
+  margin-top: -22rpx;
+  width: 5rpx;
+  transform: rotate(128deg);
+}
+
+/* 窗户：**只从左边露出一条**（负 left 把它推出画面外）。
+   ⚠️ 不能让它压到左上角的顶栏：那里有"AI 数字人通话"标签和计时，
+   所以 `top` 从 250rpx 起、宽度也只露一条。 */
+.bl-room__window {
+  position: absolute;
+  left: -230rpx;
+  top: calc(250rpx + env(safe-area-inset-top));
+  width: 300rpx;
+  height: 460rpx;
+  background: linear-gradient(180deg, #BFDCEA 0%, #DCEAF0 55%, #EAF1F2 100%);
+  border: 14rpx solid #F1ECE2;
+  border-radius: 10rpx;
+  box-shadow:
+    0 0 80rpx rgba(214, 236, 246, .55),   /* 窗光外溢 */
+    0 12rpx 26rpx rgba(0, 0, 0, .18);
+  box-sizing: border-box;
+}
+.bl-room__mullion-v {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 12rpx;
+  margin-left: -6rpx;
+  background: #F1ECE2;
+}
+.bl-room__mullion-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 52%;
+  height: 12rpx;
+  margin-top: -6rpx;
+  background: #F1ECE2;
+}
+
+/* 课桌：画面下沿一道木色桌面，把"教室"落到实处（也给底部 UI 一个视觉依托） */
+.bl-room__desk {
+  position: absolute;
+  left: -4%;
+  right: -4%;
+  bottom: 0;
+  height: 190rpx;
+  background: linear-gradient(180deg, #B98B57 0%, #96683C 40%, #7A5330 100%);
+  border-top: 8rpx solid #D8B183;
+  box-shadow: 0 -10rpx 30rpx rgba(0, 0, 0, .25);
 }
 
 .bl-vision__topbar {
@@ -778,13 +986,21 @@ export default {
   padding: 32rpx;
   padding-top: calc(68rpx + env(safe-area-inset-top));
 }
+.bl-vision__topbar-left { min-width: 0; }
+/* 「AI 数字人通话」与「本形象为 AI 数字人」并排同一行 */
+.bl-vision__topbar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
 .bl-vision__tag {
   display: inline-flex;
   align-items: center;
   background-color: rgba(7, 193, 96, .92);
   padding: 12rpx 20rpx;
   border-radius: var(--bl-radius-pill);
-  align-self: flex-start;
+
 }
 .bl-vision__tag-text {
   font-size: 24rpx;
@@ -795,29 +1011,21 @@ export default {
   display: block;
   font-size: 30rpx;
   font-weight: 600;
+  color: #FFFFFF;
   margin-top: 16rpx;
 }
-.bl-vision__selfview {
-  width: 184rpx;
-  height: 248rpx;
-  flex: none;
-  border-radius: var(--bl-radius-bubble);
-  border: 4rpx solid rgba(255, 255, 255, .7);
-  background: linear-gradient(180deg, #8A9AA8 0%, #5D6B78 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
 
-/* AI 标识：常驻、不遮挡数字人（放顶部条下方居中） */
+/* AI 标识：常驻、**紧贴顶部**（原来是 `margin-top: -8rpx` 贴在顶栏下沿、
+   浮在人物额头位置，把脸挡住了一部分）。
+   位置提前之后既醒目又不挡人；`pointer-events: none` 让它不吃点击。 */
 .bl-vision__aibadge {
   position: relative;
-  align-self: center;
+  /* 并排后不再需要 align-self / 负 margin —— 由 .bl-vision__topbar-row 统一对齐 */
   background-color: rgba(0, 0, 0, .45);
   border-radius: var(--bl-radius-pill);
   padding: 8rpx 24rpx;
-  margin-top: -8rpx;
+
+  pointer-events: none;
 }
 .bl-vision__aibadge-text {
   font-size: 22rpx;
@@ -903,12 +1111,12 @@ export default {
   height: 88rpx;
   padding: 0 28rpx;
   border-radius: var(--bl-radius-pill);
-  background-color: #07C160;
+  background-color: var(--bl-primary);
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.bl-vision__ask-btn:active { background-color: #06AA54; }
+.bl-vision__ask-btn:active { background-color: var(--bl-primary-pressed); }
 .bl-vision__ask-btn.is-busy { background-color: rgba(255, 255, 255, .3); }
 .bl-vision__ask-btn-text {
   font-size: 30rpx;
@@ -936,6 +1144,6 @@ export default {
 }
 .bl-call-btn:active { background-color: rgba(255, 255, 255, .35); }
 .bl-call-btn.is-off { background-color: rgba(255, 255, 255, .55); }
-.bl-call-btn--hangup { background-color: #E64340; }
-.bl-call-btn--hangup:active { background-color: #C93A37; }
+.bl-call-btn--hangup { background-color: var(--bl-danger); }
+.bl-call-btn--hangup:active { background-color: #96302A; }
 </style>

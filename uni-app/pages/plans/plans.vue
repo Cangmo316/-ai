@@ -1,39 +1,44 @@
 <template>
   <view class="bl-page" :class="{ 'bl-large': settings.largeFont }">
-    <bl-navbar title="今日计划" solid />
+    <!-- 左侧：当日阳历 + 阴历；右侧：卷轴日历图标，点开看日历 -->
+    <bl-navbar solid action="calmonth" action-label="查看日历" @action="toCalendar">
+      <template #left>
+        <view class="bl-datenav">
+          <text class="bl-datenav__solar">{{ solarText }}</text>
+          <text class="bl-datenav__lunar">{{ lunarText }}</text>
+        </view>
+      </template>
+    </bl-navbar>
 
     <bl-reminder-bar :item="reminder.banner" @open="onReminderOpen" @dismiss="dismissBanner" />
 
     <scroll-view class="bl-body" scroll-y>
-      <view class="bl-plan-head">
-        <text class="bl-plan-head__text">{{ headline }}</text>
-        <text v-if="notice" class="bl-plan-head__notice">{{ notice }}</text>
+      <view class="bl-planhead">
+        <text class="bl-planhead__sub">想安排什么，点一下就行</text>
       </view>
 
-      <view v-if="plan.items.length" class="bl-plan-list">
-        <bl-plan-check
-          v-for="item in plan.items"
-          :key="item.id"
-          :time="item.time"
-          :type="item.type"
-          :title="item.title"
-          :detail="item.detail"
-          :done="item.done"
-          :strong-remind="item.strongRemind"
-          :busy="plan.pending.indexOf(item.id) !== -1"
-          @toggle="onToggle(item)"
-        />
+      <view class="bl-section-title--ink">
+        <view class="bl-brush-rule" />
+        <text class="bl-section-title__text">三类日程</text>
       </view>
 
-      <view v-else class="bl-empty">
-        <bl-icon name="clock" color="#C4C4C4" :size="120" />
-        <text class="bl-empty__title">{{ emptyTitle }}</text>
-        <text class="bl-empty__desc">{{ emptyDesc }}</text>
-      </view>
+      <view class="bl-plan-list">
+        <!-- 三个入口：日常 / 每周 / 特殊。整张卡可点，不用瞄准小按钮 -->
+        <view
+          v-for="entry in ENTRIES"
+          :key="entry.key"
+          class="bl-plan-entry"
+          role="button"
+          :aria-label="entry.title"
+          @click="openEntry(entry)"
+        >
+          <view class="bl-plan-entry__icon">
+            <bl-icon :name="entry.icon" color="#2F5D4E" :size="52" />
+          </view>
 
-      <view class="bl-page-footer">
-        <view class="bl-btn bl-btn--ghost bl-btn--block" @click="toCalendar">
-          <text class="bl-page-footer__text">查看日历</text>
+          <text class="bl-plan-entry__title">{{ entry.title }}</text>
+
+          <bl-icon name="chev" color="#B9B3A4" :size="36" />
         </view>
       </view>
     </scroll-view>
@@ -44,36 +49,52 @@
 
 <script setup>
 /**
- * 今日计划（老人端 Tab 2）
+ * 设置日程（老人端 Tab 2）
  *
- * 数据全部来自 `/v1/plans/today`，且**只包含家属已确认的计划**——
- * 未确认的草稿不会出现在这里，也不会产生提醒（设计方案 §3.2 的关键闸门）。
- * 接口不可用时逐级降级：本地缓存 → 内置样例，页面永远有内容可看。
+ * 本页只做「入口」：日常 / 每周 / 特殊三类。具体计划与打卡交互放在各自的目标页，
+ * 免得把老人淹没在一堆待办清单里。
+ *
+ * 数据侧仍调用 initPlan()：提醒轮询与端侧本地通知依赖它预排当天计划，
+ * 所以继续初始化，但这里不把 items 渲染成清单。
  */
-
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted } from 'vue'
 import { settings } from '@/common/store.js'
-import { initPlan, plan, planHeadline, toggleCheckin } from '@/stores/plan.js'
+import { toLunar } from '@/common/lunar.js'
+import { initPlan } from '@/stores/plan.js'
 import { dismissBanner, poll, reminder } from '@/stores/reminder.js'
-import { scheduleLocalNotifications } from '@/stores/push.js'
 
-const headline = computed(() => planHeadline())
-
-const notice = computed(() => {
-  if (plan.source === 'sample') return '现在连不上，先看看这份计划'
-  if (plan.source === 'cached') return '网络不太好，先看上回存的'
-  return ''
+/** 当日阳历：10 月 7 日 周三 */
+const solarText = computed(() => {
+  const d = new Date()
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 ${week}`
 })
 
-const emptyTitle = computed(() =>
-  plan.statusLabel === '还没有计划' ? '还没有计划' : '今天没有要提醒的事'
-)
+/** 当日阴历：八月廿七（自算，见 common/lunar.js） */
+const lunarText = computed(() => toLunar(new Date()).text)
 
-const emptyDesc = computed(() => {
-  if (plan.statusLabel === '还没有计划') return '家里人确认之后 这里就会有每天要做的事'
-  if (plan.statusLabel.indexOf('调整') !== -1) return '计划在调整 等家里人点头后就恢复'
-  return '今天可以踏踏实实歇着'
-})
+const ENTRIES = [
+  {
+    key: 'daily',
+    title: '日常计划',
+    icon: 'clock',
+    // 日常计划页：添加 / 开关 / 删除
+    path: '/pages/daily/daily'
+  },
+  {
+    key: 'weekly',
+    title: '每周计划',
+    icon: 'cal',
+    // 每周计划页：添加 / 选星期 / 开关
+    path: '/pages/weekly/weekly'
+  },
+  {
+    key: 'special',
+    title: '特殊计划',
+    icon: 'heart',
+    path: '' // [待定] 目标页未做，先给提示
+  }
+]
 
 onMounted(() => {
   initPlan()
@@ -81,55 +102,102 @@ onMounted(() => {
   poll()
 })
 
-// 计划到位后预排当天的本地通知：断网、推送挂了也照样响（App 端专属，其它端静默跳过）
-watch(
-  () => plan.total + '|' + plan.items.map((item) => (item.done ? 1 : 0)).join(''),
-  () => scheduleLocalNotifications(plan.items)
-)
-
-function onReminderOpen(item) {
-  // 老人从提醒条点进来，就是为了打卡：滚到对应那一项，并给一句提示
-  dismissBanner()
-  const target = item && item.planItemId
-  if (target && !plan.items.some((entry) => entry.id === target)) {
-    uni.showToast({ title: '这项不在今天计划里', icon: 'none' })
+function openEntry(entry) {
+  if (entry.path) {
+    uni.navigateTo({ url: entry.path })
     return
   }
-  uni.showToast({ title: '点一下卡片就打卡', icon: 'none' })
+  uni.showToast({ title: entry.title + '正在开发中', icon: 'none' })
 }
 
-function onToggle(item) {
-  toggleCheckin(item).then((ok) => {
-    if (!ok && plan.lastError) {
-      uni.showToast({ title: plan.lastError, icon: 'none' })
-    }
-  })
-}
-
+/** 导航栏右侧日历图标：查看日历 */
 function toCalendar() {
   uni.navigateTo({ url: '/pages/calendar/calendar' })
+}
+
+function onReminderOpen() {
+  dismissBanner()
+  uni.showToast({ title: '到点会提醒你，先记下来', icon: 'none' })
 }
 </script>
 
 <style scoped>
-.bl-plan-head {
-  padding: 32rpx 32rpx 24rpx;
+.bl-planhead {
+  padding: 8rpx var(--bl-space-lg) var(--bl-space-sm);
   display: flex;
   flex-direction: column;
   gap: 8rpx;
 }
-.bl-plan-head__text {
+.bl-planhead__sub {
   font-size: var(--bl-font-caption);
   color: var(--bl-text-2);
+  padding-top: 4rpx;
 }
-.bl-plan-head__notice {
-  font-size: 24rpx;
-  color: var(--bl-warm);
+
+/* 导航栏左侧的日期块：阳历在上（加粗墨色），阴历在下（淡墨） */
+.bl-datenav {
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
 }
+.bl-datenav__solar {
+  font-size: var(--bl-font-title);
+  font-weight: 700;
+  color: var(--bl-text);
+  line-height: 1.25;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+.bl-datenav__lunar {
+  font-size: var(--bl-font-caption);
+  color: var(--bl-text-2);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
 .bl-plan-list {
   display: flex;
   flex-direction: column;
   gap: 24rpx;
-  padding: 0 32rpx 32rpx;
+  padding: 0 var(--bl-space-lg) var(--bl-space-md);
+}
+.bl-plan-list .bl-section-title--ink {
+  padding: 0 0 4rpx;
+}
+
+/* 入口卡：整张卡可点，触控区远超 48px。无副文案，高度收紧到 120rpx */
+.bl-plan-entry {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  padding: 28rpx 32rpx;
+  min-height: 120rpx;
+  background-color: var(--bl-surface);
+  border: 1rpx solid var(--bl-border);
+  border-radius: var(--bl-radius-card);
+  box-shadow: var(--bl-shadow-card);
+  box-sizing: border-box;
+}
+.bl-plan-entry:active {
+  background-color: var(--bl-surface-2);
+  border-color: var(--bl-border-strong);
+}
+.bl-plan-entry__icon {
+  flex: none;
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: var(--bl-radius-pill);
+  background-color: var(--bl-primary-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bl-plan-entry__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--bl-font-body);
+  font-weight: 700;
+  color: var(--bl-text);
+  line-height: 1.35;
 }
 </style>

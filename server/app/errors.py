@@ -85,7 +85,48 @@ REMINDER: dict[str, ErrorSpec] = {
     "invalid_cid": ErrorSpec(400, "推送标识不能为空", False),
 }
 
-ERROR_TABLE: dict[str, ErrorSpec] = {**GENERIC, **CHAT, **LLM, **PLAN, **REMINDER, **MEMORY}
+# ── 账号（注册 / 登录 / 编号 / 头像）──────────────────────────────────
+# 文案都是说给老人听的：不出现"用户名已存在"这种后台话术
+ACCOUNT: dict[str, ErrorSpec] = {
+    "account_name_required": ErrorSpec(400, "请输入账号名称", False),
+    "account_name_taken": ErrorSpec(409, "这个账号名称已经有人用了，换一个", False),
+    "account_password_weak": ErrorSpec(400, "密码要 8 到 16 位，只能用数字或字母", False),
+    "account_password_mismatch": ErrorSpec(400, "两次输入的密码不一样，请重新输入", False),
+    "account_not_found": ErrorSpec(404, "没找到这个账号，先注册一个吧", False),
+    "account_bad_password": ErrorSpec(401, "账号或密码不对，再试一次", False),
+    "account_number_exhausted": ErrorSpec(409, "账号编号已经用完了，请联系管理员", False),
+    "account_avatar_invalid": ErrorSpec(400, "这个头像不能用，换一张试试", False),
+}
+
+# ── 会话与消息（含跨账号共享会话、家人绑定）──────────────────────────
+MESSAGING: dict[str, ErrorSpec] = {
+    "conversation_required": ErrorSpec(400, "没说是哪个会话", False),
+    "conversation_not_found": ErrorSpec(404, "没找到这个会话", False),
+    "message_empty": ErrorSpec(400, "消息不能是空的", False),
+    "message_too_long": ErrorSpec(400, "这条消息太长了，分两次发吧", False),
+    "not_a_participant": ErrorSpec(403, "这个会话不是你的", False),
+    "bind_self": ErrorSpec(400, "不能绑定自己，换一个编号", False),
+    "bind_already": ErrorSpec(409, "已经绑过这个家人了", False),
+    "bind_not_found": ErrorSpec(404, "没绑过这个家人", False),
+    "peer_not_bound": ErrorSpec(403, "只能查看已绑定的家人", False),
+}
+
+# ── 健康档案（血压 / 血糖 / 体重…）────────────────────────────────────
+HEALTH: dict[str, ErrorSpec] = {
+    "health_value_invalid": ErrorSpec(400, "这个数值填得不太对", False),
+}
+
+ERROR_TABLE: dict[str, ErrorSpec] = {
+    **GENERIC,
+    **CHAT,
+    **LLM,
+    **PLAN,
+    **REMINDER,
+    **MEMORY,
+    **ACCOUNT,
+    **MESSAGING,
+    **HEALTH,
+}
 
 # 框架自带的 4xx 映射（FastAPI 抛 HTTPException 时用）
 STATUS_FALLBACK: dict[int, str] = {

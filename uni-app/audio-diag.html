@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>音频链路诊断</title></head>
+<body>
+<pre id="out">RUNNING</pre>
+<script type="module">
+// 直接诊断"音频到底能不能响"：绕过 uni 封装，用最朴素的 <audio> + fetch 验证。
+// 判据：① fetch 能否 200 拿到音频字节 ② <audio> 能否 loadedmetadata 并 play()
+import { chat, send } from '/stores/chat.js'
+import { onLiveTurn } from '/stores/chat.js'
+import { getBaseURL } from '/api/config.js'
+
+const out = document.getElementById('out')
+const log = (m) => { out.textContent += '\n' + m }
+out.textContent = 'BASE=' + getBaseURL()
+
+let captured = null
+onLiveTurn((payload) => { captured = payload })
+
+send('今天天气怎么样')
+// 等这一轮说完（最多 12 秒）
+for (let i = 0; i < 120 && !captured; i += 1) {
+  await new Promise((r) => setTimeout(r, 100))
+}
+if (!captured) { out.textContent = 'RESULT ' + JSON.stringify({ error: '没等到 liveTurn' }); document.title = 'DONE' }
+else {
+  const base = String(getBaseURL() || '').replace(/\/+$/, '')
+  const absolute = base + captured.audioUrl
+  log('audioUrl=' + captured.audioUrl)
+  log('absolute=' + absolute)
+
+  // ① fetch 能否拿到字节
+  try {
+    const response = await fetch(absolute)
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    log('fetch status=' + response.status + ' type=' + response.headers.get('content-type') + ' bytes=' + bytes.length)
+  } catch (error) {
+    log('fetch 失败：' + error)
+  }
+
+  // ② <audio> 能否加载并且**真的开始播**
+  const audio = document.createElement('audio')
+  audio.src = absolute
+  const result = await new Promise((resolve) => {
+    let done = false
+    const finish = (value) => { if (!done) { done = true; resolve(value) } }
+    audio.onloadedmetadata = () => {
+      log('loadedmetadata duration=' + audio.duration)
+      audio.play().then(() => {
+        setTimeout(() => finish('playing currentTime=' + audio.currentTime.toFixed(3) + ' paused=' + audio.paused), 400)
+      }).catch((error) => finish('play() 被拒：' + error.name + ' ' + error.message))
+    }
+    audio.onerror = () => finish('onerror code=' + (audio.error && audio.error.code) + ' msg=' + (audio.error && audio.error.message))
+    setTimeout(() => finish('超时（3s 内既没 metadata 也没 error）'), 3000)
+  })
+  log('audio: ' + result)
+
+  // ③ 也报告 uni 封装那一路有没有报错
+  log('lastSpeechSource=' + (window.__blVisionAskStats ? window.__blVisionAskStats().lastSpeechSource : 'n/a'))
+  log('audioError=' + (window.__blVisionAskStats ? window.__blVisionAskStats().audioError : 'n/a'))
+  out.textContent = 'RESULT ' + JSON.stringify({ audioUrl: captured.audioUrl, detail: result })
+  document.title = 'DONE'
+}
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@ import { iconSrc } from '@/common/icons.js'
 
 const props = defineProps({
   name: { type: String, required: true },
-  color: { type: String, default: '#1A1A1A' },
+  color: { type: String, default: '#1F211D' },
   /** 数字按 rpx 处理，字符串原样输出（如 '48rpx' / '24px'） */
   size: { type: [Number, String], default: 48 }
 })

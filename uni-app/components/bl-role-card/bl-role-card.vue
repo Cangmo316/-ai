@@ -17,7 +17,7 @@
 defineProps({
   name: { type: String, default: '' },
   desc: { type: String, default: '' },
-  avatarColor: { type: String, default: '#07C160' },
+  avatarColor: { type: String, default: '#2F5D4E' },
   selected: { type: Boolean, default: false }
 })
 
@@ -39,9 +39,9 @@ defineEmits(['select'])
 }
 .bl-role.is-selected {
   border-color: var(--bl-primary);
-  background-color: #F4FFF9;
+  background-color: var(--bl-surface-2);
 }
-.bl-role:active { background-color: #F7F7F7; }
+.bl-role:active { background-color: var(--bl-surface-2); }
 
 .bl-role__avatar {
   width: 120rpx;

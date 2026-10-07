@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>比邻AI · 图标与 TabBar 视觉复核</title>
+<style>
+  :root{--primary:#2F5D4E;--ink:#1F211D;--ink2:#6E6A5E;--ink3:#B9B3A4;
+        --paper:#F6F3EA;--surface:#FFFDF8;--divider:#E7E1D2;--danger:#B23A2E}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+       color:var(--ink);padding:26px 30px}
+  h1{font-size:16px;font-weight:600;margin-bottom:6px}
+  .note{font-size:12px;color:var(--ink2);line-height:1.7;margin-bottom:18px;max-width:980px}
+  code{background:#EFEBE0;padding:1px 5px;border-radius:4px;font-size:11px}
+  .row{display:flex;gap:20px;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap}
+  .card{background:var(--surface);border:1px solid var(--divider);border-radius:16px;
+        padding:16px 20px;box-shadow:0 1px 2px rgba(31,33,29,.05),0 6px 16px rgba(31,33,29,.07)}
+  .card h2{font-size:11px;font-weight:500;color:var(--ink2);letter-spacing:.05em;margin-bottom:12px}
+  .sizes{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .sz{display:flex;flex-direction:column;align-items:center;gap:5px}
+  .sz span{font-size:10px;color:var(--ink3)}
+  .tabbar{width:390px;height:56px;display:flex;background:rgba(255,253,248,.92);
+          border-top:1px solid var(--divider);border-radius:0 0 14px 14px;overflow:hidden}
+  .tabbar.lg{height:64px}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;position:relative}
+  .tab .lb{font-size:13px;line-height:1;color:var(--ink2);font-weight:500}
+  .tabbar.lg .lb{font-size:17px}
+  .tab.on .lb{color:var(--primary);font-weight:600}
+  .tab.on::after{content:"";position:absolute;bottom:8px;width:18px;height:3px;border-radius:2px;background:var(--primary)}
+  .greet{margin:0 0 4px;width:390px;padding:18px;border-radius:16px;border:1px solid var(--divider);
+         background:var(--surface);background-image:radial-gradient(circle at 92% 8%,rgba(47,93,78,.10),transparent 46%);
+         box-shadow:0 1px 2px rgba(31,33,29,.05),0 6px 16px rgba(31,33,29,.07)}
+  .greet__hi{font-size:20px;font-weight:700}
+  .greet__sub{font-size:14px;color:var(--ink2);margin-top:8px}
+  .greet__tags{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .greet__tag{font-size:13px;color:var(--primary);background:rgba(47,93,78,.10);
+              border-radius:999px;padding:6px 14px}
+  .inkbar{display:flex;align-items:center;gap:10px;margin:14px 0 8px}
+  .rule{width:44px;height:3px;background:var(--primary);border-radius:2px;opacity:.85;
+        -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='3'><path d='M0 2C8 .6 16 2.6 24 1.4S38 2.4 44 1.6' stroke='black' stroke-width='2.4' fill='none' stroke-linecap='round'/></svg>");
+        mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='3'><path d='M0 2C8 .6 16 2.6 24 1.4S38 2.4 44 1.6' stroke='black' stroke-width='2.4' fill='none' stroke-linecap='round'/></svg>");
+        -webkit-mask-size:100% 100%;mask-size:100% 100%}
+  .inkbar span{font-size:13px;color:var(--ink2);letter-spacing:.06em}
+</style>
+</head>
+<body>
+<h1>比邻AI · 图标与 TabBar 视觉复核（真实 token 值）</h1>
+<p class="note">
+  图标路径是从改好的 <code>common/icons.js</code> 原样复制的，颜色用改后的 <code>--bl-primary #2F5D4E</code>；
+  三个 Tab 图标原样尺寸是 <code>bl-tabbar</code> 实传 <code>:size="52"</code>（1px = 2rpx）得到的 <b>26px</b>。
+  TabBar 按 390px 设备 1:1 渲染。下面同时对比正常字号（13px）与大字体模式（17px）。
+</p>
+
+<div class="row">
+  <div class="card">
+    <h2>三个 Tab 图标 · 尺寸阶梯（激活色）</h2>
+    <div class="sizes" id="s1"></div>
+  </div>
+  <div class="card">
+    <h2>未激活态 #B9B3A4</h2>
+    <div class="sizes" id="s2"></div>
+  </div>
+  <div class="card">
+    <h2>品牌印记 INK_BRAND（32×32 源）</h2>
+    <div class="sizes" id="s3"></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card" style="padding-bottom:0">
+    <h2>TabBar 实际观感 · 正常字号（1:1）</h2>
+    <div class="tabbar" id="tb"></div>
+  </div>
+  <div class="card" style="padding-bottom:0">
+    <h2>TabBar 实际观感 · 大字体模式（1:1）</h2>
+    <div class="tabbar lg" id="tblg"></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <h2>本次新增的页面元素</h2>
+    <div class="greet">
+      <div class="greet__hi">早上好</div>
+      <div class="greet__sub">3 月 12 日 周三</div>
+      <div class="greet__tags">
+        <span class="greet__tag">还有 2 条提醒没看</span>
+        <span class="greet__tag">点一下头像就能说话</span>
+      </div>
+    </div>
+    <div class="inkbar"><div class="rule"></div><span>最近的对话</span></div>
+    <p class="note" style="margin:0;font-size:11px">笔触下划线 + 区块标题（水墨公用元素）</p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <h2>其余 24 个图标回归检查（确认没被改坏）</h2>
+    <div class="sizes" id="others"></div>
+  </div>
+</div>
+
+<script>
+/* ---------- 与项目 common/base64.js + icons.js 完全同构的最小实现 ---------- */
+function b64(str){
+  var chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  var utf8=unescape(encodeURIComponent(str)), out='';
+  for(var i=0;i<utf8.length;i+=3){
+    var c1=utf8.charCodeAt(i), c2=utf8.charCodeAt(i+1), c3=utf8.charCodeAt(i+2);
+    out+=chars[c1>>2];
+    out+=chars[((c1&3)<<4)|(isNaN(c2)?0:c2>>4)];
+    out+=isNaN(c2)?'=':chars[((c2&15)<<2)|(isNaN(c3)?0:c3>>6)];
+    out+=isNaN(c3)?'=':chars[c3&63];
+  }
+  return out;
+}
+function uri(body,color,box){
+  box=box||24;
+  var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+box+'" height="'+box+'" viewBox="0 0 '+box+' '+box+'">'
+    + body.split('{c}').join(color) + '</svg>';
+  return 'data:image/svg+xml;base64,'+b64(svg);
+}
+
+/* ---------- 从 common/icons.js 原样复制的图标 body ---------- */
+var ICONS = {
+  chat:'<rect x="10" y="3" width="4" height="8" rx="1.7" fill="none" stroke="{c}" stroke-width="1.5"/><path d="M9.2 11.1h5.6" fill="none" stroke="{c}" stroke-width="1.9" stroke-linecap="round"/><path d="M9.5 12.7h5c-.7 3.7-1.7 6-2.5 7.1-.8-1.1-1.8-3.4-2.5-7.1z" fill="{c}"/><circle cx="17.9" cy="19.7" r="1.4" fill="{c}" opacity=".8"/>',
+  cal:'<rect x="4.4" y="7" width="15.2" height="13" rx="1.4" fill="none" stroke="{c}" stroke-width="1.5"/><rect x="3.4" y="4.4" width="17.2" height="2.6" rx="1.3" fill="{c}"/><rect x="3.4" y="19.8" width="17.2" height="2.6" rx="1.3" fill="{c}"/><path d="M7 16.6l2-3.4 1.7 2.1 2-2.7 2 1.7 1.7-2.4" fill="none" stroke="{c}" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="10.8" r="1.05" fill="{c}"/>',
+  me:'<path d="M3.2 3.2h17.6v17.6H3.2z" fill="none" stroke="{c}" stroke-width="2"/><path d="M13.5 7.4c-1.3 3.6-3.2 6.7-5.7 9.2" fill="none" stroke="{c}" stroke-width="1.9" stroke-linecap="round"/><path d="M13.7 7.5c.9 3.2 2.1 5.9 3.8 8.1" fill="none" stroke="{c}" stroke-width="1.7" stroke-linecap="round"/><circle cx="19.1" cy="5.3" r="1.5" fill="#B23A2E"/>',
+  person:'<circle cx="12" cy="8.5" r="4.2" fill="{c}"/><path d="M3.6 21c0-4.2 3.8-6.8 8.4-6.8s8.4 2.6 8.4 6.8z" fill="{c}"/>',
+  back:'<path d="M15 5l-7 7 7 7" fill="none" stroke="{c}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  chev:'<path d="M9 5l7 7-7 7" fill="none" stroke="{c}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
+  video:'<rect x="2" y="6" width="13" height="12" rx="3.5" fill="none" stroke="{c}" stroke-width="2"/><path d="M15 11l6.2-3.6v9.2L15 13z" fill="{c}"/>',
+  mic:'<rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="{c}" stroke-width="2"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  emoji:'<circle cx="12" cy="12" r="9" fill="none" stroke="{c}" stroke-width="2"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="10" r="1.2" fill="{c}"/><circle cx="15" cy="10" r="1.2" fill="{c}"/>',
+  plus:'<path d="M12 5v14M5 12h14" fill="none" stroke="{c}" stroke-width="2.2" stroke-linecap="round"/>',
+  check:'<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="{c}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  clock:'<circle cx="12" cy="12" r="9" fill="none" stroke="{c}" stroke-width="2"/><path d="M12 7v5.2l3.4 2" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  heart:'<path d="M12 20.5S4.5 15.7 4.5 10.6A4.7 4.7 0 0 1 12 7.3a4.7 4.7 0 0 1 7.5 3.3c0 5.1-7.5 9.9-7.5 9.9z" fill="{c}"/>',
+  role:'<circle cx="9" cy="8" r="3.4" fill="none" stroke="{c}" stroke-width="2"/><path d="M2.5 20c0-3.4 3-5.4 6.5-5.4s6.5 2 6.5 5.4" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/><path d="M17 5.5l1.6 1.6L22 3.5" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  face:'<circle cx="12" cy="9" r="5" fill="none" stroke="{c}" stroke-width="2"/><circle cx="10" cy="8.5" r="1" fill="{c}"/><circle cx="14" cy="8.5" r="1" fill="{c}"/><path d="M4 21c0-4.2 3.6-6.6 8-6.6s8 2.4 8 6.6" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  family:'<circle cx="8" cy="8" r="3.4" fill="none" stroke="{c}" stroke-width="2"/><circle cx="16.5" cy="9.5" r="2.6" fill="none" stroke="{c}" stroke-width="2"/><path d="M2 19.5c0-3 2.8-4.7 6-4.7s6 1.7 6 4.7M15 19.5c0-2.4 1.8-3.7 4-3.7" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  health:'<path d="M3 12.5h4l2-5.5 3 11 2.5-6.5 1.5 3h5" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  settings:'<circle cx="12" cy="12" r="3.2" fill="none" stroke="{c}" stroke-width="2"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  privacy:'<path d="M12 3l7 3v6c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z" fill="none" stroke="{c}" stroke-width="2" stroke-linejoin="round"/><path d="M9.2 12.2l2 2 3.6-4" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  hangup:'<path d="M12 9.5c-3.6 0-6.9 1-9.2 2.8v3.2c0 .8.7 1.5 1.5 1.5h2.3c.8 0 1.5-.7 1.5-1.5v-1.6c1.2-.4 2.5-.6 3.9-.6s2.7.2 3.9.6v1.6c0 .8.7 1.5 1.5 1.5h2.3c.8 0 1.5-.7 1.5-1.5v-3.2c-2.3-1.8-5.6-2.8-9.2-2.8z" fill="{c}" transform="rotate(135 12 12)"/>',
+  speaker:'<path d="M11 5L7 8.5H4v7h3l6 4.5V5z" fill="{c}"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.2 6.4a7.6 7.6 0 0 1 0 11.2" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  muted:'<path d="M11 5L7 8.5H4v7h3l6 4.5V5z" fill="{c}"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  shuffle:'<path d="M4 7h3.6l9 10H20M4 17h3.6l2.6-2.9M17 4l3 3-3 3M17 14l3 3-3 3" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+  save:'<path d="M5 4h11l3 3v13H5z" fill="none" stroke="{c}" stroke-width="2" stroke-linejoin="round"/><path d="M9 4v5h6V4M9 15h6" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/>',
+  empty:'<circle cx="12" cy="12" r="9" fill="none" stroke="{c}" stroke-width="2"/><path d="M8.5 15a4.5 4.5 0 0 0 7 0" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="10" r="1.2" fill="{c}"/><circle cx="15" cy="10" r="1.2" fill="{c}"/>',
+  palette:'<path d="M12 3.5c-4.7 0-8.5 3.4-8.5 7.6 0 4.2 3.8 7.6 8.5 7.6h1.6c1.1 0 1.9-.8 1.9-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.1 0-1 .8-1.8 1.9-1.8h1.9c2 0 3.7-1.5 3.7-3.4 0-3.3-3.9-5.9-10-5.9z" fill="none" stroke="{c}" stroke-width="2" stroke-linejoin="round"/><circle cx="7.6" cy="12.4" r="1.1" fill="{c}"/><circle cx="9.6" cy="8.4" r="1.1" fill="{c}"/><circle cx="14" cy="7.6" r="1.1" fill="{c}"/>',
+  calmonth:'<rect x="3.4" y="5.4" width="17.2" height="15" rx="2.6" fill="none" stroke="{c}" stroke-width="1.7"/><path d="M3.4 10h17.2M8 3.4v3.6M16 3.4v3.6" fill="none" stroke="{c}" stroke-width="1.7" stroke-linecap="round"/><circle cx="9" cy="14.4" r="1.2" fill="{c}"/><circle cx="14.8" cy="14.4" r="1.2" fill="{c}" opacity=".45"/>'
+};
+var INK_BRAND='<rect x="2.6" y="2.6" width="26.8" height="26.8" rx="6" fill="none" stroke="{c}" stroke-width="2.5"/><path d="M16.6 9.4c-4.6 3.4-8.4 8-10.6 13.6" fill="none" stroke="{c}" stroke-width="3.1" stroke-linecap="round"/><path d="M15.2 9.4c4.8 3.2 8.8 7.8 11 13.4" fill="none" stroke="{c}" stroke-width="3.1" stroke-linecap="round"/>';
+
+/* ---------- 渲染 ---------- */
+var P='#2F5D4E', M='#B9B3A4';
+function cell(src,size,label){
+  var d=document.createElement('div'); d.className='sz';
+  var i=document.createElement('img'); i.src=src; i.width=size; i.height=size;
+  i.style.display='block'; d.appendChild(i);
+  var s=document.createElement('span'); s.textContent=label||(size+'px'); d.appendChild(s);
+  return d;
+}
+var TABS=[['chat','对话'],['cal','日程'],['me','我的']];
+TABS.forEach(function(t){
+  [26,32,48,64].forEach(function(s){ document.getElementById('s1').appendChild(cell(uri(ICONS[t[0]],P),s)); });
+  [26,40].forEach(function(s){ document.getElementById('s2').appendChild(cell(uri(ICONS[t[0]],M),s)); });
+});
+[26,40,64].forEach(function(s){ document.getElementById('s3').appendChild(cell(uri(INK_BRAND,P,32),s)); });
+
+function tabbar(host,active){
+  TABS.forEach(function(t,i){
+    var d=document.createElement('div'); d.className='tab'+(i===active?' on':'');
+    var im=document.createElement('img'); im.src=uri(ICONS[t[0]], i===active?P:M); im.width=26; im.height=26; im.style.display='block';
+    d.appendChild(im);
+    var sp=document.createElement('span'); sp.className='lb'; sp.textContent=t[1]; d.appendChild(sp);
+    host.appendChild(d);
+  });
+}
+tabbar(document.getElementById('tb'),0);
+tabbar(document.getElementById('tblg'),2);
+
+var OTHERS=['person','back','chev','video','mic','emoji','plus','check','clock','heart','role','face','family',
+            'health','settings','privacy','hangup','speaker','muted','shuffle','save','empty','palette','calmonth'];
+var host=document.getElementById('others');
+OTHERS.forEach(function(n){
+  var c=cell(uri(ICONS[n],P),30,n);
+  c.querySelector('span').style.fontSize='9px';
+  host.appendChild(c);
+});
+document.title='渲染完成';
+</script>
+</body>
+</html>

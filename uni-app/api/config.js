@@ -7,17 +7,21 @@
 /**
  * 默认后端地址。
  *
+ * 端口与后端 `server/.env` 的 `PORT`（8000）保持一致。之前这里写的是 8787，
+ * 而后端实际监听 8000——两者不一致会导致端侧所有接口「连不上服务器」。
+ * 改端口时**两处一起改**：server/.env 的 PORT 与本常量。
+ *
  * ⚠️ 三端各自的「本机」不是同一台机器，联调时按下面改：
  *   - HBuilderX 运行到浏览器（H5）：127.0.0.1 就是本机，默认值可直接用
  *   - 运行到 Android 模拟器：模拟器里的 127.0.0.1 指模拟器自身，需改 10.0.2.2
- *   - 运行到真机 / 微信开发者工具真机预览：需改成开发机局域网 IP，如 http://192.168.1.5:8787
+ *   - 运行到真机 / 微信开发者工具真机预览：需改成开发机局域网 IP，如 http://192.168.1.5:8000
  *   - 微信开发者工具：需在「详情 → 本地设置」勾选「不校验合法域名」
  *
  * 改法有两种，优先级从高到低：
- *   1) 运行期：setBaseURL('http://192.168.x.x:8787')（写入本地缓存，不用重新编译）
+ *   1) 运行期：setBaseURL('http://192.168.x.x:8000')（写入本地缓存，不用重新编译）
  *   2) 源码：直接改这个常量
  */
-export const DEFAULT_BASE_URL = 'http://127.0.0.1:8787'
+export const DEFAULT_BASE_URL = 'http://127.0.0.1:8000'
 
 /** 本地缓存 key：运行期覆盖 baseURL 用 */
 export const STORAGE_KEY_BASE_URL = 'bl_api_base'
@@ -56,7 +60,29 @@ export const ENDPOINTS = {
   memoryClear: '/v1/memories/clear',
   memoryReview: '/v1/memories/review',
   memorySettings: '/v1/memories/settings',
-  memoryTopics: '/v1/memories/topics'
+  memoryTopics: '/v1/memories/topics',
+  // 账号（注册 / 登录 / 编号 / 头像）：注册后拿到 8 位编号作为对外身份
+  accountRegister: '/v1/accounts/register',
+  accountLogin: '/v1/accounts/login',
+  accountMe: '/v1/accounts/me',
+  accountAvatar: '/v1/accounts/avatar',
+  accountOptions: '/v1/accounts/options',
+  accountLookup: '/v1/accounts/lookup',
+  // 会话与消息（含跨账号共享会话）：家人绑定后双方能看到同一份聊天记录
+  conversations: '/v1/conversations',
+  conversationMessages: '/v1/conversations/messages',
+  conversationRead: '/v1/conversations/read',
+  conversationBindings: '/v1/conversations/bindings',
+  // 家人查看管理（只有互相绑定的家人能取）
+  familyOverview: '/v1/family/overview',
+  // 健康档案（血压/血糖/体重…）：作为智能体主动关心的依据
+  healthTypes: '/v1/health/types',
+  healthRecords: '/v1/health/records',
+  healthSummary: '/v1/health/summary',
+  // 病例病史（医院单据图片/PDF）：自动解析后给智能体当背景知识
+  caseTypes: '/v1/cases/types',
+  cases: '/v1/cases',
+  visionStatus: '/v1/cases/vision/status'
 }
 
 /** 超时（ms）：首字节超时用看门狗实现，总超时只作用于非流式接口 */

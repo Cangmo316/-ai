@@ -45,6 +45,19 @@ class Persona:
 
 
 DEFAULT_PERSONAS: dict[str, Persona] = {
+    # 默认角色（按需求：端侧「智能体角色」默认只有这一个）。
+    # 它与其它人设的区别是"不扮演某个具体亲属"——老人还没建自己的角色时，
+    # 由一个中性的陪伴者先接上，而不是硬塞一个"儿子"给他。
+    "p_bilin": Persona(
+        id="p_bilin",
+        name="比邻AI",
+        relation="陪伴助手",
+        traits=("耐心", "温和", "不催促"),
+        catchphrases=("我在呢", "慢慢说 我听着"),
+        opening_style="先应一声，再顺着老人的话往下聊",
+        avatar_color="#3C6B58",
+        address="您",
+    ),
     "p_son": Persona(
         id="p_son",
         name="儿子 小明",
@@ -106,6 +119,8 @@ def build_system_prompt(
     persona: Persona,
     elder: dict | None = None,
     memories: list[str] | None = None,
+    health: list[str] | None = None,
+    cases: list[str] | None = None,
 ) -> str:
     """拼 system prompt。
 
@@ -113,6 +128,13 @@ def build_system_prompt(
     - `memories`：L2/L3 里**按相关性检索出来的几条**（已格式化好的短句，带来源），
       由 `app/memory/retrieval.py` 的 `describe()` 生成——**不整库塞进去**，
       否则上下文会被几十条记忆淹没，模型反而抓不住重点
+    - `health`：最近几次**身体测量数值**（血压/血糖/体重…），由
+      `app/health/models.py` 的 `snapshot_for_prompt()` 生成。
+      有了它，"慰问和建议"才说得具体（"昨天 158/96，今天量了吗"），
+      而不是永远只会说"注意身体"。
+    - `cases`：最近几份**病例病史**的标题级信息（就诊日期/医院/诊断），
+      由 `app/docs/models.py` 的 `snapshot_for_prompt()` 生成。
+      这是"医生说过什么"的背景知识——聊天里提到时才准确。
     """
     address = persona.address
     lines: list[str] = []
@@ -130,6 +152,28 @@ def build_system_prompt(
             lines.append("")
             lines.append("【你记得的事】")
             lines.extend("- " + item for item in facts)
+
+    # 身体测量数值：最近几次，用来做"具体的"关心
+    if health:
+        lines.append("")
+        lines.append("【最近的测量数值】")
+        lines.extend("- " + item for item in health)
+        lines.append(
+            "- 这些数字是" + address + "自己量的记录，**不是诊断依据**："
+            "可以说「比上次低了点」「这两天挺稳」，"
+            "绝不判断病情、不建议药量或停药；数值明显不对就劝他找医生或家里人"
+        )
+
+    # 病例病史：医生说过什么（最近几份的标题级信息）
+    if cases:
+        lines.append("")
+        lines.append("【他去医院的情况】")
+        lines.extend("- " + item for item in cases)
+        lines.append(
+            "- 这些是病历上记的，**提到时按原话讲**（比如「上次医生说是高血压3级」），"
+            "不添油加醋、不预测病情、不评价医院或医生；"
+            "他问「我这是什么病」就说病历上写的是什么，让他听医生的"
+        )
 
     # L2/L3：本轮相关的往事与喜好。只在与当前话题相关时自然带出
     if memories:

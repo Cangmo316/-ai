@@ -13,6 +13,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { tokens } from '@/common/tokens.js'
 
 const props = defineProps({
   time: { type: String, default: '' },
@@ -22,10 +23,11 @@ const props = defineProps({
   state: { type: String, default: 'todo' }
 })
 
+// 状态色统一取语义令牌：竹青=已完成、暖墨黄=待办、朱砂=关爱
 const MAP = {
-  done: { icon: 'check', color: '#07C160', bg: '#E7F8EF' },
-  todo: { icon: 'clock', color: '#F5A623', bg: '#FFF5E5' },
-  heart: { icon: 'heart', color: '#E64340', bg: '#FDECEC' }
+  done: { icon: 'check', color: tokens.color.success, bg: 'rgba(72, 113, 79, .12)' },
+  todo: { icon: 'clock', color: tokens.color.warm, bg: 'rgba(149, 86, 0, .12)' },
+  heart: { icon: 'heart', color: tokens.color.danger, bg: 'rgba(178, 58, 46, .12)' }
 }
 
 const state = computed(() => MAP[props.state] || MAP.todo)

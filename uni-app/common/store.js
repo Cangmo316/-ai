@@ -1,14 +1,16 @@
 import { reactive, watch } from 'vue'
 
+import { AVATAR_ASSET } from './face-gl/assets.js'
+
 /**
  * 全局轻量状态。原型阶段不引入 Pinia，保持零依赖。
  */
 export const settings = reactive({
   largeFont: false,
-  role: '儿子 · 小明',
+  role: '比邻AI',
   largeFontLabel: '大字体模式',
   /**
-   * 当前数字人形象的性别。
+   * 当前数字人形象（female / male / qdoctor…）。
    *
    * 为什么放在全局 store：**形象页选完要能带到通话页**。
    * 之前只存在形象页的局部 ref 里，切了等于没切（换页面又回到默认值）。
@@ -18,9 +20,20 @@ export const settings = reactive({
   gender: ''
 })
 
-/** 设置数字人形象性别（同时落本地存储，重启后仍生效）。 */
+/**
+ * 合法形象列表。
+ *
+ * ⚠️ 以前这里硬编码 `'female'` / `'male'`：形象加到第三个（qdoctor）之后，
+ * 白名单会把新形象**静默丢掉**——选了没反应，回到默认值。
+ * 改成从资产表推导，以后加形象不用再改这里。
+ */
+function knownGenders() {
+  return Object.keys(AVATAR_ASSET)
+}
+
+/** 设置数字人形象（同时落本地存储，重启后仍生效）。 */
 export function setGender(value) {
-  if (value !== 'female' && value !== 'male') return settings.gender
+  if (!knownGenders().includes(value)) return settings.gender
   settings.gender = value
   try {
     uni.setStorageSync('bl_gender', value)
@@ -55,10 +68,17 @@ export function initSettings() {
   } catch (e) {
     settings.largeFont = false
   }
-  // 恢复上次选择的形象性别（没选过则留空，由页面兜底到 DEFAULT_GENDER）
+  // 恢复上次选择的形象（没选过则留空，由页面兜底到 DEFAULT_GENDER）
   try {
     const savedGender = uni.getStorageSync('bl_gender')
-    if (savedGender === 'female' || savedGender === 'male') settings.gender = savedGender
+    if (knownGenders().includes(savedGender)) {
+      settings.gender = savedGender
+    } else if (savedGender) {
+      // 本地存的是**已下架的形象**（比如旧版本存的 female/male）：
+      // 清掉它，否则一直是个无效值，页面上永远显示不出当前形象。
+      uni.removeStorageSync('bl_gender')
+      settings.gender = ''
+    }
   } catch (e) {
     // 忽略：保持空值
   }

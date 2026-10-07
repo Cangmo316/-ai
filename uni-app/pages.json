@@ -4,12 +4,21 @@
     { "path": "pages/chats/chats",             "style": { "navigationStyle": "custom" } },
     { "path": "pages/empty/empty",             "style": { "navigationStyle": "custom" } },
     { "path": "pages/chat-detail/chat-detail", "style": { "navigationStyle": "custom" } },
+    { "path": "pages/remark/remark",           "style": { "navigationStyle": "custom" } },
+    { "path": "pages/family/family",           "style": { "navigationStyle": "custom" } },
+    { "path": "pages/family-manage/family-manage", "style": { "navigationStyle": "custom" } },
     { "path": "pages/vision/vision",           "style": { "navigationStyle": "custom" } },
     { "path": "pages/plans/plans",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/daily/daily",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/weekly/weekly",           "style": { "navigationStyle": "custom" } },
     { "path": "pages/calendar/calendar",       "style": { "navigationStyle": "custom" } },
     { "path": "pages/me/me",                   "style": { "navigationStyle": "custom" } },
+    { "path": "pages/auth/auth",               "style": { "navigationStyle": "custom" } },
+    { "path": "pages/register/register",       "style": { "navigationStyle": "custom" } },
     { "path": "pages/roles/roles",             "style": { "navigationStyle": "custom" } },
+    { "path": "pages/role-new/role-new",       "style": { "navigationStyle": "custom" } },
     { "path": "pages/face/face",               "style": { "navigationStyle": "custom" } },
+    { "path": "pages/health/health",           "style": { "navigationStyle": "custom" } },
     { "path": "pages/tokens/tokens",           "style": { "navigationStyle": "custom" } }
   ],
   "easycom": {
@@ -22,9 +31,9 @@
     "navigationStyle": "custom",
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "比邻AI",
-    "navigationBarBackgroundColor": "#EDEDED",
-    "backgroundColor": "#EDEDED",
-    "backgroundColorTop": "#EDEDED",
-    "backgroundColorBottom": "#EDEDED"
+    "navigationBarBackgroundColor": "#F6F3EA",
+    "backgroundColor": "#F6F3EA",
+    "backgroundColorTop": "#F6F3EA",
+    "backgroundColorBottom": "#F6F3EA"
   }
 }

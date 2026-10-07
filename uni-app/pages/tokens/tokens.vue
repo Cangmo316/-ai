@@ -49,21 +49,24 @@
 import { settings } from '@/common/store.js'
 
 const SWATCHES = [
-  { name: '品牌主色', hex: '#07C160' },
-  { name: '主色深', hex: '#06AD56' },
-  { name: '页面背景', hex: '#EDEDED' },
-  { name: '卡片 / 气泡', hex: '#FFFFFF' },
-  { name: '文字主色', hex: '#1A1A1A' },
-  { name: '文字辅助', hex: '#8C8C8C' },
-  { name: '暖色点缀', hex: '#F5A623' },
-  { name: '强调 / 警示', hex: '#E64340' }
+  { name: '主色 · 松烟墨绿', hex: '#2F5D4E' },
+  { name: '主色按下', hex: '#264A3E' },
+  { name: '页面底 · 宣纸', hex: '#F6F3EA' },
+  { name: '卡片 / 气泡 · 暖白', hex: '#FFFDF8' },
+  { name: '文字主色 · 墨', hex: '#1F211D' },
+  { name: '文字辅助 · 淡墨', hex: '#6E6A5E' },
+  { name: '提醒 · 暖墨黄', hex: '#955600' },
+  { name: '警示 / 未读 · 朱砂', hex: '#B23A2E' },
+  { name: '已完成 · 竹青', hex: '#48714F' },
+  { name: '未激活图标 · 墨影', hex: '#B9B3A4' }
 ]
 
 const A11Y = [
   { k: '正文字号', v: '≥16px（大字模式 ≥20px）' },
   { k: '标题字号', v: '20 – 24px' },
+  { k: 'TabBar 标签', v: '13px（原 11px 不合规）' },
   { k: '触控目标', v: '≥44×44pt，适老 48 – 56px' },
-  { k: '对比度', v: '≥4.5 : 1' },
+  { k: '对比度', v: '≥4.5 : 1（正文实测 14.63:1）' },
   { k: '圆角', v: '气泡 12px / 卡片 16px / 主按钮全圆' },
   { k: '间距栅格', v: '8pt 基准' },
   { k: '画板', v: 'iOS 375×812 · Android 360×800 · 小程序 375×667' }
@@ -149,7 +152,7 @@ function back() {
   border-bottom: 1rpx solid var(--bl-divider);
 }
 .bl-spec__row:last-child { border-bottom: none; }
-.bl-spec__row.is-link:active { background-color: #F7F7F7; }
+.bl-spec__row.is-link:active { background-color: var(--bl-surface-2); }
 .bl-spec__k {
   flex: 1;
   font-size: 24rpx;

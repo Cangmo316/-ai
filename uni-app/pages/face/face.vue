@@ -62,18 +62,23 @@
             >{{ g.label }}</text>
           </view>
         </view>
+        <!-- 只剩一个形象时要明说，否则用户会一直找"在哪切换男女" -->
+        <text v-if="GENDER_OPTIONS.length === 1" class="bl-face-gender__note">
+          其它形象暂时不开放
+        </text>
       </view>
 
 
       <!-- 捏脸功能按策略变更**暂时下线**（数字人只做唇形同步 + 招手互动）。
            这里保留"正在开发中"提示而不是删掉整块 —— 页面仍然开放，
-           因为用户需要一个**切换男女形象**的入口（这块是可用的）。
+           因为用户需要看到**当前用的是哪个形象**（这块是可用的）。
            将来接回捏脸只需把 FACE_EDIT_ENABLED 改回 true。 -->
       <view v-if="!FACE_EDIT_ENABLED" class="bl-face-soon">
         <bl-icon name="settings" color="#9AA6A0" :size="72" />
         <text class="bl-face-soon__title">{{ UI_COPY.faceDeveloping }}</text>
         <text class="bl-face-soon__desc">精细调整五官的功能还在做，先上线形象切换</text>
-        <text class="bl-face-soon__desc">上面选「女性 / 男性」即可切换数字人形象</text>
+        <!-- 不写死"女性 / 男性"：形象加到第三个（Q版男医）后这句话就变成错的 -->
+        <text class="bl-face-soon__desc">上面选一个形象，即可切换数字人</text>
       </view>
       <!-- 分区 chips：目录来自参数表 + 适老裁剪，「不做」的参数不会出现在这里 -->
       <scroll-view v-if="FACE_EDIT_ENABLED" class="bl-face-zones" scroll-x>
@@ -122,11 +127,11 @@
 
       <view v-if="FACE_EDIT_ENABLED" class="bl-face-actions">
         <view class="bl-btn bl-btn--ghost bl-face-actions__btn" @click="randomize">
-          <bl-icon name="shuffle" color="#07C160" :size="36" />
+          <bl-icon name="shuffle" color="#2F5D4E" :size="36" />
           <text class="bl-face-actions__text bl-face-actions__text--ghost">随机生成</text>
         </view>
         <view class="bl-btn bl-btn--primary bl-face-actions__btn" @click="save">
-          <bl-icon name="save" color="#FFFFFF" :size="36" />
+          <bl-icon name="save" color="#FFFDF8" :size="36" />
           <text class="bl-face-actions__text bl-face-actions__text--on">保存形象</text>
         </view>
       </view>
@@ -509,7 +514,7 @@ export default {
   margin-top: 8rpx;
 }
 .bl-face-soon__desc {
-  font-size: 26rpx;
+  font-size: 30rpx;
   color: #7A857F;
   text-align: center;
   line-height: 1.5;
@@ -563,15 +568,15 @@ export default {
   padding: 8rpx 18rpx;
 }
 .bl-face-preview__badge-text {
-  font-size: 22rpx;
-  color: #1A1A1A;
+  font-size: 28rpx;
+  color: var(--bl-text);
 }
 .bl-face-preview__hint {
   position: absolute;
   bottom: 20rpx;
   z-index: 2;
   pointer-events: none;
-  font-size: 22rpx;
+  font-size: 28rpx;
   color: #6D8A7C;
 }
 
@@ -632,7 +637,7 @@ export default {
 }
 .bl-face-gender__label {
   font-size: var(--bl-font-body);
-  color: var(--bl-text-sub);
+  color: var(--bl-text-2);
   margin-right: 20rpx;
 }
 .bl-face-gender__group {
@@ -646,15 +651,22 @@ export default {
   border-radius: var(--bl-radius-pill);
 }
 .bl-face-gender__item--on {
-  background-color: #FFFFFF;
+  background-color: var(--bl-surface);
 }
 .bl-face-gender__text {
-  font-size: 26rpx;
-  color: var(--bl-text-sub);
+  font-size: 30rpx;
+  color: var(--bl-text-2);
 }
 .bl-face-gender__text--on {
-  color: #1A1A1A;
+  color: var(--bl-text);
   font-weight: 600;
+}
+/* 只剩一个形象时的说明：明确告诉用户"其它不开放"，免得一直找切换入口 */
+.bl-face-gender__note {
+  display: block;
+  font-size: var(--bl-font-caption);
+  color: var(--bl-text-2);
+  margin-top: var(--bl-space-sm);
 }
 
 /* 参数区 */
@@ -692,17 +704,17 @@ export default {
 .bl-face-zones__text {
   flex: none;
   white-space: nowrap;
-  font-size: 26rpx;
-  color: var(--bl-text-sub);
+  font-size: 30rpx;
+  color: var(--bl-text-2);
 }
 .bl-face-zones__text--on {
-  color: #FFFFFF;
+  color: var(--bl-surface);
   font-weight: 600;
 }
 .bl-face-zones__count {
   flex: none;
   white-space: nowrap;
-  font-size: 22rpx;
+  font-size: 28rpx;
   color: #9AA8A1;
 }
 .bl-face-zones__count--on {
@@ -715,8 +727,8 @@ export default {
   padding: 12rpx 32rpx 0;
 }
 .bl-face-summary__text {
-  font-size: 22rpx;
-  color: var(--bl-text-sub);
+  font-size: 28rpx;
+  color: var(--bl-text-2);
 }
 
 /* 参数区（含"等资产"标注） */
@@ -728,14 +740,14 @@ export default {
   margin-bottom: 8rpx;
 }
 .bl-face-controls__tag-text {
-  font-size: 20rpx;
+  font-size: 28rpx;
   color: #A97A16;
 }
 .bl-face-controls__zone-hint {
   padding: 4rpx 0 24rpx;
 }
 .bl-face-controls__zone-hint-text {
-  font-size: 20rpx;
+  font-size: 28rpx;
   color: #9AA8A1;
   line-height: 1.5;
 }
@@ -752,7 +764,7 @@ export default {
   padding: 8rpx 24rpx;
 }
 .bl-face-subactions__text {
-  font-size: 24rpx;
+  font-size: 28rpx;
   color: var(--bl-primary);
 }
 .bl-face-subactions__sep {
@@ -776,7 +788,7 @@ export default {
   margin-left: 12rpx;
 }
 .bl-face-actions__text--ghost { color: var(--bl-primary); }
-.bl-face-actions__text--on { color: #FFFFFF; }
+.bl-face-actions__text--on { color: var(--bl-surface); }
 /* 产品红线（规格书 §7.4）：AI 标识常驻，不可关闭 */
 .bl-face-preview__aibadge {
   position: absolute;
@@ -793,12 +805,12 @@ export default {
   padding: 10rpx 18rpx;
 }
 .bl-face-preview__aibadge-main {
-  font-size: 22rpx;
+  font-size: 28rpx;
   font-weight: 600;
-  color: #1A1A1A;
+  color: var(--bl-text);
 }
 .bl-face-preview__aibadge-sub {
-  font-size: 20rpx;
+  font-size: 28rpx;
   color: #6D8A7C;
   margin-top: 2rpx;
 }

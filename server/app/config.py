@@ -104,7 +104,7 @@ class Settings:
     sse_heartbeat_seconds: float = 10.0
 
     # ── 人设 ──────────────────────────────────────────────
-    default_persona_id: str = "p_son"
+    default_persona_id: str = "p_bilin"
 
     # ── 提醒调度（P1）─────────────────────────────────────
     # 调度器开关：关掉后不再自动投递提醒（测试里常关掉，手动 tick）
@@ -170,7 +170,7 @@ class Settings:
             llm_max_tokens=_env_int("LLM_MAX_TOKENS", 300),
             history_turns=_env_int("CHAT_HISTORY_TURNS", 8),
             sse_heartbeat_seconds=_env_float("SSE_HEARTBEAT_SECONDS", 10.0),
-            default_persona_id=_env_str("DEFAULT_PERSONA_ID", "p_son"),
+            default_persona_id=_env_str("DEFAULT_PERSONA_ID", "p_bilin"),
             scheduler_enabled=_env_bool("SCHEDULER_ENABLED", True),
             scheduler_tick_seconds=_env_float("SCHEDULER_TICK_SECONDS", 30.0),
             scheduler_manual_tick=_env_bool("SCHEDULER_MANUAL_TICK", True),

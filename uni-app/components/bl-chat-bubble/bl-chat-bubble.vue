@@ -83,6 +83,7 @@
 <script setup>
 import { computed } from 'vue'
 import { stickerOf } from '@/common/stickers.js'
+import { tokens } from '@/common/tokens.js'
 
 const props = defineProps({
   text: { type: String, default: '' },
@@ -91,7 +92,7 @@ const props = defineProps({
   /** text | voice | sticker | card | system | time */
   type: { type: String, default: 'text' },
   seconds: { type: [Number, String], default: 6 },
-  avatarColor: { type: String, default: '#07C160' },
+  avatarColor: { type: String, default: '#2F5D4E' },
   /** 表情包受控 token，如 love / hug */
   sticker: { type: String, default: '' },
   /** 卡片数据：{ kind:'plan_item', plan:{...} } 或 { kind:'news', title, summary, source } */
@@ -106,7 +107,8 @@ defineEmits(['play', 'retry'])
 
 /** 语音波纹高度（rpx），对应设计稿里的波形 */
 const WAVE = [12, 24, 36, 20, 32, 16, 28, 24, 36, 12]
-const voiceColor = '#07C160'
+// 语音条波形与图标统一取主色，避免硬编码色值在两处漂移
+const voiceColor = tokens.color.primary
 
 const stickerInfo = computed(() => stickerOf(props.sticker))
 
@@ -155,7 +157,7 @@ const planData = computed(() => plainData.value.plan || plainData.value)
 .bl-msg-system__text {
   font-size: var(--bl-font-caption);
   color: var(--bl-text-2);
-  background-color: rgba(0, 0, 0, .04);
+  background-color: var(--bl-primary-soft);
   border-radius: var(--bl-radius-pill);
   padding: 8rpx 24rpx;
   text-align: center;

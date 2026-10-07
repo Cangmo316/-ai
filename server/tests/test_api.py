@@ -73,7 +73,7 @@ class ApiTestCase(unittest.TestCase):
         meta = events[0][1]
         self.assertEqual(meta["conversationId"], "c_api")
         self.assertTrue(meta["assistantMsgId"])
-        self.assertEqual(meta["persona"]["name"], "儿子 小明")
+        self.assertEqual(meta["persona"]["name"], "比邻AI")
 
         done = events[-1][1]
         self.assertEqual(done["finishReason"], "stop")

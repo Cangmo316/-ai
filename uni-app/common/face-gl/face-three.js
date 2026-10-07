@@ -387,7 +387,48 @@ export function createFaceStage(opt) {
   let waveGestureInfo = null
   let actions = {}
   let activeClipName = ''
+  /**
+   * 当前**所有**在跑的片段名。
+   *
+   * 为什么要一个集合而不是单个字符串：待机系统会**同时**跑两段——
+   * 底层的 `Idle` 循环 + 上层的 `Nod`/`wave` 一次性动作。
+   * 只记一个名字的话，`stats().playing` 会漏掉一段，排查时看不到真相。
+   */
+  const playingClips = new Set()
   const clock = new THREE.Clock()
+
+  /**
+   * §7 诊断：**渲染瞬间**的 morph 权重快照。
+   *
+   * 为什么必须单独抓：写完权重后立刻回读只能证明"数组被改了"，
+   * 不能证明"画出来的那一帧用的是这个值"（本轮实测踩到：回读 22 个非零，画面却一动不动）。
+   * 快照必须在 mixer.update 之后、renderer.render 之前取，才是 GPU 真正拿到的值。
+   */
+  let renderInfluenceSample = null
+  function captureRenderInfluences() {
+    let max = -1
+    let maxName = ''
+    let nonZero = 0
+    for (const [name, meshes] of morphOwners) {
+      for (const mesh of meshes) {
+        const inf = mesh.morphTargetInfluences
+        const dict = mesh.morphTargetDictionary
+        if (!inf || !dict) continue
+        const idx = dict[name]
+        if (typeof idx !== 'number') continue
+        const v = Number(inf[idx]) || 0
+        if (v > 0.001) nonZero += 1
+        if (v > max) { max = v; maxName = name }
+      }
+    }
+    renderInfluenceSample = {
+      name: maxName,
+      max: max < 0 ? null : +max.toFixed(3),
+      nonZero,
+      frame: renderer && renderer.info ? renderer.info.render.frame : null,
+      at: Date.now(),
+    }
+  }
 
   function schedule() {
     if (!alive || raf) return
@@ -396,6 +437,7 @@ export function createFaceStage(opt) {
       if (!alive) return
       if (mixer) mixer.update(clock.getDelta())
       else clock.getDelta()               // 没动画也要推进时钟，避免下次播放跳一大步
+      captureRenderInfluences()
       renderer.render(scene, camera)
       // 动画播放期间要持续出帧（原本只在有交互时渲染一次）
       if (mixer && activeClipName) schedule()
@@ -413,16 +455,21 @@ export function createFaceStage(opt) {
     }
     const opt = options || {}
     const action = actions[clipName]
+    // 一次性动作要**叠在底层循环之上**（待机时播 Nod，不该把 Idle 掐掉）：
+    // 所以一次性动作不重置 mixer、也不改 activeClipName（那是"主循环"的标记）。
+    const isOneShot = opt.loop === false
     action.reset()
-    action.setLoop(opt.loop === false ? THREE.LoopOnce : THREE.LoopRepeat, opt.loop === false ? 1 : Infinity)
-    action.clampWhenFinished = opt.loop === false
+    action.setLoop(isOneShot ? THREE.LoopOnce : THREE.LoopRepeat, isOneShot ? 1 : Infinity)
+    action.clampWhenFinished = isOneShot
     action.timeScale = typeof opt.speed === 'number' ? opt.speed : 1
-    action.fadeIn(0.18)
+    // 一次性动作起点比循环更硬一点：0.18s 的淡入会让点头看起来"飘"
+    action.fadeIn(isOneShot ? 0.12 : 0.18)
     action.play()
-    activeClipName = clipName
+    playingClips.add(clipName)
+    if (!isOneShot) activeClipName = clipName
     clock.getDelta()
     schedule()
-    return { ok: true, name: clipName, duration: action.getClip().duration }
+    return { ok: true, name: clipName, duration: action.getClip().duration, oneShot: isOneShot }
   }
 
   /** 停止动画并回到静止姿势。 */
@@ -430,9 +477,141 @@ export function createFaceStage(opt) {
     if (!mixer) return { ok: false, reason: '当前资产没有动画' }
     for (const name of Object.keys(actions)) actions[name].stop()
     activeClipName = ''
+    playingClips.clear()
     // 停完要立刻出帧，否则画面会停在最后一帧的动作上
     renderer.render(scene, camera)
     return { ok: true }
+  }
+
+  /* ─────────────────── 待机动作：不定时随机触发 ─────────────────── */
+
+  /**
+   * 待机动作池（**只放不会位移的片段**）。
+   *
+   * 实测各片段的根位移（`E:\UI\.uni-shot\probe-anims.mjs` 量的）：
+   *   Nod / Turn / wave / waveBye / IdleToWalk / WalkToIdle → 0 m（纯姿势，安全）
+   *   Sit   → 0.100 m（髋部下沉）
+   *   Walk  → 0.308 m，WalkTalk → 0.308 m  ← **会走出画面，绝不能放进待机池**
+   *
+   * 所以 Walk / WalkTalk / Sit 全部排除。前两个是"位移"问题，
+   * Sit 是"坐下再站起来"——站立特写下突然蹲一下很怪。
+   *
+   * `weight` 是相对权重：打招呼比点头少见，纯待机循环最常见。
+   */
+  const IDLE_GESTURES = [
+    { clip: 'Idle', weight: 3 },
+    { clip: 'Nod', weight: 2 },
+    { clip: 'Turn', weight: 1 },
+    { clip: 'wave', weight: 1 },
+    { clip: 'waveBye', weight: 1 },
+  ]
+
+  /** 待机参数：第一次动作的延迟、两次动作的间隔范围、随机数的可注入实现（便于测试） */
+  const IDLE_CONFIG = {
+    firstDelayMs: [2500, 6000],
+    intervalMs: [9000, 26000],
+    //: 上面两个区间会被外部覆盖（页面可调），这里只是默认
+  }
+
+  let idleTimer = null
+  let idleRunning = false
+  let idleLastPick = ''
+  let idleFired = 0
+  let idleRandom = Math.random
+
+  /** 按权重随机挑一个待机动作；**避免连续两次同一个**（连播点头很假） */
+  function pickIdleClip() {
+    const pool = IDLE_GESTURES.filter((g) => actions[g.clip] && (g.clip !== idleLastPick || IDLE_GESTURES.length === 1))
+    const usable = pool.length ? pool : IDLE_GESTURES.filter((g) => actions[g.clip])
+    if (!usable.length) return ''
+    const total = usable.reduce((sum, g) => sum + g.weight, 0)
+    let roll = idleRandom() * total
+    for (const g of usable) {
+      roll -= g.weight
+      if (roll <= 0) return g.clip
+    }
+    return usable[usable.length - 1].clip
+  }
+
+  function scheduleNextIdle(first) {
+    if (!idleRunning) return
+    const range = first ? IDLE_CONFIG.firstDelayMs : IDLE_CONFIG.intervalMs
+    const wait = range[0] + idleRandom() * Math.max(0, range[1] - range[0])
+    idleTimer = setTimeout(() => {
+      idleTimer = null
+      if (!idleRunning || !ready || !mixer) return
+      const clip = pickIdleClip()
+      if (clip) {
+        // 循环类（Idle）走主循环；一次性（Nod/wave…）叠在底层之上。
+        // 真在说话时**跳过这一次**——嘴里在动、人还在点头，看着不像在听人说话。
+        const oneShot = clip !== 'Idle'
+        if (!oneShot || !activeClipName || activeClipName === 'Idle') {
+          // 一次性动作若正在跑，等它跑完再排下一次，避免动作叠加打结
+          const busy = [...playingClips].some((n) => n !== 'Idle' && actions[n] && actions[n].isRunning())
+          if (!busy) {
+            const result = playAnimation(clip, oneShot ? { loop: false } : undefined)
+            if (result && result.ok) {
+              idleLastPick = clip
+              idleFired += 1
+            }
+          }
+        }
+      }
+      // 一次性动作按它自己的时长多等一会儿，别在动作没做完时又切一个
+      const extra = idleLastPick && idleLastPick !== 'Idle'
+        && actions[idleLastPick] && actions[idleLastPick].isRunning()
+        ? actions[idleLastPick].getClip().duration * 1000
+        : 0
+      if (extra) {
+        idleTimer = setTimeout(() => { idleTimer = null; scheduleNextIdle(false) }, extra)
+      } else {
+        scheduleNextIdle(false)
+      }
+    }, wait)
+  }
+
+  /**
+   * 开始待机动作。
+   *
+   * @param {object} [options]
+   * @param {number[]} [options.firstDelayMs] 第一次动作的延迟区间 [min,max]
+   * @param {number[]} [options.intervalMs]   两次动作的间隔区间 [min,max]
+   * @param {Function} [options.random]       随机数实现（**测试时注入确定性实现**）
+   */
+  function startIdle(options) {
+    const opt = options || {}
+    if (Array.isArray(opt.firstDelayMs) && opt.firstDelayMs.length === 2) IDLE_CONFIG.firstDelayMs = opt.firstDelayMs
+    if (Array.isArray(opt.intervalMs) && opt.intervalMs.length === 2) IDLE_CONFIG.intervalMs = opt.intervalMs
+    idleRandom = typeof opt.random === 'function' ? opt.random : Math.random
+    if (idleRunning) return { ok: true, alreadyRunning: true, clips: clips.map((c) => c.name) }
+    if (!mixer || !clips.length) return { ok: false, reason: '当前资产没有动画片段' }
+    idleRunning = true
+    idleFired = 0
+    // 先把 Idle 循环起起来：静止 T-pose 站着最假，这是待机的底色
+    if (actions.Idle) playAnimation('Idle')
+    scheduleNextIdle(true)
+    return { ok: true, clips: clips.map((c) => c.name), pool: IDLE_GESTURES.map((g) => g.clip) }
+  }
+
+  /** 停止待机动作（离开页面时必须调用，否则定时器会在后台一直跑） */
+  function stopIdle() {
+    idleRunning = false
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
+    return { ok: true, fired: idleFired }
+  }
+
+  /** 待机系统的自检读数（排查"到底有没有在触发"） */
+  function idleStats() {
+    return {
+      running: idleRunning,
+      fired: idleFired,
+      lastPick: idleLastPick,
+      pool: IDLE_GESTURES.map((g) => g.clip),
+      hasTimer: !!idleTimer,
+      // 列表里哪些片段真的存在（资产缺片段时能一眼看出来）
+      available: IDLE_GESTURES.filter((g) => actions[g.clip]).map((g) => g.clip),
+      missing: IDLE_GESTURES.filter((g) => !actions[g.clip]).map((g) => g.clip),
+    }
   }
 
   /**
@@ -536,6 +715,13 @@ export function createFaceStage(opt) {
    * 默认 `FIT_MARGIN`（= 捏脸页调出来的松紧）；通话页传更小的值让人物撑满画面。
    */
   let fitMargin = FIT_MARGIN
+  /**
+   * 垂直构图偏移（取景框高度的比例，**正值把人物往上放**）。
+   *
+   * 只对 `bust`（通话页半身）生效。默认 0 保持既有构图；
+   * 通话页传正值——半身取景下人物的头容易偏下、下巴离底部按钮太近。
+   */
+  let frameLiftY = 0
 
   function computeFocus() {
     if (!root) return
@@ -552,11 +738,19 @@ export function createFaceStage(opt) {
       const center = (box.isEmpty() ? body : box).getCenter(new THREE.Vector3())
       const size = (box.isEmpty() ? body : box).getSize(new THREE.Vector3())
       size.y *= 1.02
+      // 垂直构图偏移：**正值把人物往上放**。
+      //
+      // 为什么需要这个：镜头固定在 `(0,0,dist)` 且模型被 `-center` 归零，
+      // 于是"取景框的中心"就等于 `center` —— 把 `center.y` 抬上去，
+      // 模型在画面里就整体上移。取景框高度是 `size.y`，
+      // 所以偏移用**比例**表示（0.06 = 抬高约 6% 的画面高），换资产/换屏都还有意义。
+      center.y += size.y * frameLiftY
       root.position.copy(center).negate()
       root.updateWorldMatrix(true, true)
       focus = { center, size }
       frameInfo = {
         mode: 'bust',
+        liftY: +frameLiftY.toFixed(4),
         focus: [+size.x.toFixed(4), +size.y.toFixed(4), +size.z.toFixed(4)],
         body: [+(body.max.x - body.min.x).toFixed(4),
                +(body.max.y - body.min.y).toFixed(4),
@@ -812,6 +1006,9 @@ export function createFaceStage(opt) {
     actions = {}
     clips = []
     activeClipName = ''
+    // 待机定时器必须在这里停掉：舞台都拆了，定时器再触发会去碰已释放的骨骼
+    stopIdle()
+    playingClips.clear()
     waveGestureInfo = null
     try { dracoLoader.dispose() } catch (e) { void e }
     // 环境贴图是 GPU 资源，舞台销毁时要显式释放（否则反复进出页面会漏显存）
@@ -865,6 +1062,43 @@ const ARM_DROP_JOINTS = [
 ]
 /** 不折到 100%：完全垂直会贴住身体，留一点角度更像自然站姿 */
 const ARM_DROP_FRACTION = 0.85
+/**
+ * 「手臂自然下垂」修正的开关。
+ *
+ * ## 现在**关闭**，这是 2026-10-07 定下的
+ *
+ * 这层修正原本是给**旧交付件**做的：那些资产静息是 T-pose、两臂平举，
+ * 不修正就"平举着挥手"，很假。它靠改动画关键帧（把偏移左乘进四元数轨道）
+ * 实现，代价是**会改写资产的动画数据**。
+ *
+ * ### 为什么关掉
+ *
+ * 用户交付的 Q 版男医**静息姿态本身就是自然站姿**，几何上不需要修正。
+ * 强行烘焙偏移的后果是**骨骼被改坏**——实测：
+ *   · 不播动画时看不出问题（Mixer 会把骨骼还原成绑定姿态）
+ *   · 一旦播 `Idle`（也就是待机系统一起来）→ **整个模型塌成一条竖线**
+ *
+ * 我一开始想用"夹角门槛"自动判断（手臂本来就垂着就跳过），
+ * 但 Q 版男医的手臂是 A-pose 下垂约 45°，量出来仍算"没垂下"，
+ * 门槛挡不住。所以改成**显式开关**，不猜。
+ *
+ * ### 什么时候要打开
+ *
+ * 只有再接回 **T-pose 平举** 的交付件时才需要。
+ * 打开前务必在做那个资产上验证：播 `Idle` 不塌、招手高度正常。
+ */
+const ARM_REST_ENABLED = false
+
+/**
+ * 「手臂已经垂下」的判定门槛（度）——仅在 `ARM_REST_ENABLED` 打开时生效。
+ *
+ * 整臂方向与"竖直向下"的夹角小于这个值 → 认为这件资产本来就是自然站姿。
+ *
+ * ⚠️ 实测这个门槛**挡不住 A-pose**：Q 版男医手臂下垂约 45°，仍然超过它。
+ * 留着是因为"完全平举"（≈90°）与"稍微收拢"之间还是能分开，
+ * 但**不要依赖它来判断"要不要做修正"**——那件事由 `ARM_REST_ENABLED` 决定。
+ */
+const ARM_REST_MIN_DEG = 25
 /**
  * 「这条轨道算不算真的在动」的门槛（弧度，≈20°）。
  * 交付件里没被动画驱动的骨也会带一条**常量轨道**（左臂那两根就是 2 关键帧 STEP），
@@ -1082,9 +1316,26 @@ function buildWaveGesture(spec) {
 
 /**
  * 把「自然下垂」基准叠到手臂上。
+ *
+ * ⚠️ **只在手臂确实平举时才做**（见下方 `ARM_REST_MIN_DEG` 门槛）。
+ *
+ * 为什么加这个门槛（2026-10-07 实测）：
+ *   这层修正原本是给**旧交付件**做的——那些资产的静息姿态是 T-pose、
+ *   两臂平举，不修正就"平举着挥手"，很假。
+ *   但用户交付的 Q 版男医**静息姿态本身就是自然站姿**（手臂已垂下），
+ *   几何上不需要任何修正。强行烘焙偏移的后果是**骨骼被改坏**：
+ *   实测播 `Idle` 时整个模型塌成一条竖线（静止不播动画时看不出来，
+ *   因为 Mixer 会把骨骼还原成绑定姿态）。
+ *
+ * 所以先量"整臂方向与竖直向下的夹角"：本来就快垂下了（夹角小）就直接跳过，
+ * 既保住新资产，也不影响将来再接入 T-pose 资产。
+ *
  * @returns {null|{bones:number, clips:number, names:string[], degrees:number}} 诊断读数（stats().armRest）
  */
 function applyArmRestPose(root, clips) {
+  // 开关关掉时直接跳过（当前就是关的，原因见 ARM_REST_ENABLED 的注释：
+  // 这层修正会改写动画关键帧，对"静息已经是自然站姿"的资产会把骨骼改坏）
+  if (!ARM_REST_ENABLED) return null
   if (!root) return null
   root.updateWorldMatrix(true, true)
   const bones = collectBones(root)
@@ -1114,6 +1365,13 @@ function applyArmRestPose(root, clips) {
       : 0
     if (!(total > 0)) continue
     totalDegrees = THREE.MathUtils.radToDeg(total)
+    // 手臂本来就垂着（静息已经是自然站姿）→ **整体跳过**，不做任何烘焙。
+    // 这一条是 2026-10-07 加的：新交付的 Q 版男医属于这种，
+    // 之前不看这个直接烘焙偏移，结果是播动画时模型塌成一条线。
+    if (totalDegrees < ARM_REST_MIN_DEG) {
+      restore()
+      continue
+    }
     for (const joint of ARM_DROP_JOINTS) {
       const bone = joint.key === 'upperarm' ? arm : fore
       if (!bone) continue
@@ -1235,6 +1493,10 @@ function applyArmRestPose(root, clips) {
       : (opt.frameMode === 'bust' ? 'bust' : 'head')
     const wantFitMargin = typeof opt.fitMargin === 'number'
       ? Math.max(0.8, Math.min(4, opt.fitMargin)) : FIT_MARGIN
+    // 垂直构图偏移（只对 bust 有意义）。夹在 ±0.3 之间：
+    // 再大就把人物推出画面了，那不是"往上放"而是"放坏了"。
+    const wantLiftY = typeof opt.frameLiftY === 'number'
+      ? Math.max(-0.3, Math.min(0.3, opt.frameLiftY)) : 0
     // 幂等：H5 的 onMounted 与 App 的 renderjs mounted 都可能触发首次加载，
     // 加上首帧兜底的 boot tick，同一性别最多只真正加载一次。
     // 注意 role 也要参与幂等判断：同一个性别在"捏脸页（edit 件）"与"通话页（delivery 件）"
@@ -1242,11 +1504,13 @@ function applyArmRestPose(root, clips) {
     // focusMode 同理：同一个资产在两种取景下都要能重建构图。
     if (loading) return stats()
     if (ready && currentGender === g && currentRole === wantRole
-        && focusMode === wantFocusMode && fitMargin === wantFitMargin) {
+        && focusMode === wantFocusMode && fitMargin === wantFitMargin
+        && frameLiftY === wantLiftY) {
       return stats()
     }
     focusMode = wantFocusMode
     fitMargin = wantFitMargin
+    frameLiftY = wantLiftY
     // 首次加载前先把材质默认值定好（**不放在 load 之后**，否则每次切性别都要重设一遍材质）
     applyDefaultMaterial()
     const url = resolveAssetUrl((wantRole === 'delivery' ? AVATAR_DELIVERY_ASSET : AVATAR_ASSET)[g])
@@ -1256,7 +1520,9 @@ function applyArmRestPose(root, clips) {
     currentRole = wantRole
     lastAssetUrl = url
     lastError = ''
-    if (o.onStatus) o.onStatus('正在加载' + (g === 'female' ? '女性' : '男性') + '形象…')
+    // 用 genderLabel 而不是 `g === 'female' ? '女性' : '男性'`：
+    // 形象从两项变三项后，三元会把 qdoctor 也说成"男性"。
+    if (o.onStatus) o.onStatus('正在加载' + genderLabel(g) + '形象…')
     const t0 = Date.now()
     try {
       const gltf = await loader.loadAsync(url)
@@ -1266,6 +1532,10 @@ function applyArmRestPose(root, clips) {
       if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(mixer.getRoot() || root || spinGroup) }
       mixer = null
       activeClipName = ''
+      // 换资产（切形象）时先把待机停掉：新资产的片段表不同，
+      // 旧定时器会按旧表挑片段，挑到不存在的会静默不动
+      stopIdle()
+      playingClips.clear()
       clips = gltf.animations || []
       root = gltf.scene
       spinGroup.add(root)
@@ -1275,6 +1545,13 @@ function applyArmRestPose(root, clips) {
         mixer = new THREE.AnimationMixer(root)
         actions = {}
         for (const clip of clips) actions[clip.name] = mixer.clipAction(clip)
+        // 一次性动作播完要把名字从 playingClips 里摘掉，
+        // 否则 `playingAll` 会一直挂着已经停了的片段（排查时看到假状态）
+        mixer.addEventListener('finished', (event) => {
+          const finished = event && event.action && event.action.getClip
+            ? event.action.getClip().name : ''
+          if (finished) playingClips.delete(finished)
+        })
       }
       // 交付件静息是 T-pose：不叠这层「自然下垂」，挥手从平举起挥，怎么调都假。
       armRestInfo = applyArmRestPose(root, clips)
@@ -1336,6 +1613,10 @@ function applyArmRestPose(root, clips) {
       role: currentRole,
       clips: clips.map((c) => c.name),
       playing: activeClipName,
+      /** 同时在跑的全部片段（待机时是 Idle + 一个一次性动作） */
+      playingAll: [...playingClips],
+      /** 待机系统读数：running / fired / lastPick / 缺哪些片段 */
+      idle: idleStats(),
       visemeWrites,
       // 手臂基准姿势（A-pose）读数：bones>0 表示已经不在 T-pose 上站着了
       armRest: armRestInfo,
@@ -1449,10 +1730,36 @@ function applyArmRestPose(root, clips) {
     playAnimation,
     /** 停止动画回到静止姿势。 */
     stopAnimation,
+    /**
+     * 开始待机动作：先把 `Idle` 循环起起来，然后**不定时随机**触发池里的动作
+     * （点头 / 转身 / 招手）。只挑**无根位移**的片段，`Walk` / `Sit` 已排除。
+     */
+    startIdle,
+    /** 停止待机动作。**离开页面必须调用**，否则定时器会在后台一直跑。 */
+    stopIdle,
+    /** 待机自检读数（running / fired / lastPick / 哪些片段缺失）。 */
+    idleStats,
     /** 口型驱动：{ vis_AA: 0.8, … }（lip-sync 曲线走这条通道，与表情互不覆盖）。 */
     setVisemes,
     /** 运行时调光（观感标定用）：`setLighting(环境强度, 解析灯倍数)`。 */
     setLighting,
+    /**
+     * 临时把场景背景设成纯色（**仅调试用**）。
+     *
+     * 为什么需要它：3D 场景的背景一直是空的（由页面 CSS 提供），
+     * 于是 canvas 是透明的、`readPixels` 读不出人物轮廓，
+     * "人物在画面里占多高/头顶在哪"就只能靠肉眼估。
+     * 铺一个与人物反差极大的颜色后，用像素扫描就能量出精确边界。
+     */
+    debugSetBackground(color) {
+      if (color == null) {
+        if (scene) { scene.background = null }
+      } else if (scene) {
+        scene.background = new THREE.Color(color)
+      }
+      schedule()
+      return { ok: true, background: color == null ? null : String(color) }
+    },
     /**
      * 材质校正：`setMaterial({ metalness: 0, roughnessScale: 1 })`。
      * 压金属度是治"反光太强/像金属"的正确那一刀（资产自带 metallic 贴图 B 通道偏高）。
@@ -1620,6 +1927,706 @@ function applyArmRestPose(root, clips) {
       }
       return out
     },
+    /**
+     * 诊断：量每个形态键的**真实几何位移**（顶点最大 |Δ|，模型单位）。
+     *
+     * 为什么必须有这个读数：「口型不动」有两条真根因，外观一模一样——
+     *   甲）权重根本没写进网格（看 `morphWeights` 就能分辨）；
+     *   乙）权重写进去了，但形态键本身**没有几何位移**（空 target / 占位），
+     *       此时 `morphWeights` 报 1.0，画面却一个像素都不变。
+     * 乙只能靠量 `geometry.morphAttributes.position[index]` 才能与甲分开。
+     */
+    morphDeltas(names) {
+      const wanted = Array.isArray(names) && names.length ? names : null
+      const out = {}
+      for (const [name, meshes] of morphOwners) {
+        if (wanted && !wanted.includes(name)) continue
+        let maxDelta = 0
+        let attrMissing = 0
+        let values = 0
+        for (const mesh of meshes) {
+          const g = mesh.geometry
+          const dict = mesh.morphTargetDictionary
+          if (!g || !dict) continue
+          const idx = dict[name]
+          if (typeof idx !== 'number') continue
+          const attrs = g.morphAttributes || {}
+          const pos = attrs.position ? attrs.position[idx] : null
+          if (!pos || !pos.array) { attrMissing += 1; continue }
+          values += pos.array.length
+          const arr = pos.array
+          for (let i = 0; i < arr.length; i += 1) {
+            const v = Math.abs(arr[i])
+            if (v > maxDelta) maxDelta = v
+          }
+        }
+        out[name] = { maxDelta: +maxDelta.toFixed(6), attrMissing, values }
+      }
+      return out
+    },
+    /**
+     * 诊断：把「有形态键的网格」与「场景里真正被渲染的网格」对上号，
+     * 并读出 three 版本 / 渲染器能力 / 材质上的 morph 开关。
+     * 用于分辨「morph 写错对象」与「morph 根本没被 GPU 应用」。
+     */
+    morphAudit() {
+      const owners = []
+      for (const [, meshes] of morphOwners) {
+        for (const mesh of meshes) if (owners.indexOf(mesh) < 0) owners.push(mesh)
+      }
+      const sceneMeshes = []
+      scene.traverse((n) => {
+        if (!n.isMesh) return
+        const mat = n.material || {}
+        sceneMeshes.push({
+          name: n.name || '(未命名)',
+          uuid: n.uuid,
+          skinned: !!n.isSkinnedMesh,
+          morphs: n.morphTargetDictionary ? Object.keys(n.morphTargetDictionary).length : 0,
+          visible: n.visible,
+          isOwner: owners.indexOf(n) >= 0,
+          matType: mat.type,
+          matMorphTargets: typeof mat.morphTargets === 'boolean' ? mat.morphTargets : '未定义',
+          matDefines: mat.defines ? Object.keys(mat.defines).filter((k) => /MORPH/i.test(k)) : null,
+          influences: n.morphTargetInfluences ? n.morphTargetInfluences.length : 0,
+          influencesNonZero: n.morphTargetInfluences ? n.morphTargetInfluences.filter((v) => v > 0.001).length : 0,
+        })
+      })
+      const cap = renderer && renderer.capabilities ? renderer.capabilities : {}
+      return {
+        threeRevision: THREE.REVISION,
+        isWebGL2: typeof cap.isWebGL2 === 'boolean' ? cap.isWebGL2 : '未知',
+        maxVertexTextures: cap.maxVertexTextures,
+        sceneMeshCount: sceneMeshes.length,
+        ownerMeshCount: owners.length,
+        ownersInScene: owners.filter((m) => sceneMeshes.some((s) => s.uuid === m.uuid)).length,
+        renderFrame: renderer && renderer.info ? renderer.info.render.frame : null,
+        sceneMeshes,
+      }
+    },
+    /**
+     * 诊断（**行为断言**，不是形态断言）：把场景渲进离屏 render target，
+     * 比对「形态键全 0 / 单键拉满 / 全拉满」三种状态下的**像素哈希**。
+     *
+     * 为什么非要走到像素：本轮"嘴不动"的排查里，权重回读（形态断言）报了假绿——
+     * 数组确实被改了，屏幕上一个像素都没变。只有读渲染结果才能把
+     * 「morph 有没有真的影响画面」变成可判定的事实，而不是靠肉眼抽查截图。
+     */
+    probeMorphPixels() {
+      const owners = []
+      for (const [, meshes] of morphOwners) for (const mesh of meshes) if (owners.indexOf(mesh) < 0) owners.push(mesh)
+      if (!owners.length) return { ok: false, reason: '场景里没有带形态键的网格' }
+      const width = 256
+      const height = 256
+      const rt = new THREE.WebGLRenderTarget(width, height)
+      const buf = new Uint8Array(width * height * 4)
+      const saved = owners.map((m) => (m.morphTargetInfluences ? Array.prototype.slice.call(m.morphTargetInfluences) : null))
+      const hash = () => {
+        let h1 = 2166136261
+        for (let i = 0; i < buf.length; i += 1) { h1 ^= buf[i]; h1 = Math.imul(h1, 16777619) }
+        return (h1 >>> 0).toString(16)
+      }
+      const shot = () => {
+        renderer.setRenderTarget(rt)
+        renderer.render(scene, camera)
+        renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf)
+        renderer.setRenderTarget(null)
+        return hash()
+      }
+      const setAll = (v) => {
+        for (const m of owners) {
+          if (!m.morphTargetInfluences) continue
+          for (let i = 0; i < m.morphTargetInfluences.length; i += 1) m.morphTargetInfluences[i] = v
+        }
+      }
+      let result
+      try {
+        setAll(0)
+        const hashZero = shot()
+        const first = owners[0]
+        if (first.morphTargetInfluences && first.morphTargetInfluences.length) first.morphTargetInfluences[0] = 1
+        const hashFirst = shot()
+        setAll(1)
+        const hashAll = shot()
+        result = {
+          ok: true,
+          size: [width, height],
+          ownerCount: owners.length,
+          influenceCount: owners[0].morphTargetInfluences ? owners[0].morphTargetInfluences.length : 0,
+          firstName: first.morphTargetDictionary ? Object.keys(first.morphTargetDictionary)[0] : null,
+          hashZero, hashFirst, hashAll,
+          changedFirst: hashZero !== hashFirst,
+          changedAll: hashZero !== hashAll,
+          drawCalls: renderer.info ? renderer.info.render.calls : null,
+        }
+      } finally {
+        owners.forEach((m, i) => {
+          if (!m.morphTargetInfluences || !saved[i]) return
+          for (let j = 0; j < saved[i].length; j += 1) m.morphTargetInfluences[j] = saved[i][j]
+        })
+        rt.dispose()
+        renderer.setRenderTarget(null)
+        renderer.render(scene, camera)
+      }
+      return result
+    },
+    /**
+     * 诊断：**逐键**量"这个形态键拉满时，屏幕上真的变几个像素"。
+     *
+     * 为什么需要：vis_* 这些键在交付件里**可能有零位移的占位键**（实测 vis_silence 位移为 0），
+     * 也可能位移小到在 399x165 的舞台里不足一个像素。只读权重（0.5~1.0）会让人误判
+     * "口型在动"，但屏幕上嘴一动不动。这条口子把"可不可见"变成数字：
+     * changedPixels 就是该键拉满时与静止姿态相差的像素个数。
+     *
+     * 渲染目标尺寸取画布真实绘制缓冲（含 DPR），保证"像素"口径与用户看到的画面一致。
+     */
+
+    /**
+     * 诊断：**绑定审计** —— 「当前载入的交付件到底绑了什么」。
+     *
+     * 为什么单开一条口子：用户反复反馈「嘴没动」，而「形态键权重在变」是形状断言、
+     * 不是行为断言。动手改幅度之前必须先拿到三个**事实**：
+     *   1) 载入的到底是哪一份 GLB（会不会是旧资产 / 浏览器旧缓存）；
+     *   2) 网格到底有没有蒙皮权重（JOINTS_0/WEIGHTS_0 压在 Draco 里，离线脚本读不到，只能在页面里读）；
+     *   3) 嘴唇这块几何的权重落在**哪根骨**上 —— 落在 head 上就只能靠 morph 开合，
+     *      落在 jaw 上才可能靠骨骼开合。
+     *
+     * 「嘴部区域」的定义刻意**从资产自身量出来**：被任一 vis_* 形态键真正移动过的顶点。
+     * 不靠坐标猜「嘴在哪」，资产换尺度也不会失准。
+     */
+    rigAudit() {
+      if (!root) return { ok: false, reason: '还没加载模型' }
+      const skinned = []
+      root.traverse((n) => { if (n.isSkinnedMesh) skinned.push(n) })
+      const mesh = skinned[0]
+      if (!mesh) return { ok: false, reason: '场景里没有蒙皮网格' }
+      const geo = mesh.geometry
+      const pos = geo.attributes.position
+      const si = geo.attributes.skinIndex
+      const sw = geo.attributes.skinWeight
+      const dict = mesh.morphTargetDictionary || {}
+      const morphPos = (geo.morphAttributes && geo.morphAttributes.position) ? geo.morphAttributes.position : []
+      const boneList = (mesh.skeleton && mesh.skeleton.bones) ? mesh.skeleton.bones : []
+      const visKeys = Object.keys(dict).filter((k) => k.indexOf('vis_') === 0)
+      const flags = new Uint8Array(pos.count)
+      for (const k of visKeys) {
+        const attr = morphPos[dict[k]]
+        if (!attr || !attr.array) continue
+        const arr = attr.array
+        for (let v = 0; v < pos.count; v += 1) {
+          const i = v * 3
+          if (Math.abs(arr[i]) > 1e-6 || Math.abs(arr[i + 1]) > 1e-6 || Math.abs(arr[i + 2]) > 1e-6) flags[v] = 1
+        }
+      }
+      let mouthVerts = 0
+      const bx = [Infinity, -Infinity]
+      const by = [Infinity, -Infinity]
+      const bz = [Infinity, -Infinity]
+      for (let v = 0; v < pos.count; v += 1) {
+        if (!flags[v]) continue
+        const x = pos.getX(v)
+        const y = pos.getY(v)
+        const z = pos.getZ(v)
+        mouthVerts += 1
+        if (x < bx[0]) bx[0] = x
+        if (x > bx[1]) bx[1] = x
+        if (y < by[0]) by[0] = y
+        if (y > by[1]) by[1] = y
+        if (z < bz[0]) bz[0] = z
+        if (z > bz[1]) bz[1] = z
+      }
+      const n = boneList.length
+      const mouthW = new Array(n).fill(0)
+      const mouthAt = new Array(n).fill(0)
+      const mouthStrong = new Array(n).fill(0)
+      const allW = new Array(n).fill(0)
+      let unweighted = 0
+      const jj = [0, 0, 0, 0]
+      const ww = [0, 0, 0, 0]
+      for (let v = 0; v < pos.count; v += 1) {
+        let sum = 0
+        for (let s = 0; s < 4; s += 1) {
+          jj[s] = si.getComponent(v, s)
+          ww[s] = sw.getComponent(v, s)
+          sum += ww[s]
+        }
+        if (!(sum > 0)) {
+          if (flags[v]) unweighted += 1
+          continue
+        }
+        for (let s = 0; s < 4; s += 1) {
+          const w = ww[s] / sum
+          const j = jj[s]
+          if (w <= 0.001 || !(j >= 0 && j < n)) continue
+          allW[j] += w
+          if (flags[v]) {
+            mouthW[j] += w
+            mouthAt[j] += 1
+            if (w >= 0.5) mouthStrong[j] += 1
+          }
+        }
+      }
+      let mouthTotal = 0
+      let allTotal = 0
+      for (let j = 0; j < n; j += 1) { mouthTotal += mouthW[j]; allTotal += allW[j] }
+      const rows = []
+      for (let j = 0; j < n; j += 1) {
+        if (!mouthAt[j]) continue
+        rows.push({
+          bone: boneList[j].name,
+          shareOfMouth: mouthTotal > 0 ? +(mouthW[j] / mouthTotal).toFixed(4) : 0,
+          verts: mouthAt[j],
+          vertsOver05: mouthStrong[j],
+          shareOfAll: allTotal > 0 ? +(allW[j] / allTotal).toFixed(4) : 0,
+        })
+      }
+      rows.sort((a, b) => b.shareOfMouth - a.shareOfMouth)
+      return {
+        ok: true,
+        asset: lastAssetUrl,
+        gender: currentGender,
+        role: currentRole,
+        vertexCount: pos.count,
+        hasSkinIndex: !!si,
+        hasSkinWeight: !!sw,
+        jointCount: n,
+        joints: boneList.map((b) => b.name),
+        visKeys,
+        morphKeyCount: Object.keys(dict).length,
+        mouthVerts,
+        mouthUnweighted: unweighted,
+        mouthBox: {
+          x: [+bx[0].toFixed(4), +bx[1].toFixed(4)],
+          y: [+by[0].toFixed(4), +by[1].toFixed(4)],
+          z: [+bz[0].toFixed(4), +bz[1].toFixed(4)],
+        },
+        mouthBoneWeights: rows,
+      }
+    },
+    /**
+     * 诊断：把 jaw 骨转 deg 度，量屏幕上**真的变了几个像素**，与 vis_AA 拉满对照。
+     * 这条口子回答的是「有没有可能靠骨骼张嘴」；数值与 vis_AA 的比值就是 morph 幅度差多少倍。
+     */
+    probeJawPixels(deg) {
+      const d = typeof deg === 'number' ? deg : 14
+      if (!root) return { ok: false, reason: '还没加载模型' }
+      const jaw = collectBones(root).get('jaw')
+      if (!jaw) return { ok: false, reason: '交付件里没有 jaw 骨' }
+      const owners = []
+      for (const [, meshes] of morphOwners) for (const m of meshes) if (owners.indexOf(m) < 0) owners.push(m)
+      if (!owners.length) return { ok: false, reason: '场景里没有带形态键的网格' }
+      const gl = renderer.getContext()
+      const canvas = renderer.domElement
+      const width = canvas.width
+      const height = canvas.height
+      const savedMorph = owners.map((m) => (m.morphTargetInfluences ? Array.prototype.slice.call(m.morphTargetInfluences) : null))
+      const savedQuat = jaw.quaternion.clone()
+      const zeroMorph = () => {
+        for (const m of owners) {
+          if (!m.morphTargetInfluences) continue
+          for (let i = 0; i < m.morphTargetInfluences.length; i += 1) m.morphTargetInfluences[i] = 0
+        }
+      }
+      const readPixels = () => {
+        renderer.render(scene, camera)
+        const out = new Uint8Array(width * height * 4)
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, out)
+        return out
+      }
+      const compare = (a, b) => {
+        let changed = 0
+        let maxChannel = 0
+        let minX = width
+        let maxX = -1
+        let minY = height
+        let maxY = -1
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const i = (y * width + x) * 4
+            const dd = Math.abs(b[i] - a[i]) + Math.abs(b[i + 1] - a[i + 1]) + Math.abs(b[i + 2] - a[i + 2])
+            if (dd > 3) {
+              changed += 1
+              const row = height - 1 - y
+              if (x < minX) minX = x
+              if (x > maxX) maxX = x
+              if (row < minY) minY = row
+              if (row > maxY) maxY = row
+              if (dd > maxChannel) maxChannel = dd
+            }
+          }
+        }
+        return {
+          changedPixels: changed,
+          bbox: maxX < 0 ? null : [minX, minY, maxX, maxY],
+          boxW: maxX < 0 ? 0 : (maxX - minX + 1),
+          boxH: maxX < 0 ? 0 : (maxY - minY + 1),
+          maxChannelSum: maxChannel,
+        }
+      }
+      const axis = new THREE.Vector3(1, 0, 0)
+      const parentRot = modelParentRotation(jaw, root)
+      const localFor = (sign) => {
+        const world = new THREE.Quaternion().setFromAxisAngle(axis, sign * d * Math.PI / 180)
+        return parentRot.clone().invert().multiply(world).multiply(parentRot)
+      }
+      const out = { ok: true, deg: d, canvas: [width, height] }
+      try {
+        zeroMorph()
+        const rest = readPixels()
+        zeroMorph()
+        for (const m of owners) {
+          const mm = m.morphTargetDictionary || {}
+          const idx = mm.vis_AA
+          if (typeof idx === 'number' && m.morphTargetInfluences) m.morphTargetInfluences[idx] = 1
+        }
+        out.morphVisAA = compare(rest, readPixels())
+        out.jawPlus = null
+        out.jawMinus = null
+        for (const sign of [1, -1]) {
+          zeroMorph()
+          jaw.quaternion.copy(savedQuat)
+          jaw.quaternion.premultiply(localFor(sign))
+          const r = compare(rest, readPixels())
+          if (sign > 0) out.jawPlus = r
+          else out.jawMinus = r
+        }
+      } finally {
+        owners.forEach((m, i) => {
+          if (!m.morphTargetInfluences || !savedMorph[i]) return
+          for (let j = 0; j < savedMorph[i].length; j += 1) m.morphTargetInfluences[j] = savedMorph[i][j]
+        })
+        jaw.quaternion.copy(savedQuat)
+        renderer.render(scene, camera)
+      }
+      out.jawOpensDownward = out.jawPlus && out.jawMinus
+        ? (out.jawPlus.boxH >= out.jawMinus.boxH ? 'plus' : 'minus')
+        : null
+      out.jawBest = out.jawOpensDownward === 'minus' ? out.jawMinus : out.jawPlus
+      if (out.jawBest && out.morphVisAA && out.morphVisAA.changedPixels > 0) {
+        out.ratioBestOverMorph = +(out.jawBest.changedPixels / out.morphVisAA.changedPixels).toFixed(2)
+      }
+      return out
+    },
+
+    /**
+     * 诊断：**在 2D 画布上**做姿态差分（与「用户看到的画面」同一条坐标系）。
+     *
+     * 为什么再开一条：readPixels 读的是 GL 缓冲，行序（自下而上）与 drawImage 的源坐标
+     * （自上而下）一旦换算错一处，「差异框」与「看到的图」就会互相矛盾 —— 本轮排查就卡在这里：
+     * 读像素说差异在嘴，裁出来的图却拍到额头。
+     * 这条口子把两帧都 drawImage 进 2D 画布、再用 getImageData 差分，坐标系与截图完全一致。
+     * 同时回传差异区域的**平均颜色**：头发是暗的（R,G,B 都低），皮肤/嘴唇是亮的带红，
+     * 一眼就能判定「到底动的是哪块」。
+     */
+    diff2d(opts) {
+      const o = opts || {}
+      const pose = o.pose || {}
+      const owners = []
+      for (const [, meshes] of morphOwners) for (const mesh of meshes) if (owners.indexOf(mesh) < 0) owners.push(mesh)
+      if (!owners.length) return { ok: false, reason: '场景里没有带形态键的网格' }
+      const src = renderer.domElement
+      const width = src.width
+      const height = src.height
+      const saved = owners.map((m) => (m.morphTargetInfluences ? Array.prototype.slice.call(m.morphTargetInfluences) : null))
+      const setAll = (v) => {
+        for (const m of owners) {
+          if (!m.morphTargetInfluences) continue
+          for (let i = 0; i < m.morphTargetInfluences.length; i += 1) m.morphTargetInfluences[i] = v
+        }
+      }
+      const grab = () => {
+        renderer.render(scene, camera)
+        const c = document.createElement('canvas')
+        c.width = width
+        c.height = height
+        const g = c.getContext('2d')
+        g.drawImage(src, 0, 0)
+        return g.getImageData(0, 0, width, height).data
+      }
+      const out = { ok: true, canvas: [width, height] }
+      try {
+        setAll(0)
+        const rest = grab()
+        setAll(0)
+        for (const m of owners) {
+          const dict = m.morphTargetDictionary || {}
+          if (!m.morphTargetInfluences) continue
+          for (const name of Object.keys(pose)) {
+            const idx = dict[name]
+            if (typeof idx === 'number') m.morphTargetInfluences[idx] = pose[name]
+          }
+        }
+        const posed = grab()
+        let changed = 0
+        let minX = width
+        let maxX = -1
+        let minY = height
+        let maxY = -1
+        let maxChannel = 0
+        let sr = 0
+        let sg = 0
+        let sb = 0
+        const rows = new Array(8).fill(0)
+        const cols = new Array(8).fill(0)
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const i = (y * width + x) * 4
+            const d = Math.abs(posed[i] - rest[i]) + Math.abs(posed[i + 1] - rest[i + 1]) + Math.abs(posed[i + 2] - rest[i + 2])
+            if (d > 3) {
+              changed += 1
+              if (x < minX) minX = x
+              if (x > maxX) maxX = x
+              if (y < minY) minY = y
+              if (y > maxY) maxY = y
+              if (d > maxChannel) maxChannel = d
+              rows[Math.min(7, Math.floor(y * 8 / height))] += 1
+              cols[Math.min(7, Math.floor(x * 8 / width))] += 1
+              sr += rest[i]
+              sg += rest[i + 1]
+              sb += rest[i + 2]
+            }
+          }
+        }
+        out.changedPixels = changed
+        out.diffBBox = maxX < 0 ? null : [minX, minY, maxX, maxY]
+        out.maxChannelSum = maxChannel
+        out.rowHistogram = rows
+        out.colHistogram = cols
+        out.restMeanInDiff = changed ? [Math.round(sr / changed), Math.round(sg / changed), Math.round(sb / changed)] : null
+        out.restMeanWhole = (() => {
+          let r = 0
+          let g = 0
+          let b = 0
+          const n = width * height
+          for (let i = 0; i < rest.length; i += 4) { r += rest[i]; g += rest[i + 1]; b += rest[i + 2] }
+          return [Math.round(r / n), Math.round(g / n), Math.round(b / n)]
+        })()
+        out.pose = Object.keys(pose).map((k) => k + '=' + pose[k]).join(',')
+      } finally {
+        owners.forEach((m, i) => {
+          if (!m.morphTargetInfluences || !saved[i]) return
+          for (let j = 0; j < saved[i].length; j += 1) m.morphTargetInfluences[j] = saved[i][j]
+        })
+        renderer.render(scene, camera)
+      }
+      return out
+    },
+
+    /**
+     * 诊断：**每根骨的屏幕坐标**（画布像素，自上而下）。
+     * 为什么需要：这一轮排查反复出现「差异框与肉眼看到的部位对不上」。
+     * 光说"嘴在哪"是猜；把骨的世界坐标投影到屏幕，眼/下颌/手各在画面第几行就有了硬坐标，
+     * 差异框到底落在嘴还是额头，一比就知道。
+     */
+    boneScreenPositions() {
+      if (!root) return { ok: false, reason: '还没加载模型' }
+      root.updateMatrixWorld(true)
+      const w = renderer.domElement.width
+      const h = renderer.domElement.height
+      const list = []
+      for (const [key, bone] of collectBones(root)) {
+        const v = new THREE.Vector3()
+        bone.getWorldPosition(v)
+        const p = v.clone().project(camera)
+        list.push({
+          key,
+          name: bone.name,
+          world: [+v.x.toFixed(4), +v.y.toFixed(4), +v.z.toFixed(4)],
+          screen: [Math.round((p.x * 0.5 + 0.5) * w), Math.round((0.5 - p.y * 0.5) * h)],
+        })
+      }
+      return { ok: true, canvas: [w, h], bones: list }
+    },
+    probeVisemePixels() {
+      const owners = []
+      for (const [, meshes] of morphOwners) for (const mesh of meshes) if (owners.indexOf(mesh) < 0) owners.push(mesh)
+      if (!owners.length) return { ok: false, reason: '场景里没有带形态键的网格' }
+      const size = new THREE.Vector2()
+      renderer.getDrawingBufferSize(size)
+      const width = Math.max(64, Math.min(1024, Math.round(size.x) || 512))
+      const height = Math.max(64, Math.min(1024, Math.round(size.y) || 512))
+      const rt = new THREE.WebGLRenderTarget(width, height)
+      const buf = new Uint8Array(width * height * 4)
+      const base = new Uint8Array(width * height * 4)
+      const saved = owners.map((m) => (m.morphTargetInfluences ? Array.prototype.slice.call(m.morphTargetInfluences) : null))
+      const shot = () => {
+        renderer.setRenderTarget(rt)
+        renderer.render(scene, camera)
+        renderer.readRenderTargetPixels(rt, 0, 0, width, height, buf)
+        renderer.setRenderTarget(null)
+      }
+      const setAll = (v) => {
+        for (const m of owners) {
+          if (!m.morphTargetInfluences) continue
+          for (let i = 0; i < m.morphTargetInfluences.length; i += 1) m.morphTargetInfluences[i] = v
+        }
+      }
+      const diffCount = () => {
+        let n = 0
+        for (let i = 0; i < buf.length; i += 4) {
+          if (Math.abs(buf[i] - base[i]) > 1 || Math.abs(buf[i + 1] - base[i + 1]) > 1 || Math.abs(buf[i + 2] - base[i + 2]) > 1) n += 1
+        }
+        return n
+      }
+      const out = []
+      try {
+        setAll(0)
+        shot()
+        base.set(buf)
+        const mesh = owners[0]
+        const dict = mesh.morphTargetDictionary || {}
+        const names = Object.keys(dict)
+        for (const name of names) {
+          setAll(0)
+          const idx = dict[name]
+          if (typeof idx !== 'number' || !mesh.morphTargetInfluences) continue
+          mesh.morphTargetInfluences[idx] = 1
+          shot()
+          let maxDelta = 0
+          const attrs = mesh.geometry && mesh.geometry.morphAttributes ? mesh.geometry.morphAttributes.position : null
+          const attr = attrs ? attrs[idx] : null
+          if (attr && attr.array) {
+            for (let i = 0; i < attr.array.length; i += 1) {
+              const v = Math.abs(attr.array[i])
+              if (v > maxDelta) maxDelta = v
+            }
+          }
+          out.push({ name, changedPixels: diffCount(), maxDelta: +maxDelta.toFixed(6) })
+        }
+        out.sort((a, b) => b.changedPixels - a.changedPixels)
+      } finally {
+        owners.forEach((m, i) => {
+          if (!m.morphTargetInfluences || !saved[i]) return
+          for (let j = 0; j < saved[i].length; j += 1) m.morphTargetInfluences[j] = saved[i][j]
+        })
+        rt.dispose()
+        renderer.setRenderTarget(null)
+        renderer.render(scene, camera)
+      }
+      return { ok: true, size: [width, height], keys: out.length, totalPixels: width * height, perKey: out }
+    },
+    /**
+     * 诊断：给指定姿态拍一张"静止 vs 姿态"上下并排的对比图（PNG dataURL）。
+     *
+     * 为什么必须能拍：本轮排查里，读权重（形态断言）反复给出假绿——
+     * 数组确实被改了，用户却看不见嘴动。能不能看见只能看像素。
+     * 而截图（CDP）在 WebGL 上不可靠，所以这里**在同一个任务里** render + readPixels
+     * + drawImage 到 2D 画布，绕开 preserveDrawingBuffer=false 的坑。
+     *
+     * 裁剪区自动取"两种姿态差异像素"的外接框再加 pad 倍边距 —— 差异在哪就拍哪，
+     * 不至于拍一大片背景、把嘴淹没在缩略图里。
+     */
+    poseShot(opts) {
+      const o = opts || {}
+      const pose = o.pose || {}
+      const pad = typeof o.pad === 'number' ? o.pad : 2.2
+      const owners = []
+      for (const [, meshes] of morphOwners) for (const mesh of meshes) if (owners.indexOf(mesh) < 0) owners.push(mesh)
+      if (!owners.length) return { ok: false, reason: '场景里没有带形态键的网格' }
+      const gl = renderer.getContext()
+      const canvas = renderer.domElement
+      const width = canvas.width
+      const height = canvas.height
+      const saved = owners.map((m) => (m.morphTargetInfluences ? Array.prototype.slice.call(m.morphTargetInfluences) : null))
+      const setAll = (v) => {
+        for (const m of owners) {
+          if (!m.morphTargetInfluences) continue
+          for (let i = 0; i < m.morphTargetInfluences.length; i += 1) m.morphTargetInfluences[i] = v
+        }
+      }
+      const applyPose = () => {
+        for (const m of owners) {
+          const dict = m.morphTargetDictionary || {}
+          if (!m.morphTargetInfluences) continue
+          for (const name of Object.keys(pose)) {
+            const idx = dict[name]
+            if (typeof idx === 'number') m.morphTargetInfluences[idx] = pose[name]
+          }
+        }
+      }
+      const readPixels = () => {
+        renderer.render(scene, camera)
+        const out = new Uint8Array(width * height * 4)
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, out)
+        return out
+      }
+      let result
+      try {
+        setAll(0)
+        const restPixels = readPixels()
+        setAll(0)
+        applyPose()
+        const posePixels = readPixels()
+        let minX = width
+        let maxX = -1
+        let minY = height
+        let maxY = -1
+        let changed = 0
+        let maxChannel = 0
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const i = (y * width + x) * 4
+            const d = Math.abs(posePixels[i] - restPixels[i]) + Math.abs(posePixels[i + 1] - restPixels[i + 1]) + Math.abs(posePixels[i + 2] - restPixels[i + 2])
+            if (d > 3) {
+              changed += 1
+              // readPixels 第 0 行在**下边**，而 drawImage 的源矩形是**上边**为 0：
+              // 这里统一换算成自上而下的行号，否则裁剪区会上下颠倒（实测拍到了肚子而不是嘴）。
+              const row = height - 1 - y
+              if (x < minX) minX = x
+              if (x > maxX) maxX = x
+              if (row < minY) minY = row
+              if (row > maxY) maxY = row
+              if (d > maxChannel) maxChannel = d
+            }
+          }
+        }
+        if (maxX < 0) { minX = 0; maxX = width - 1; minY = 0; maxY = height - 1 }
+        const cx = (minX + maxX) / 2
+        const cy = (minY + maxY) / 2
+        const bw = Math.max(64, Math.min(width, Math.round((maxX - minX + 1) * pad)))
+        const bh = Math.max(48, Math.min(height, Math.round((maxY - minY + 1) * pad)))
+        const sx = Math.max(0, Math.min(width - bw, Math.round(cx - bw / 2)))
+        const sy = Math.max(0, Math.min(height - bh, Math.round(cy - bh / 2)))
+        const zoom = typeof o.zoom === 'number' && o.zoom > 0 ? o.zoom : 2
+        const out = document.createElement('canvas')
+        out.width = Math.round(bw * zoom)
+        out.height = Math.round(bh * 2 * zoom)
+        const ctx = out.getContext('2d')
+        // 关掉插值：放大后能看清是"真的形变"还是模糊插值
+        ctx.imageSmoothingEnabled = false
+        ctx.fillStyle = '#000'
+        ctx.fillRect(0, 0, out.width, out.height)
+        setAll(0)
+        renderer.render(scene, camera)
+        ctx.drawImage(canvas, sx, sy, bw, bh, 0, 0, out.width, Math.round(bh * zoom))
+        setAll(0)
+        applyPose()
+        renderer.render(scene, camera)
+        ctx.drawImage(canvas, sx, sy, bw, bh, 0, Math.round(bh * zoom), out.width, Math.round(bh * zoom))
+        result = {
+          ok: true,
+          canvas: [width, height],
+          crop: [sx, sy, bw, bh],
+          diffBBox: [minX, minY, maxX, maxY],
+          changedPixels: changed,
+          maxChannelSum: maxChannel,
+          pose: Object.keys(pose).map((k) => k + '=' + pose[k]).join(','),
+          width: out.width,
+          height: out.height,
+          zoom,
+          dataUrl: out.toDataURL('image/png'),
+        }
+      } finally {
+        owners.forEach((m, i) => {
+          if (!m.morphTargetInfluences || !saved[i]) return
+          for (let j = 0; j < saved[i].length; j += 1) m.morphTargetInfluences[j] = saved[i][j]
+        })
+        renderer.render(scene, camera)
+      }
+      return result
+    },
+    /** 诊断：最近一帧**渲染时**的 morph 权重（区分"写了"与"画了"） */
+    renderInfluences() { return renderInfluenceSample },
     /** 诊断用：暴露渲染器内部状态（排"取景裁切"这类问题时不必再靠猜） */
     debug() {
       const info = renderer && renderer.info ? renderer.info : null

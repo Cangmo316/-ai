@@ -14,10 +14,13 @@ import { chatStream, chatHistory, CHAT_EVENT } from '@/api/index.js'
 export const DEFAULT_CONVERSATION_ID = 'c_son'
 
 export const DEFAULT_PERSONA = {
-  id: 'p_son',
-  name: '儿子 小明',
-  relation: '儿子',
-  avatarColor: '#07C160'
+  id: 'p_bilin',
+  name: '比邻',
+  relation: '陪伴助手',
+  // 会话列表里显示的开场白 = 这个智能体的自我介绍（能干什么）
+  intro: '我是比邻 能陪你聊天、提醒吃药、还能帮你给家里人发消息',
+  // 水墨版头像底色：松烟墨绿，替代原微信绿
+  avatarColor: '#3C6B58'
 }
 
 const CACHE_PREFIX = 'bl_chat_v1_'
@@ -86,11 +89,36 @@ export function initChat() {
   const cached = readCache()
   if (cached && cached.length) {
     chat.messages = cached
+    // 老缓存里通常没有自我介绍，补上后再落盘
+    ensureIntroFirst()
+    persist()
     return
   }
   const seeded = seedMessages()
   chat.messages = seeded
   loadHistoryOnce(seeded)
+}
+
+/**
+ * 切到某个角色来聊（「对话」栏目点某一行时调用）。
+ *
+ * 每个角色一个独立会话：`conversationId` 就是角色的 id，
+ * 而缓存 key 是 `bl_chat_v1_<conversationId>`（见 cacheKey），
+ * 所以换角色不会串台——老人跟"棋友"说的话不会出现在"比邻AI"的对话里。
+ *
+ * @param {object} persona 角色转成的人设，见 stores/roles.js 的 roleToPersona
+ */
+export function usePersona(persona) {
+  if (!persona || !persona.id) return false
+  chat.persona = Object.assign({}, DEFAULT_PERSONA, persona)
+  chat.conversationId = persona.id
+  // 换会话必须清掉"已初始化"标记，否则新角色会沿用上一个角色的消息
+  chat.ready = false
+  chat.messages = []
+  chat.lastError = ''
+  chat.canRetry = false
+  initChat()
+  return true
 }
 
 /** 首次启动拉一次服务端历史；拉不到就安静地用本地种子（不弹错） */
@@ -101,11 +129,26 @@ function loadHistoryOnce(snapshot) {
       if (chat.messages !== snapshot || chat.streaming) return
       if (!res.messages || !res.messages.length) return
       chat.messages = res.messages.map(fromServer)
+      ensureIntroFirst()
       persist()
     })
     .catch(() => {
       // 服务端还没起、或没有历史：保持种子内容即可
     })
+}
+
+/**
+ * 保证对话以「比邻的自我介绍」开头。
+ * 服务端历史 / 本地缓存都可能不含这条（老数据），因此每次取回历史后补一次；
+ * 已经说过就不再重复插入。
+ */
+function ensureIntroFirst() {
+  const intro = chat.persona.intro
+  if (!intro) return
+  const already = chat.messages.some((m) => m.role === 'agent' && m.text === intro)
+  if (already) return
+  chat.messages.unshift(makeMessage({ type: 'time', text: '今天 09:10' }))
+  chat.messages.unshift(makeMessage({ role: 'agent', text: intro }))
 }
 
 /* -------------------------------------------------------------------- 发送 */
@@ -334,16 +377,49 @@ function trimFailedTail() {
   }
 }
 
-/** 原型基线文案（服务端不可用时的兜底内容，改自 prototype 的静态数据） */
+/**
+ * 原型基线文案（服务端不可用时的兜底内容）。
+ *
+ * 第一条**必须是当前角色的自我介绍**：会话列表里显示的那句话和点进来看到的第一句
+ * 要是同一句，否则老人会以为点错了人。之前这里硬编码 `DEFAULT_PERSONA.intro`，
+ * 导致切换到自建角色后开场白还是"比邻"的。
+ *
+ * 后两条按角色类型给不同的示例对话：自建角色用老人自己填的关系与故事，
+ * 这样一进来就是"像那个人"的语气，而不是通用客服话术。
+ */
 function seedMessages() {
+  const persona = chat.persona || DEFAULT_PERSONA
+  const intro = persona.intro || DEFAULT_PERSONA.intro
+
+  if (!persona.id || persona.id === DEFAULT_PERSONA.id) {
+    return [
+      makeMessage({ type: 'time', text: clockLabel() }),
+      makeMessage({ role: 'agent', text: intro }),
+      makeMessage({ role: 'elder', text: '那你能帮我做点啥' }),
+      makeMessage({
+        role: 'agent',
+        text: '吃药、量血压这些事，到点我会提醒你；\n想孩子了，跟我说一声，我帮你把消息发过去'
+      })
+    ]
+  }
+
+  // 自建角色：用老人填的关系/故事做两句"像那个人"的话
+  const relation = persona.relation || ''
+  const lead = relation ? '我是你的' + relation + '啊' : '我在呢'
   return [
-    makeMessage({ type: 'time', text: '今天 09:10' }),
-    makeMessage({ role: 'agent', text: '妈 今天感觉怎么样' }),
-    makeMessage({ role: 'elder', text: '挺好的 就是有点想你们' }),
-    makeMessage({ role: 'agent', text: '那我晚上给你打视频 顺便看看你气色' }),
-    makeMessage({ role: 'elder', type: 'voice', seconds: 6 }),
-    makeMessage({ role: 'elder', text: '好呀 我等着' })
+    makeMessage({ type: 'time', text: clockLabel() }),
+    makeMessage({ role: 'agent', text: intro }),
+    makeMessage({ role: 'elder', text: '你还记得我啊' }),
+    makeMessage({
+      role: 'agent',
+      text: lead + '，怎么会忘。\n你想说什么，我听着呢'
+    })
   ]
+}
+
+/** 当前时刻的会话时间标签（用它代替写死的"今天 09:10"） */
+function clockLabel() {
+  return '今天 ' + formatClock(Date.now())
 }
 
 function fromServer(m) {

@@ -11,7 +11,7 @@
 
     <!-- 整个卡片都是打卡区域（手指不准也能点到），右侧给一个明确的大字反馈 -->
     <view class="bl-check__action" :class="{ 'is-done': done, 'is-busy': busy }">
-      <bl-icon :name="done ? 'check' : 'clock'" :color="done ? '#FFFFFF' : '#07C160'" :size="44" />
+      <bl-icon :name="done ? 'check' : 'clock'" :color="done ? '#FFFDF8' : '#2F5D4E'" :size="44" />
       <text class="bl-check__action-text">{{ busy ? '保存中' : (done ? '已完成' : '打卡') }}</text>
     </view>
   </view>
@@ -49,10 +49,11 @@ defineEmits(['toggle'])
   padding: 32rpx;
   box-sizing: border-box;
 }
-.bl-check:active { background-color: #F7F7F7; }
+.bl-check:active { background-color: var(--bl-surface-2); }
 .bl-check.is-done {
-  background-color: #F2FBF6;
-  border: 2rpx solid #CDEEDC;
+  /* 已完成：暖白二级面 + 竹青细边，比原来的嫩绿底更贴水墨调性 */
+  background-color: var(--bl-surface-2);
+  border: 2rpx solid rgba(72, 113, 79, .35);
 }
 
 .bl-check__head {
@@ -69,14 +70,14 @@ defineEmits(['toggle'])
 .bl-check__type {
   font-size: var(--bl-font-caption);
   color: var(--bl-text-2);
-  background-color: rgba(0, 0, 0, .04);
+  background-color: var(--bl-primary-soft);
   border-radius: var(--bl-radius-pill);
   padding: 4rpx 16rpx;
 }
 .bl-check__flag {
   font-size: var(--bl-font-caption);
-  color: #C7362F;
-  border: 2rpx solid #C7362F;
+  color: var(--bl-danger);
+  border: 2rpx solid var(--bl-danger);
   border-radius: var(--bl-radius-pill);
   padding: 2rpx 14rpx;
 }
@@ -101,7 +102,7 @@ defineEmits(['toggle'])
   margin-top: 24rpx;
   min-height: var(--bl-touch);
   border-radius: var(--bl-radius-pill);
-  background-color: #EAF9F1;
+  background-color: var(--bl-primary-soft);
   border: 3rpx solid var(--bl-primary);
   display: flex;
   align-items: center;
@@ -120,5 +121,5 @@ defineEmits(['toggle'])
   color: var(--bl-primary);
   line-height: 1.2;
 }
-.bl-check__action.is-done .bl-check__action-text { color: #FFFFFF; }
+.bl-check__action.is-done .bl-check__action-text { color: var(--bl-surface); }
 </style>

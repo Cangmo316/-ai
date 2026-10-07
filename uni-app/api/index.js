@@ -54,6 +54,47 @@ export {
   unregisterPushClient
 } from './push.js'
 
+export {
+  fetchMe,
+  fetchAccountOptions,
+  loginAccount,
+  lookupAccount,
+  registerAccount,
+  updateAvatar
+} from './accounts.js'
+
+export {
+  bindFamily,
+  fetchBindings,
+  fetchConversations,
+  fetchFamilyOverview,
+  fetchMessages,
+  markConversationRead,
+  sendMessage,
+  unbindFamily
+} from './conversations.js'
+
+export {
+  addHealthRecord,
+  deleteHealthRecord,
+  fetchHealthRecords,
+  fetchHealthSummary,
+  fetchHealthTypes
+} from './health.js'
+
+export {
+  addCaseFile,
+  caseRawUrl,
+  createCase,
+  deleteCase,
+  deleteCaseFile,
+  fetchCase,
+  fetchCases,
+  fetchCaseTypes,
+  fetchVisionStatus,
+  updateCase
+} from './cases.js'
+
 // ⚠️ 记忆的写接口（createMemory / reviewMemory / updateMemorySettings）
 // 只导出给**家人端**用：老人端页面不许调用，否则就绕过了"家属确认"这道闸门。
 export {
