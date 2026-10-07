@@ -43,8 +43,11 @@
           <view class="bl-chat-row__main">
             <view class="bl-chat-row__title-row">
               <text class="bl-chat-row__name">{{ item.displayName }}</text>
-              <text v-if="item.kind === 'ai'" class="bl-chat-row__tag">默认</text>
-              <text v-else class="bl-chat-row__tag bl-chat-row__tag--family">家人</text>
+              <!-- 标签 = 对应角色「我们是什么关系」的内容（见 tagOf） -->
+              <text
+                class="bl-chat-row__tag"
+                :class="{ 'bl-chat-row__tag--family': item.kind !== 'ai' }"
+              >{{ tagOf() }}</text>
             </view>
             <text class="bl-chat-row__msg">{{ previewOf(item) }}</text>
           </view>
@@ -91,7 +94,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { settings } from '@/common/store.js'
 import { initChat, formatClock, usePersona } from '@/stores/chat.js'
-import { listRoles, roleToPersona } from '@/stores/roles.js'
+import { findRole, listRoles, roleToPersona } from '@/stores/roles.js'
 import { EVENT_CONTACTS_CHANGED, readConversations, refreshConversations, setPendingConversation, setPendingRemark, totalUnread } from '@/stores/contacts.js'
 import { dismissBanner, poll, reminder } from '@/stores/reminder.js'
 
@@ -122,6 +125,41 @@ function colorOf(item) {
   return item.kind === 'ai' ? '#3C6B58' : '#7A6A4F'
 }
 
+/**
+ * 名字后面那个小标签的文案 = **对应智能体角色的「我们是什么关系」**。
+ *
+ * 按需求：标签不再写死成「家人」，而是取该角色人物设置里
+ * 「2. 我们是什么关系」填的内容（比如「家人」「棋友」「儿子」）。
+ *
+ * 【取的顺序】
+ *   1. **当前选中的角色**（`settings.role`）的 relation —— "对应"这个词
+ *      在这里就是"你正在用的那个智能体角色"
+ *   2. 认不出来就退回内置「比邻AI」的 relation
+ *   3. 再没有就显示默认的「陪伴助手」
+ *
+ * ⚠️ 这里**曾经写错过**：第一版只匹配"自定义角色且名字与会话标题相同"，
+ *    结果内置「比邻AI」在家人会话上直接穿过去、回落成写死的「家人」——
+ *    用户把关系改成「棋友」却看不到变化，就是这个原因。
+ *
+ * 【为什么不区分会话类型】
+ * 角色是"老人自己的智能体设定"，跟对面是谁无关；同一个角色对每条会话
+ * 显示同一个关系标签才自洽。服务端会话只有 `ai:` 与 `family:` 两类，
+ * **没有角色维度的会话**，所以也只能这么做。
+ */
+function tagOf() {
+  // 1. 当前选中的角色（按名字找，settings.role 存的是角色名）
+  const all = listRoles()
+  const current = all.find((r) => r.name === settings.role)
+  if (current && current.relation) return current.relation
+
+  // 2. 退回内置「比邻AI」
+  const builtin = findRole('p_bilin')
+  if (builtin && builtin.relation) return builtin.relation
+
+  // 3. 兜底
+  return '陪伴助手'
+}
+
 /** 消息预览：有最后一条就显示它，否则显示智能体自我介绍 */
 function previewOf(item) {
   if (item.lastMessage && item.lastMessage.text) return item.lastMessage.text
@@ -142,7 +180,8 @@ function clockOf(item) {
 
 function ariaOf(item) {
   const unread = item.unread > 0 ? '，' + item.unread + '条未读' : ''
-  return item.displayName + '，' + previewOf(item) + unread
+  const tag = tagOf()
+  return item.displayName + (tag ? '，' + tag : '') + '，' + previewOf(item) + unread
 }
 
 function refresh() {

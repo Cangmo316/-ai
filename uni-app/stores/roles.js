@@ -25,6 +25,8 @@ export const BUILTIN_ROLES = [
     name: '比邻AI',
     desc: '一直在，什么都愿意听你说',
     callMe: '',
+    // 它对你的称呼 —— 通话页开场白里的「XXX」就是它（见 vision.vue 的 opener）
+    callYou: '',
     relation: '陪伴助手',
     story: '',
     persona: '',
@@ -35,6 +37,51 @@ export const BUILTIN_ROLES = [
     avatarColor: '#3C6B58'
   }
 ]
+
+/**
+ * 内置角色（「比邻AI」）的可编辑覆盖项，按账号隔离。
+ *
+ * 为什么单独存一份、而不是把它塞进自定义列表：
+ * 内置角色**永远是同一个 id（p_bilin）、不可删除**，页面按需求要能进「人物设置」
+ * 改它（题目与创建新角色页一致，但**没有"是否绑定家人"**）。如果把它写进
+ * 自定义列表，就得处理"删了会怎样""重名怎么办"这些本来不存在的问题。
+ */
+const BUILTIN_OVERRIDE_KEY = 'bl_role_builtin_v1'
+
+function builtinKey() {
+  return BUILTIN_OVERRIDE_KEY + '_' + accountSuffix()
+}
+
+/** 读内置角色的覆盖值（没设置过就是空对象） */
+export function readBuiltinProfile() {
+  try {
+    const raw = uni.getStorageSync(builtinKey())
+    const obj = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null
+    return obj && typeof obj === 'object' ? obj : {}
+  } catch (e) {
+    return {}
+  }
+}
+
+/** 保存内置角色的设置。只接受白名单字段，避免把 id/builtin 这类写坏。 */
+export function saveBuiltinProfile(input) {
+  const src = input || {}
+  const next = {
+    callMe: String(src.callMe || '').trim(),
+    callYou: String(src.callYou || '').trim(),
+    relation: String(src.relation || '').trim(),
+    story: String(src.story || '').trim(),
+    persona: String(src.persona || '').trim(),
+    frequency: String(src.frequency || '').trim()
+  }
+  try {
+    uni.setStorageSync(builtinKey(), JSON.stringify(next))
+  } catch (e) {
+    return { ok: false, reason: '存不上，稍后再试' }
+  }
+  emitChanged()
+  return { ok: true }
+}
 
 /**
  * 角色列表变化事件名。
@@ -51,7 +98,7 @@ function emitChanged() {
   }
 }
 
-/** 六个栏目的定义：创建页与详情都读它，改文案只改一处 */
+/** 栏目定义：创建页与详情都读它，改文案只改一处 */
 export const ROLE_FIELDS = [
   {
     key: 'callMe',
@@ -70,8 +117,19 @@ export const ROLE_FIELDS = [
     maxlength: 16
   },
   {
+    // 2026-10 新增：这一项决定**通话页开场白里的称呼**
+    //（「XXX，你好，你想跟我聊些什么？」里的 XXX），所以排在"故事"之前，
+    //  后面的题目顺延。老数据没有这个字段，normalize 会补成空串。
+    key: 'callYou',
+    label: '3. 你想我怎么称呼你？',
+    placeholder: '比如：李大爷、王阿姨、老张',
+    hint: '通话时会这么叫你',
+    required: false,
+    maxlength: 12
+  },
+  {
     key: 'story',
-    label: '3. 我们之间的故事',
+    label: '4. 我们之间的故事',
     placeholder: '比如：我们在公园下棋认识十几年了',
     hint: '写点你们之间的事，它会更懂怎么跟你聊',
     required: false,
@@ -80,7 +138,7 @@ export const ROLE_FIELDS = [
   },
   {
     key: 'persona',
-    label: '4. 我是一个什么样的人',
+    label: '5. 我是一个什么样的人',
     placeholder: '比如：爱热闹、爱下棋、血压有点高',
     hint: '',
     required: false,
@@ -89,7 +147,7 @@ export const ROLE_FIELDS = [
   },
   {
     key: 'frequency',
-    label: '5. 我平时多久给你发一次消息',
+    label: '6. 我平时多久给你发一次消息',
     placeholder: '选一个就好',
     hint: '',
     required: true,
@@ -99,8 +157,8 @@ export const ROLE_FIELDS = [
 
 const pad = (value, width) => String(value == null ? '' : value).padStart(width, '0')
 
-/** 存储 key：按账号编号隔离（未登录时用 guest） */
-function storageKey() {
+/** 当前账号编号后缀（未登录时 guest）—— 角色的存储 key 都按它隔离 */
+function accountSuffix() {
   let number = ''
   try {
     const raw = uni.getStorageSync('bl_account_profile')
@@ -111,7 +169,12 @@ function storageKey() {
   } catch (e) {
     number = ''
   }
-  return 'bl_roles_v1_' + (number ? pad(number, 8) : 'guest')
+  return number ? pad(number, 8) : 'guest'
+}
+
+/** 存储 key：按账号编号隔离（未登录时用 guest） */
+function storageKey() {
+  return 'bl_roles_v1_' + accountSuffix()
 }
 
 function readRaw() {
@@ -147,6 +210,7 @@ function normalize(item) {
     name: item.name || item.callMe,
     desc: item.desc || '',
     callMe: item.callMe,
+    callYou: item.callYou || '',
     relation: item.relation || '',
     story: item.story || '',
     persona: item.persona || '',
@@ -159,12 +223,25 @@ function normalize(item) {
   }
 }
 
+/** 内置角色 + 用户设置过的覆盖值（没设置过就是原样） */
+function builtinWithProfile() {
+  const profile = readBuiltinProfile()
+  return BUILTIN_ROLES.map((r) => Object.assign({}, r, {
+    callMe: profile.callMe || r.callMe,
+    callYou: profile.callYou || r.callYou,
+    relation: profile.relation || r.relation,
+    story: profile.story || r.story,
+    persona: profile.persona || r.persona,
+    frequency: profile.frequency || r.frequency
+  }))
+}
+
 /* ------------------------------------------------------------------ 读接口 */
 
 /** 全部角色：内置在前，自定义在后。返回副本，页面放进自己的 ref。 */
 export function listRoles() {
   const custom = readRaw().map(normalize).filter(Boolean)
-  return BUILTIN_ROLES.map((r) => Object.assign({}, r)).concat(custom)
+  return builtinWithProfile().concat(custom)
 }
 
 export function findRole(id) {
@@ -181,7 +258,13 @@ export function countCustom() {
  * 新建角色。返回 { ok, reason?, role? }。
  * 六栏的必填校验在这里做，页面的即时校验只是提前反馈。
  */
-export function addRole(input) {
+/**
+ * 校验并构造一个自定义角色的字段（addRole / updateRole 共用）。
+ * 校验必须在这里做：页面的即时校验只是提前反馈，最终以这里为准。
+ *
+ * @returns {{ok:false, reason:string, field:string} | {ok:true, fields:object}}
+ */
+function buildCustomFields(input) {
   const callMe = String((input && input.callMe) || '').trim()
   const relation = String((input && input.relation) || '').trim()
   const frequency = String((input && input.frequency) || '').trim()
@@ -200,22 +283,31 @@ export function addRole(input) {
     }
   }
 
+  return {
+    ok: true,
+    fields: {
+      name: callMe,
+      // 卡片副标题：关系 + 多久发一次，一眼知道这是谁
+      desc: relation + (frequency ? ' · ' + frequency + '给你发消息' : ''),
+      callMe,
+      callYou: String((input && input.callYou) || '').trim(),
+      relation,
+      story: String((input && input.story) || '').trim(),
+      persona: String((input && input.persona) || '').trim(),
+      frequency,
+      bindFamily,
+      familyNumber: bindFamily ? familyNumber : '',
+      familyName: bindFamily ? String((input && input.familyName) || '').trim() : ''
+    }
+  }
+}
+
+export function addRole(input) {
+  const built = buildCustomFields(input)
+  if (!built.ok) return built
+
   const list = readRaw().map(normalize).filter(Boolean)
-  const role = normalize({
-    id: newId(),
-    name: callMe,
-    // 卡片副标题：关系 + 多久发一次，一眼知道这是谁
-    desc: relation + (frequency ? ' · ' + frequency + '给你发消息' : ''),
-    callMe,
-    relation,
-    story: String((input && input.story) || '').trim(),
-    persona: String((input && input.persona) || '').trim(),
-    frequency,
-    bindFamily,
-    familyNumber: bindFamily ? familyNumber : '',
-    familyName: bindFamily ? String((input && input.familyName) || '').trim() : '',
-    createdAt: Date.now()
-  })
+  const role = normalize(Object.assign({ id: newId(), createdAt: Date.now() }, built.fields))
   list.push(role)
   writeRaw(list)
   emitChanged()
@@ -230,6 +322,40 @@ export function removeRole(id) {
   writeRaw(next)
   emitChanged()
   return { ok: true }
+}
+
+/**
+ * 修改一个**自定义**角色（人物设置页用）。
+ *
+ * 与 addRole 的区别：保留原 id 与 createdAt，不新增条目。
+ * 内置角色不走这里 —— 它没有 id 可改（永远是 p_bilin），用的是 saveBuiltinProfile。
+ *
+ * @returns {{ok:boolean, reason?:string, field?:string, role?:object}}
+ */
+export function updateRole(id, input) {
+  const target = String(id || '')
+  if (!target) return { ok: false, reason: '缺少角色 id' }
+
+  const built = buildCustomFields(input)
+  if (!built.ok) return built
+
+  const list = readRaw().map(normalize).filter(Boolean)
+  const index = list.findIndex((r) => r.id === target)
+  if (index < 0) return { ok: false, reason: '没找到这个角色' }
+
+  const prev = list[index]
+  // 直接构造结果（不经 normalize）：normalize 会给缺 id 的数据生成新 id，
+  // 这里必须**保留原 id 与 createdAt**，否则等于"改一次就多一个角色"
+  const role = Object.assign({}, built.fields, {
+    id: prev.id,
+    builtin: false,
+    avatarColor: prev.avatarColor || '#7A6A4F',
+    createdAt: prev.createdAt || Date.now()
+  })
+  list[index] = role
+  writeRaw(list)
+  emitChanged()
+  return { ok: true, role }
 }
 
 /** 清空自定义角色（设置页/排查用） */

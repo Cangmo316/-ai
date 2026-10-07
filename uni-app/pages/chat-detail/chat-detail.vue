@@ -20,9 +20,9 @@
         <bl-chat-bubble
           :text="m.text"
           :type="m.type"
-          :mine="m.role === 'elder'"
+          :mine="isMine(m)"
           :seconds="m.seconds"
-          :avatar-color="m.role === 'elder' ? '#6E6A5E' : personaColor"
+          :avatar-color="isMine(m) ? '#6E6A5E' : personaColor"
           :sticker="m.sticker"
           :card="m.card"
           :streaming="m.status === 'streaming'"
@@ -83,7 +83,7 @@ import { settings } from '@/common/store.js'
 import { chat, initChat, onLiveTurn, retry, send, stop } from '@/stores/chat.js'
 import { pending, remarkOf, refreshConversations } from '@/stores/contacts.js'
 import { fetchMessages, markConversationRead, sendMessage } from '@/api/index.js'
-import { readToken } from '@/stores/account.js'
+import { readAccount, readToken } from '@/stores/account.js'
 
 const EMOJIS = [
   { ch: '❤️', label: '爱心' },
@@ -127,6 +127,39 @@ const messages = computed(() => (isFamily.value ? familyMessages.value : chat.me
 /** 家人会话的消息（服务端返回） */
 const familyMessages = ref([])
 
+/**
+ * 我自己的账号 id。
+ *
+ * 【为什么必须按 senderId 判归属，不能按 role】
+ * 服务端的 `senderRole` 只有 `agent` 与 `elder` 两个值（见 messaging/models.py），
+ * **它不区分"哪一个老人"**。所以在家人会话里，双方的消息 role 都是 `elder`，
+ * 用 `m.role === 'elder'` 判"是我发的"会把**对方的消息也画到我这一侧**——
+ * 现象就是"我发的消息看起来像是对方发的"。
+ * 数据库里每条消息都带 `sender_id`，按它判才准。
+ */
+const myAccountId = ref('')
+
+/**
+ * 一条消息是不是我发的。
+ *
+ * 判定顺序：
+ *   1. 本地待发/失败的临时条目（`local_` / 带 optimistic 标记）→ 我发的
+ *   2. 有 senderId 且等于我的账号 id → 我发的
+ *   3. 家人会话里 senderId 明确是别人 → 不是我发的
+ *   4. 智能体会话的 agent 消息 → 不是我发的
+ *   5. 都取不到（比如本地流式内容没有 senderId）→ 退回按 role 判
+ */
+function isMine(m) {
+  if (!m) return false
+  // 本地临时条目（还没被服务端确认）一定是我发的
+  if (m.optimistic) return true
+  if (String(m.id || '').indexOf('local_') === 0) return true
+  const sender = String(m.senderId || '')
+  const mine = String(myAccountId.value || '')
+  if (sender && mine) return sender === mine
+  return m.role === 'elder'
+}
+
 /** 未读数（进入本页时快照，1 秒后归零） */
 const unreadShown = ref(0)
 const readJustNow = ref(false)
@@ -137,7 +170,7 @@ let stopLive = null
 const newestOtherId = computed(() => {
   const list = messages.value
   for (let i = list.length - 1; i >= 0; i -= 1) {
-    if (list[i].role !== 'elder') return list[i].id
+    if (!isMine(list[i])) return list[i].id
   }
   return ''
 })
@@ -165,6 +198,11 @@ onMounted(() => {
   conversationId.value = pending.conversationId || ''
   conversationKind.value = pending.kind === 'family' ? 'family' : 'ai'
   serverTitle.value = pending.title || ''
+
+  // 我自己的账号 id：家人会话判"这条是不是我发的"要用它，
+  // 不能按 senderRole（服务端只区分 agent/elder，不区分是哪个老人）
+  const me = readAccount()
+  myAccountId.value = (me && me.id) || ''
 
   if (isFamily.value) {
     loadFamilyMessages()
@@ -322,19 +360,31 @@ function sendFamilyText(text) {
     role: 'elder',
     type: 'text',
     text,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    // 明确标记"这是我本地的待发条目"：归属判定优先看它，
+    // 免得服务端还没回、senderId 还是空的时候被判到对方那一侧
+    optimistic: true
   }
   familyMessages.value = familyMessages.value.concat([local])
   scrollToBottom()
 
   sendMessage(token, { conversationId: conversationId.value, text, senderRole: 'elder' })
     .then((data) => {
-      // 用服务端返回的那条替换本地临时条目（拿到真 id 与时间）
+      // 用服务端返回的那条替换本地临时条目（拿到真 id / senderId / 时间）
       const saved = (data && data.message) || null
       if (saved) {
         familyMessages.value = familyMessages.value.map((m) =>
           m.id === local.id
-            ? { id: saved.id, role: 'elder', type: 'text', text: saved.text, createdAt: saved.createdAt }
+            ? {
+                id: saved.id,
+                // 关键：把 senderId 一起带进来，归属判定要靠它
+                senderId: saved.senderId || '',
+                senderName: saved.senderName || '',
+                role: 'elder',
+                type: 'text',
+                text: saved.text,
+                createdAt: saved.createdAt
+              }
             : m
         )
       }

@@ -1,10 +1,12 @@
 <template>
   <view class="bl-page" :class="{ 'bl-large': settings.largeFont }">
-    <bl-navbar title="创建新角色" back solid @back="back" />
+    <bl-navbar :title="isEdit ? '人物设置' : '创建新角色'" back solid @back="back" />
 
     <scroll-view class="bl-body" scroll-y>
       <view class="bl-new__intro">
-        <text class="bl-new__intro-text">回答下面几个问题，它就会像那个人一样跟你说话</text>
+        <text class="bl-new__intro-text">{{ isEdit
+          ? '改完保存，它以后就按你说的来'
+          : '回答下面几个问题，它就会像那个人一样跟你说话' }}</text>
       </view>
 
       <!-- 1 你想叫我什么 -->
@@ -38,9 +40,25 @@
         <text v-if="errors.relation" class="bl-f__err">{{ errors.relation }}</text>
       </view>
 
-      <!-- 3 我们之间的故事 -->
+      <!-- 3 你想我怎么称呼你？（决定通话页开场白里的称呼） -->
       <view class="bl-f">
-        <text class="bl-f__label">3. 我们之间的故事</text>
+        <text class="bl-f__label">3. 你想我怎么称呼你？</text>
+        <text class="bl-f__hint">通话时会这么叫你</text>
+        <view class="bl-f__box" :class="{ 'is-error': errors.callYou }">
+          <input
+            v-model="form.callYou"
+            class="bl-f__input"
+            :maxlength="12"
+            placeholder="比如：李大爷、王阿姨、老张"
+            placeholder-class="bl-input-ph"
+          />
+        </view>
+        <text v-if="errors.callYou" class="bl-f__err">{{ errors.callYou }}</text>
+      </view>
+
+      <!-- 4 我们之间的故事 -->
+      <view class="bl-f">
+        <text class="bl-f__label">4. 我们之间的故事</text>
         <text class="bl-f__hint">写点你们之间的事，它会更懂怎么跟你聊</text>
         <view class="bl-f__box bl-f__box--area">
           <textarea
@@ -54,9 +72,9 @@
         </view>
       </view>
 
-      <!-- 4 我是一个什么样的人 -->
+      <!-- 5 我是一个什么样的人 -->
       <view class="bl-f">
-        <text class="bl-f__label">4. 我是一个什么样的人</text>
+        <text class="bl-f__label">5. 我是一个什么样的人</text>
         <view class="bl-f__box bl-f__box--area">
           <textarea
             v-model="form.persona"
@@ -69,9 +87,9 @@
         </view>
       </view>
 
-      <!-- 5 我平时多久给你发一次消息 -->
+      <!-- 6 我平时多久给你发一次消息 -->
       <view class="bl-f">
-        <text class="bl-f__label">5. 我平时多久给你发一次消息</text>
+        <text class="bl-f__label">6. 我平时多久给你发一次消息</text>
         <view class="bl-f__chips">
           <view
             v-for="opt in FREQUENCIES"
@@ -89,11 +107,13 @@
         <text v-if="errors.frequency" class="bl-f__err">{{ errors.frequency }}</text>
       </view>
 
-      <!-- 6 是否绑定家人 -->
-      <view class="bl-f">
+      <!-- 7 是否绑定家人 —— **只在创建新角色时出现**。
+           设置内置「比邻AI」时不显示这一栏：它自己就是默认陪伴者，
+           不需要再绑一个家人（绑家人是自定义角色替老人捎话用的）。 -->
+      <view v-if="!isBuiltinEdit" class="bl-f">
         <view class="bl-f__row">
           <view class="bl-f__row-main">
-            <text class="bl-f__label bl-f__label--inline">6. 是否绑定家人</text>
+            <text class="bl-f__label bl-f__label--inline">7. 是否绑定家人</text>
             <text class="bl-f__hint bl-f__hint--inline">绑上以后，它能替你给家里人捎话</text>
           </view>
           <bl-switch :checked="form.bindFamily" @change="onBindChange" />
@@ -135,7 +155,7 @@
           aria-label="保存角色"
           @click="save"
         >
-          <text class="bl-btn__text">{{ saving ? '正在保存…' : '保存这个角色' }}</text>
+          <text class="bl-btn__text">{{ saving ? '正在保存…' : (isEdit ? '保存设置' : '保存这个角色') }}</text>
         </view>
       </view>
     </scroll-view>
@@ -144,26 +164,74 @@
 
 <script setup>
 /**
- * 创建新角色。
+ * 角色设置页。**三种入口共用这一个页面**（字段与顺序完全一致）：
  *
- * 六个栏目按需求顺序排列（见 stores/roles.js 的 ROLE_FIELDS 定义）：
- *   1 你想叫我什么  2 我们是什么关系  3 我们之间的故事
- *   4 我是一个什么样的人  5 我平时多久给你发一次消息  6 是否绑定家人
+ *   A. 创建新角色：`/pages/role-new/role-new`
+ *      → 七栏，**含「7. 是否绑定家人」**，保存后新增一个自定义角色
+ *   B. 人物设置（内置「比邻AI」）：`/pages/role-new/role-new?id=p_bilin&builtin=1`
+ *      → 同 A 的题目与顺序，但**没有「是否绑定家人」那一栏**
+ *      → 保存的是内置角色的覆盖值，不新增角色
+ *   C. 人物设置（自定义角色）：`/pages/role-new/role-new?id=r_xxx`
+ *      → 与 A 完全相同（含绑定家人），但保存是**修改**原角色而不是新增
  *
- * 第 6 栏是开关，打开后才出现「请输入家人ID」——并且填完能**当场查证**，
- * 免得老人把编号填错一位却以为绑上了。
+ * 栏目顺序（见 stores/roles.js 的 ROLE_FIELDS）：
+ *   1 你想叫我什么  2 我们是什么关系  **3 你想我怎么称呼你？**
+ *   4 我们之间的故事  5 我是一个什么样的人  6 我平时多久给你发一次消息
+ *   7 是否绑定家人（仅 A / C）
+ *
+ * 第 3 栏是 2026-10 新增的：它决定**通话页开场白**里的称呼
+ * （「XXX，你好，你想跟我聊些什么？」），所以排在"故事"之前，后面的题目顺延。
  */
 import { computed, reactive, ref } from 'vue'
 import { settings } from '@/common/store.js'
-import { addRole } from '@/stores/roles.js'
+import {
+  addRole,
+  findRole,
+  readBuiltinProfile,
+  saveBuiltinProfile,
+  updateRole
+} from '@/stores/roles.js'
 import { isLoggedIn, readAccount } from '@/stores/account.js'
 import { lookupAccount } from '@/api/index.js'
 
-/** 第 5 栏的选项（与 store 保持一致，改这里也要改 store 的 ROLE_FIELDS） */
+/**
+ * 读页面参数（`?id=p_bilin` 表示"人物设置"模式）。
+ *
+ * ⚠️ **不能用 `@dcloudio/uni-app` 的 `onLoad`**：这个包不在本项目依赖里
+ * （整个项目没有任何页面用过它，全用 `getCurrentPages()`）。引入它会让构建失败。
+ * 这里从当前页面栈取最后一个页面的 `options`，等价且零依赖。
+ */
+function readPageOptions() {
+  try {
+    const pages = getCurrentPages()
+    const current = pages && pages.length ? pages[pages.length - 1] : null
+    return (current && (current.options || current.$page?.options)) || {}
+  } catch (e) {
+    return {}
+  }
+}
+
+/** 第 6 栏的选项（与 store 保持一致，改这里也要改 store 的 ROLE_FIELDS） */
 const FREQUENCIES = ['每天', '隔两三天', '每周', '想起来就发', '很少发']
+
+/**
+ * 是否"设置内置角色"模式。
+ * 用 onLoad 读参数而不是 onMounted：navigateTo 的 query 要在页面 load 阶段拿到，
+ * 早于首次渲染，避免先闪一下"创建新角色"的标题。
+ */
+const mode = ref('create')
+/** 内置角色设置模式（没有"绑定家人"那一栏） */
+const isBuiltinEdit = computed(() => mode.value === 'builtin')
+/** 自定义角色设置模式（有绑定家人，保存是修改而非新增） */
+const isCustomEdit = computed(() => mode.value === 'custom')
+/** 编辑已有角色（内置或自定义）时为 true —— 用来决定标题与按钮文案 */
+const isEdit = computed(() => isBuiltinEdit.value || isCustomEdit.value)
+/** 正在编辑的自定义角色 id */
+const editingId = ref('')
 
 const form = reactive({
   callMe: '',
+  callYou: '',
   relation: '',
   story: '',
   persona: '',
@@ -175,10 +243,58 @@ const form = reactive({
 
 const errors = reactive({
   callMe: '',
+  callYou: '',
   relation: '',
   frequency: '',
   familyNumber: ''
 })
+
+/** 把用户之前存过的内置角色设置填进表单 */
+function prefillBuiltin() {
+  const saved = readBuiltinProfile()
+  const base = findRole('p_bilin') || {}
+  form.callMe = saved.callMe || base.callMe || ''
+  form.callYou = saved.callYou || base.callYou || ''
+  form.relation = saved.relation || base.relation || ''
+  form.story = saved.story || base.story || ''
+  form.persona = saved.persona || base.persona || ''
+  form.frequency = saved.frequency || base.frequency || ''
+}
+
+/** 把已有的自定义角色填进表单（人物设置入口） */
+function prefillCustom(role) {
+  if (!role) return
+  form.callMe = role.callMe || ''
+  form.callYou = role.callYou || ''
+  form.relation = role.relation || ''
+  form.story = role.story || ''
+  form.persona = role.persona || ''
+  form.frequency = role.frequency || ''
+  form.bindFamily = !!role.bindFamily
+  form.familyNumber = role.familyNumber || ''
+  form.familyName = role.familyName || ''
+}
+
+/**
+ * 进页面时判断模式（同步执行，保证首屏标题就是对的，不会先闪一下"创建新角色"）。
+ *   `?id=p_bilin`  → 内置角色设置
+ *   `?id=r_xxx`    → 自定义角色设置
+ *   无 id          → 创建新角色
+ */
+const pageOptions = readPageOptions()
+const pageId = String(pageOptions.id || '')
+if (pageId === 'p_bilin') {
+  mode.value = 'builtin'
+  prefillBuiltin()
+} else if (pageId) {
+  const target = findRole(pageId)
+  if (target) {
+    mode.value = 'custom'
+    editingId.value = target.id
+    prefillCustom(target)
+  }
+  // 找不到就退回"创建新角色"，不报错 —— 角色可能已在别处被删
+}
 
 const saving = ref(false)
 /** 家人编号的查证状态：found=查到了，checked=查过了（用来区分"没查"和"查了没有"） */
@@ -192,6 +308,7 @@ const myNumber = computed(() => {
 
 function clearErrors() {
   errors.callMe = ''
+  errors.callYou = ''
   errors.relation = ''
   errors.frequency = ''
   errors.familyNumber = ''
@@ -247,8 +364,44 @@ function save() {
   if (saving.value) return
   clearErrors()
 
-  const result = addRole({
+  // 模式 B：保存的是内置「比邻AI」的设置（没有绑定家人这一栏）
+  if (isBuiltinEdit.value) {
+    if (!String(form.relation).trim()) {
+      errors.relation = '还没填「我们是什么关系」'
+      uni.showToast({ title: errors.relation, icon: 'none' })
+      return
+    }
+    if (!String(form.frequency).trim()) {
+      errors.frequency = '还没选多久发一次消息'
+      uni.showToast({ title: errors.frequency, icon: 'none' })
+      return
+    }
+    const saved = saveBuiltinProfile({
+      callMe: form.callMe,
+      callYou: form.callYou,
+      relation: form.relation,
+      story: form.story,
+      persona: form.persona,
+      frequency: form.frequency
+    })
+    if (!saved.ok) {
+      uni.showToast({ title: saved.reason || '存不上', icon: 'none' })
+      return
+    }
+    saving.value = true
+    uni.showToast({ title: '设置已保存', icon: 'none' })
+    setTimeout(() => {
+      saving.value = false
+      back()
+    }, 900)
+    return
+  }
+
+  // 模式 C：修改已有的自定义角色（人物设置入口）
+  // 模式 A：新增自定义角色
+  const payload = {
     callMe: form.callMe,
+    callYou: form.callYou,
     relation: form.relation,
     story: form.story,
     persona: form.persona,
@@ -256,7 +409,10 @@ function save() {
     bindFamily: form.bindFamily,
     familyNumber: form.familyNumber,
     familyName: form.familyName
-  })
+  }
+  const result = isCustomEdit.value
+    ? updateRole(editingId.value, payload)
+    : addRole(payload)
 
   if (!result.ok) {
     const field = result.field || 'callMe'
@@ -266,7 +422,7 @@ function save() {
   }
 
   saving.value = true
-  uni.showToast({ title: '角色已创建', icon: 'none' })
+  uni.showToast({ title: isCustomEdit.value ? '设置已保存' : '角色已创建', icon: 'none' })
   setTimeout(() => {
     saving.value = false
     back()

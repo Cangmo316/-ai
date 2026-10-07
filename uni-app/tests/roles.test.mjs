@@ -44,7 +44,10 @@ const {
   countCustom,
   findRole,
   listRoles,
-  removeRole
+  readBuiltinProfile,
+  removeRole,
+  saveBuiltinProfile,
+  updateRole
 } = await import('../stores/roles.js')
 
 let failed = 0
@@ -68,11 +71,17 @@ console.log('\n栏目定义（按需求 1–6）：')
 const labels = ROLE_FIELDS.map((f) => f.label)
 check('第 1 栏：你想叫我什么', labels[0].indexOf('你想叫我什么') !== -1, labels[0])
 check('第 2 栏：我们是什么关系', labels[1].indexOf('我们是什么关系') !== -1, labels[1])
-check('第 3 栏：我们之间的故事', labels[2].indexOf('我们之间的故事') !== -1, labels[2])
-check('第 4 栏：我是一个什么样的人', labels[3].indexOf('我是一个什么样的人') !== -1, labels[3])
-check('第 5 栏：多久发一次消息', labels[4].indexOf('多久给你发一次消息') !== -1, labels[4])
-check('共 5 个文字/选择栏（第 6 栏是开关，不在 ROLE_FIELDS 里）', ROLE_FIELDS.length === 5, String(ROLE_FIELDS.length))
-check('第 5 栏有选项', Array.isArray(ROLE_FIELDS[4].options) && ROLE_FIELDS[4].options.length >= 3)
+check('第 3 栏：你想我怎么称呼你？（通话页开场白里的称呼）',
+  labels[2].indexOf('你想我怎么称呼你') !== -1, labels[2])
+check('第 4 栏：我们之间的故事', labels[3].indexOf('我们之间的故事') !== -1, labels[3])
+check('第 5 栏：我是一个什么样的人', labels[4].indexOf('我是一个什么样的人') !== -1, labels[4])
+check('第 6 栏：多久发一次消息', labels[5].indexOf('多久给你发一次消息') !== -1, labels[5])
+check('共 6 个文字/选择栏（绑定家人是开关，不在 ROLE_FIELDS 里）',
+  ROLE_FIELDS.length === 6, String(ROLE_FIELDS.length))
+check('第 6 栏有选项', Array.isArray(ROLE_FIELDS[5].options) && ROLE_FIELDS[5].options.length >= 3)
+check('第 3 栏的 key 是 callYou（vision 开场白读的就是它）', ROLE_FIELDS[2].key === 'callYou', ROLE_FIELDS[2].key)
+check('栏目编号与顺序一致（1..6 连续）',
+  labels.every((l, i) => l.indexOf(String(i + 1) + '.') === 0), labels.join(' | '))
 
 /* ---------------------------------------------------------- 未登录隔离 */
 console.log('\n未登录时（key 用 guest）：')
@@ -174,6 +183,84 @@ check('新账号用带编号的 key', (() => {
 // 切回未登录应还能看到 guest 的角色（数据没被破坏）
 storage.delete('bl_account_profile')
 check('切回未登录仍能看到 guest 的角色', countCustom() === 1, String(countCustom()))
+
+/* --------------------------------------- callYou 与内置角色设置（2026-10 新增） */
+console.log('\ncallYou 与内置角色设置：')
+
+// callYou 是通话页开场白里的称呼，必须能存下来并读回
+addRole({ callMe: '小比邻', callYou: '李大爷', relation: '陪伴助手', frequency: '每天' })
+const withCallYou = listRoles().filter((r) => r.callYou === '李大爷')
+check('callYou 能存进自定义角色并读回', withCallYou.length === 1, String(withCallYou.length))
+
+// 老数据没有 callYou，normalize 要补成空串而不是 undefined
+const legacyList = listRoles()
+check('每个角色的 callYou 都是字符串（不是 undefined）',
+  legacyList.every((r) => typeof r.callYou === 'string'),
+  JSON.stringify(legacyList.map((r) => r.callYou)))
+
+// 内置角色默认没有 callYou，但改过之后要能读出来
+check('内置角色默认 callYou 为空', (findRole('p_bilin') || {}).callYou === '', String((findRole('p_bilin') || {}).callYou))
+
+const saved = saveBuiltinProfile({
+  callMe: '比邻',
+  callYou: '王阿姨',
+  relation: '陪伴助手',
+  story: '我们认识很久了',
+  persona: '爱聊天',
+  frequency: '每天'
+})
+check('保存内置角色设置返回成功', saved && saved.ok === true, JSON.stringify(saved))
+
+const builtin = findRole('p_bilin')
+check('内置角色的 callYou 读回为「王阿姨」', builtin.callYou === '王阿姨', String(builtin.callYou))
+check('内置角色的 story 读回', builtin.story === '我们认识很久了', String(builtin.story))
+check('内置角色仍然是 builtin（没被写坏）', builtin.builtin === true, String(builtin.builtin))
+check('内置角色仍然不可删（removeRole 返回失败）', removeRole('p_bilin').ok === false, 'ok')
+check('内置角色没被塞进自定义列表', countCustom() === 2, String(countCustom()))
+
+// 内置角色的设置按账号隔离
+storage.set('bl_account_profile', JSON.stringify({ name: '比邻AI', number: '00000000' }))
+check('换账号后内置角色回到默认（callYou 为空）',
+  (findRole('p_bilin') || {}).callYou === '', String((findRole('p_bilin') || {}).callYou))
+storage.delete('bl_account_profile')
+check('切回未登录仍能看到自己设的 callYou',
+  (findRole('p_bilin') || {}).callYou === '王阿姨', String((findRole('p_bilin') || {}).callYou))
+
+/* ------------------------------------------- updateRole（人物设置入口） */
+console.log('\nupdateRole（点角色卡片进人物设置后保存）：')
+
+const editSeed = addRole({ callMe: '三儿', relation: '儿子', frequency: '每天' })
+const rid = editSeed.role.id
+const beforeCount = countCustom()
+
+const upd = updateRole(rid, {
+  callMe: '三儿',
+  callYou: '爸',
+  relation: '大儿子',
+  story: '住得不远',
+  persona: '',
+  frequency: '隔两三天',
+  bindFamily: false
+})
+check('updateRole 返回成功', upd && upd.ok === true, JSON.stringify(upd))
+
+const after = findRole(rid)
+check('id 保持不变（没有变成新角色）', after && after.id === rid, String(after && after.id))
+check('角色数量没增加', countCustom() === beforeCount, countCustom() + ' vs ' + beforeCount)
+check('relation 被更新（对话列表的标签读它）', after.relation === '大儿子', after.relation)
+check('callYou 被更新', after.callYou === '爸', after.callYou)
+check('frequency 被更新', after.frequency === '隔两三天', after.frequency)
+check('desc 跟着 relation/frequency 重建',
+  after.desc.indexOf('大儿子') === 0 && after.desc.indexOf('隔两三天') !== -1, after.desc)
+check('createdAt 保留（没被刷成现在）', after.createdAt === editSeed.role.createdAt,
+  after.createdAt + ' vs ' + editSeed.role.createdAt)
+
+check('updateRole 缺 id 时失败', updateRole('', { callMe: 'x', relation: 'y', frequency: '每天' }).ok === false, 'ok')
+check('updateRole 找不到角色时失败', updateRole('r_nope', { callMe: 'x', relation: 'y', frequency: '每天' }).ok === false, 'ok')
+check('updateRole 缺必填时返回失败与字段名',
+  (() => { const r = updateRole(rid, { callMe: '', relation: 'y', frequency: '每天' }); return r.ok === false && r.field === 'callMe'; })(), 'ok')
+check('updateRole 不会动内置角色',
+  (() => { const r = updateRole('p_bilin', { callMe: 'x', relation: 'y', frequency: '每天' }); return r.ok === false; })(), 'ok')
 
 console.log('')
 if (failed) {

@@ -3,9 +3,8 @@
     <bl-navbar title="智能体角色" back solid @back="back" />
 
     <scroll-view class="bl-body" scroll-y>
-      <view class="bl-roles__head">
-        <text class="bl-roles__sub">选一个角色陪你说话</text>
-      </view>
+      <!-- 按需求删掉了「选一个角色陪你说话」这行副标题：
+           现在点卡片是"进人物设置"，不再需要让人先选一个 -->
 
       <!-- 角色列表：内置的「比邻AI」永远在最前 -->
       <view class="bl-ra-list">
@@ -15,8 +14,8 @@
           class="bl-ra"
           :class="{ 'is-on': currentId === r.id }"
           role="button"
-          :aria-label="r.name + '，' + r.desc"
-          @click="pick(r)"
+          :aria-label="r.builtin ? (r.name + '，点进去设置人物') : (r.name + '，' + r.desc)"
+          @click="onCardTap(r)"
           @longpress="confirmRemove(r)"
         >
           <view class="bl-ra__avatar" :style="{ backgroundColor: r.avatarColor }">
@@ -31,7 +30,12 @@
             <text class="bl-ra__desc">{{ r.desc }}</text>
           </view>
 
-          <view class="bl-ra__check" :class="{ 'is-on': currentId === r.id }">
+          <!-- 内置角色的右侧是"进设置"入口（齿轮），不再显示选中勾：
+               它的点击语义是"设置人物"，不是"选中"（选中由底部主按钮承担） -->
+          <view v-if="r.builtin" class="bl-ra__check" role="button" aria-label="人物设置">
+            <bl-icon name="settings" color="#8A8A8A" :size="40" />
+          </view>
+          <view v-else class="bl-ra__check" :class="{ 'is-on': currentId === r.id }">
             <bl-icon v-if="currentId === r.id" name="check" color="#FFFFFF" :size="34" />
           </view>
         </view>
@@ -94,10 +98,25 @@ function refresh() {
   currentId.value = resolveCurrentId()
 }
 
-function pick(r) {
-  setRole(r.name)
-  currentId.value = r.id
-  uni.showToast({ title: '已选择：' + r.name, icon: 'none' })
+/**
+ * 点**任意**角色卡片 → 进**人物设置**。
+ *
+ * 按需求：点进去的都是人物设置界面（题目与"创建新角色"一致，
+ * 内置角色那次没有"是否绑定家人"栏）。所以这里不再区分内置/自定义。
+ *
+ * 自定义角色会带上 `id`，设置页据此**预填它已填过的内容**；
+ * 内置角色带 `id=p_bilin`，走内置那套覆盖值。
+ *
+ * 选中哪个角色仍由底部「用这个角色开始聊天」承担（见 startChat）。
+ * 原来"点卡片=选中"的 pick() 已随之删除——同一次点击不能既进设置又选中。
+ */
+function openSettings(r) {
+  const id = r && r.id ? String(r.id) : ''
+  uni.navigateTo({ url: '/pages/role-new/role-new?id=' + id })
+}
+
+function onCardTap(r) {
+  openSettings(r)
 }
 
 function toCreate() {
@@ -132,6 +151,15 @@ function confirmRemove(r) {
   })
 }
 
+/**
+ * 底部「用这个角色开始聊天」。
+ *
+ * 注意这与"点卡片进人物设置"是两条不同的路径：
+ *   · 点卡片 → 人物设置（改这个角色怎么说话）
+ *   · 点这条按钮 → 去对话页跟当前选中的角色聊天
+ * 需求说"点击后进入的都是人物设置界面"，指的是**卡片**的点击，
+ * 所以这条主按钮保留（否则就没法从这一页去聊天了）。
+ */
 function startChat() {
   uni.reLaunch({ url: '/pages/chats/chats' })
 }
@@ -154,11 +182,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.bl-roles__head { padding: 32rpx var(--bl-space-lg) 0; }
-.bl-roles__sub {
-  font-size: var(--bl-font-caption);
-  color: var(--bl-text-2);
-}
+/* 「选一个角色陪你说话」那行副标题已按需求删除，对应的 .bl-roles__head / __sub 一并去掉 */
 
 .bl-ra-list {
   display: flex;
