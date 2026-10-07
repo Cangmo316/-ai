@@ -56,11 +56,19 @@ export const ICONS = {
 /**
  * 品牌印记：比邻印章（两笔交叉，取「比」字两笔相并之意 + 天涯若比邻）
  * 32×32 viewBox，与图标集尺寸不同，需用 iconSrcOf(INK_BRAND, color, 32)
+ *
+ * ⚠️ 2026-10 修正：这两条路径原来**交在顶点、不互相穿过**，渲染出来是
+ *    「A / 人」字形，与注释写的「两笔交叉」不符。
+ *    现改为真正交叉成 X（两条从对角起点出发、在中点相交后继续延伸到对角）。
+ *    App 图标（static/app/*）由 `.uni-shot/gen-app-icons.mjs` 从同一组路径生成，
+ *    **改了这里要一起重跑那个脚本**，否则桌面图标与导航栏印记会不一样。
  */
 export const INK_BRAND =
   '<rect x="2.6" y="2.6" width="26.8" height="26.8" rx="6" fill="none" stroke="{c}" stroke-width="2.5"/>' +
-  '<path d="M16.6 9.4c-4.6 3.4-8.4 8-10.6 13.6" fill="none" stroke="{c}" stroke-width="3.1" stroke-linecap="round"/>' +
-  '<path d="M15.2 9.4c4.8 3.2 8.8 7.8 11 13.4" fill="none" stroke="{c}" stroke-width="3.1" stroke-linecap="round"/>'
+  // 左上 → 右下
+  '<path d="M9.6 9.6c3.2 4 6.3 8.1 9.4 12.3" fill="none" stroke="{c}" stroke-width="3.1" stroke-linecap="round"/>' +
+  // 右上 → 左下
+  '<path d="M22.4 9.6c-3.2 4-6.3 8.1-9.4 12.3" fill="none" stroke="{c}" stroke-width="3.1" stroke-linecap="round"/>'
 
 /** 生成 SVG 的 data URI（base64，三端通用） */
 export function iconSrc(name, color = '#1F211D') {

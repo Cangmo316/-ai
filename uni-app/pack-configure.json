@@ -1,40 +1,43 @@
 {
-  "_说明": [
-    "HBuilderX 云打包（cli pack）用的配置文件。字段与 `cli pack --help` 的参数一一对应。",
+  "_readme": [
+    "HBuilderX cloud packaging config (cli pack). Fields map 1:1 to cli pack --help.",
     "",
-    "打包前必须补齐下面三处带 __待填__ 的地方：",
-    "  1. appid —— 在 https://dev.dcloud.net.cn/ 申请（免费），与应用名称一一对应",
-    "  2. HBuilderX 里登录同一个 DCloud 账号（云打包是按账号扣次数的）",
-    "  3. 证书：不想自己建就用云证书（把 certalias/certpassword/storepassword 全删掉即可，",
-    "     DCloud 会生成一个公共测试证书）；要上架应用商店则必须用自有证书"
+    "REMAINING BLOCKER (needs your DCloud account):",
+    "  appid is still PENDING. Apply free at https://dev.dcloud.net.cn/",
+    "  then log in to the same account inside HBuilderX.",
+    "",
+    "Signing: this uses a LOCAL self-signed keystore (androidpacktype=0),",
+    "so it works together with safemode (the key never leaves this machine).",
+    "  keystore : E:/比邻AI-签名/bilin.keystore",
+    "  alias    : bilin",
+    "  password : BilinAI2026   (store password == key password)",
+    "  SHA1     : 16:EB:74:6B:A9:A0:68:FA:97:EA:27:C5:0A:58:1C:4A:3C:3F:24:37",
+    "",
+    "!! BACK THIS KEYSTORE UP. Lose it and the published app can never be updated.",
+    "",
+    "NOTE: do not put ASCII double quotes inside string values, it truncates the JSON."
   ],
 
-  "appid": "__待填__：DCloud 应用 appid（形如 __UNI__XXXXXXX）",
+  "appid": "PENDING_DCLOUD_APPID",
 
   "android": {
     "packagename": "com.bilin.ai",
-    "_packagename 说明": "包名一旦用于上架就不能改（改了等于换一个应用）",
     "minSdkVersion": 21,
     "targetSdkVersion": 34,
     "abiFilters": ["arm64-v8a", "armeabi-v7a"],
 
-    "_证书 说明": "自有证书三件套；用云证书就把这三行删掉",
-    "certalias": "__待填__：证书别名",
-    "certpassword": "__待填__：证书密码",
-    "storepassword": "__待填__：证书库密码",
+    "androidpacktype": 0,
+    "certfile": "E:/比邻AI-签名/bilin.keystore",
+    "certalias": "bilin",
+    "certpassword": "BilinAI2026",
+    "storepassword": "BilinAI2026",
 
     "antiResignPackageName": true
   },
 
   "iscustom": false,
-  "_iscustom 说明": "false = 标准基座（含全部 uni 原生能力），首次打包用这个",
-
   "safemode": true,
-  "_safemode 说明": "安心打包：不上传证书到云端，签名在本地做——更安全，推荐",
-
   "isconfusion": true,
-  "_isconfusion 说明": "代码混淆，减少被反编译",
-
   "sourceMap": false,
   "dsyms": false
 }
