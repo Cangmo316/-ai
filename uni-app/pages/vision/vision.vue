@@ -763,16 +763,58 @@ function hangup() {
 // #ifdef APP-PLUS
 import { mountFaceStage, unmountFaceStage } from '../../common/face-gl/face-three.js'
 import { DEFAULT_GENDER } from '../../common/face-gl/assets.js'
+// App 端页面是 file:// 协议，而 three 的 GLTFLoader 走 fetch —— fetch 不支持 file://。
+// 这个垫片只把 file:// 的请求改成走 XHR，网络请求原样不动（详见该文件注释）。
+import { installFileFetchShim } from '../../common/face-gl/file-fetch-shim.js'
 // #endif
+
+/**
+ * 找到一个真正能 `appendChild` 的宿主元素。
+ *
+ * ⚠️ 真机上踩过的坑：renderjs 里 `this.$el` **不保证是 DOM 元素**——
+ *    模板里的元素带 `v-if` 子节点时会渲染成注释/文本节点，对它 `appendChild`
+ *    会抛 `HierarchyRequestError: Failed to execute 'appendChild' on 'Node'`，
+ *    表现为"教室背景都在、黑板上却没有人物"。
+ *
+ * 顺序：$el（必须是元素）→ 按 id 找页面里的容器 → 自建一层。
+ */
+function resolveHostElement(el, id) {
+  const isElement = (n) => !!(n && n.nodeType === 1 && typeof n.appendChild === 'function')
+  if (isElement(el)) return el
+  if (typeof document !== 'undefined') {
+    const byId = id ? document.getElementById(id) : null
+    if (isElement(byId)) return byId
+    // 最后兜底：自建一个铺满视口的容器，至少让 3D 能显示出来
+    const made = document.createElement('div')
+    made.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:1;'
+    ;(document.body || document.documentElement).appendChild(made)
+    return made
+  }
+  return null
+}
 
 export default {
   data() {
     // 字段名避开 stage：与 <script setup> 暴露的 stage 同名会被 Vue 拦下。
     return { gl: null, waved: false }
   },
-  mounted(ownerInstance) {
+  mounted() {
     // #ifdef APP-PLUS
-    this.bootStage(ownerInstance, ownerInstance.getState() || {})
+    // ⚠️ `mounted` 生命周期**不接收 ownerInstance 参数** ——
+    //    它是通过 `this.$ownerInstance` 拿的。
+    //    第一版写成 `mounted(ownerInstance)` 直接用它，真机上必崩：
+    //      TypeError: Cannot read properties of undefined (reading 'getState')
+    //      at Proxy.mounted (.../app-renderjs.js)
+    //    后果是**3D 人物完全不渲染**（教室背景在，黑板上是空的）。
+    //    注意：`:change:xxx` 派发的方法（onBoot/onGender）**第一个参数确实是**
+    //    ownerInstance，两种入口的取法不同，不要统一。
+    const owner = this.$ownerInstance || null
+    // 先装 file:// 垫片，**再挂载舞台** —— 顺序不能反：
+    // 舞台一挂上就会去 load(.glb)，那时 fetch 必须已经能读 file://
+    installFileFetchShim()
+    if (owner && typeof owner.getState === 'function') {
+      this.bootStage(owner, owner.getState() || {})
+    }
     // #endif
   },
   beforeDestroy() {
@@ -784,8 +826,16 @@ export default {
   methods: {
     // #ifdef APP-PLUS
     bootStage(ownerInstance, state) {
-      const el = this.$el
-      if (!el) return
+      const el = resolveHostElement(this.$el, 'blVisionStage')
+      if (!el) {
+        // 拿不到真元素就**明确报错**，不要静默不动 —— 以前失败时画面只是"没有人物"，
+        // 排查要一路追到编译产物才知道原因
+        try { ownerInstance.callMethod('onStageError') } catch (e) { void e }
+        if (typeof console !== 'undefined') {
+          console.error('[vision] 找不到可用的舞台容器：$el 与 #blVisionStage 都不是元素')
+        }
+        return
+      }
       if (!this.gl) {
         this.gl = mountFaceStage(el, {
           onReady: () => ownerInstance.callMethod('onStageReady'),
@@ -801,6 +851,8 @@ export default {
           this.waved = true
           this.gl.playAnimation('wave', { loop: false })
         }
+        // 与 H5 同口径：模型就绪后起待机动作（否则人物永远静止在绑定姿态）
+        if (typeof this.gl.startIdle === 'function') this.gl.startIdle()
       }).catch(() => ownerInstance.callMethod('onStageError'))
     },
     onBoot(value, oldValue, ownerInstance) {

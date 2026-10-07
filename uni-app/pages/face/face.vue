@@ -433,14 +433,41 @@ import { mountFaceStage, unmountFaceStage } from '../../common/face-gl/face-thre
 import { DEFAULT_GENDER } from '../../common/face-gl/assets.js'
 // #endif
 
+/**
+ * 找到一个真正能 appendChild 的宿主元素（与 vision.vue 同一份实现）。
+ *
+ * 真机坑：renderjs 里 `this.$el` 不保证是 DOM 元素 —— 模板元素带 v-if 子节点时
+ * 会渲染成注释/文本节点，对它 appendChild 会抛 HierarchyRequestError。
+ */
+function resolveHostElement(el, id) {
+  const isElement = (n) => !!(n && n.nodeType === 1 && typeof n.appendChild === 'function')
+  if (isElement(el)) return el
+  if (typeof document !== 'undefined') {
+    const byId = id ? document.getElementById(id) : null
+    if (isElement(byId)) return byId
+    const made = document.createElement('div')
+    made.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:1;'
+    ;(document.body || document.documentElement).appendChild(made)
+    return made
+  }
+  return null
+}
 export default {
   data() {
     // 字段名避开 stage：与 <script setup> 暴露的 stage 同名会被 Vue 拦下。
     return { gl: null }
   },
-  mounted(ownerInstance) {
+  mounted() {
     // #ifdef APP-PLUS
-    this.bootStage(ownerInstance, ownerInstance.getState() || {})
+    // ⚠️ `mounted` 生命周期**不接收 ownerInstance 参数**，要用 `this.$ownerInstance`。
+    //    第一版写成 `mounted(ownerInstance)` 并用它调 getState()，真机上会抛
+    //      TypeError: Cannot read properties of undefined (reading 'getState')
+    //    结果是**捏脸页的 3D 预览完全不渲染**。与 vision.vue 同一处坑，一起修。
+    //    （`:change:xxx` 派发的方法第一个参数才是 ownerInstance，两种入口取法不同。）
+    const owner = this.$ownerInstance || null
+    if (owner && typeof owner.getState === 'function') {
+      this.bootStage(owner, owner.getState() || {})
+    }
     // #endif
   },
   beforeDestroy() {
@@ -453,8 +480,14 @@ export default {
     // #ifdef APP-PLUS
     /** 幂等挂载：mountFaceStage 内部有单例守卫，重复调用只会拿到同一个舞台。 */
     bootStage(ownerInstance, state) {
-      const el = this.$el
-      if (!el) return
+      // `this.$el` 在真机上可能是注释/文本节点（模板元素带 v-if 子节点时），
+      // 对它 appendChild 会抛 HierarchyRequestError —— 与 vision.vue 同一处坑。
+      const el = resolveHostElement(this.$el, 'blFaceStage')
+      if (!el) {
+        try { ownerInstance.callMethod('onStageError') } catch (e) { void e }
+        if (typeof console !== 'undefined') console.error('[face] 找不到可用的舞台容器')
+        return
+      }
       if (!this.gl) {
         this.gl = mountFaceStage(el, {
           onReady: () => ownerInstance.callMethod('onStageReady'),

@@ -177,7 +177,16 @@ export function createLipsyncPlayer(options) {
   const opt = options || {}
   const fps = Math.max(10, Math.min(60, opt.fps || 30))
   const interval = 1000 / fps
-  const now = typeof opt.now === 'function' ? opt.now : () => performance.now()
+  // 默认时间源：**不能直接用 `performance.now()`**。
+  // uni-app 的 App 端（app-vue / renderjs）没有 `performance` 这个全局，
+  // 直接引用会抛 `ReferenceError: performance is not defined`；
+  // 因为调用点在"一轮回复完成"的订阅回调链里，异常会被上层 catch 成
+  // "liveTurn 订阅者抛错"——**口型就静默不工作了**，但对话看着正常，很难发现。
+  const now = typeof opt.now === 'function'
+    ? opt.now
+    : () => (typeof performance !== 'undefined' && performance && typeof performance.now === 'function'
+      ? performance.now()
+      : Date.now())
   const externalClock = typeof opt.clock === 'function' ? opt.clock : null
   const onFrame = typeof opt.onFrame === 'function' ? opt.onFrame : () => {}
   const heightOf = typeof opt.heightOf === 'function' ? opt.heightOf : () => 1
