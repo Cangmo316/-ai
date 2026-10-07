@@ -9,23 +9,79 @@
     "usingComponents": true,
     "nvueStyleCompiler": "uni-app",
     "compilerVersion": 3,
-    "splashscreen": { "alwaysShowBeforeRender": true, "waiting": true, "autoclose": true, "delay": 0 },
-    "modules": { "Push": {} },
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    },
+    "modules": {
+      "Push": {},
+      "Camera": {},
+      "Record": {}
+    },
     "distribute": {
-      "android": { "permissions": [] },
-      "ios": {},
+      "android": {
+        "packagename": "com.bilin.ai",
+        "minSdkVersion": 21,
+        "targetSdkVersion": 34,
+        "abiFilters": ["arm64-v8a", "armeabi-v7a"],
+        "permissions": [
+          "<uses-permission android:name=\"android.permission.INTERNET\"/>",
+          "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.RECORD_AUDIO\"/>",
+          "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\"/>",
+          "<uses-permission android:name=\"android.permission.CAMERA\"/>",
+          "<uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\"/>",
+          "<uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\"/>",
+          "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>",
+          "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>",
+          "<uses-permission android:name=\"android.permission.VIBRATE\"/>"
+        ],
+        "icons": {
+          "hdpi": "static/app/icon-72.png",
+          "xhdpi": "static/app/icon-96.png",
+          "xxhdpi": "static/app/icon-144.png",
+          "xxxhdpi": "static/app/icon-192.png"
+        },
+        "splashscreen": {
+          "hdpi": "static/app/splash-480x800.png",
+          "xhdpi": "static/app/splash-720x1280.png",
+          "xxhdpi": "static/app/splash-1080x1920.png"
+        }
+      },
+      "ios": {
+        "idfa": false,
+        "dSYMs": false
+      },
       "sdkConfigs": {}
+    },
+    "icons": {
+      "android": {
+        "hdpi": "static/app/icon-72.png",
+        "xhdpi": "static/app/icon-96.png",
+        "xxhdpi": "static/app/icon-144.png",
+        "xxxhdpi": "static/app/icon-192.png"
+      }
     }
   },
   "quickapp": {},
   "mp-weixin": {
     "appid": "",
-    "setting": { "urlCheck": false, "es6": true, "minified": true },
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "minified": true
+    },
     "usingComponents": true
   },
   "h5": {
     "title": "比邻AI · 适老化原型",
-    "router": { "mode": "hash", "base": "./" }
+    "router": {
+      "mode": "hash",
+      "base": "./"
+    }
   },
   "vueVersion": "3"
 }
