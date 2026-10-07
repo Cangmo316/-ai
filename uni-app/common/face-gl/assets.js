@@ -21,27 +21,37 @@
  * 拆掉要动十几处且很容易漏（`face-three.js` 的 load / 幂等判断、
  * `store.js` 的持久化、`face.vue` 的选项渲染）。留一个单键的表，
  * 以后要恢复多形象只需往表里加回几行。
+ * ## 资产路径（`role` 决定用哪条，但当前两份指向同一个文件）
  *
- * ## 两条资产路径（`role` 决定用哪条）
+ *   · `delivery`（**通话页 / 摄像头入口用这条**）→ `QDoctor_60k.glb`
+ *   · `edit`（捏脸页用）→ 同一份
  *
- *   · `delivery`（**通话页 / 摄像头入口用这条**）
- *     → `QDoctor_hires.glb`（306MB，用户交付的高清件）
- *   · `edit`（捏脸页用）
- *     → 同一份高清件。下架旧形象后没有单独的编辑期件了。
+ * ## 为什么用 60k 而不是 306MB 高清件（真机实测结论，2026-10-07）
  *
- * ⚠️ 高清件**不满足渲染器契约**，以下三条是已知的（都是"静默失效"，不报错）：
- *   1. **没有 `vis_silence`** → 嘴闭不上。母版里唇缝被真实切开（开口 2.94mm），
- *      静止姿态本身就是微张，而 `lipsync.js` 靠 `vis_silence=1` 表示闭嘴。
- *   2. **没有任何 `expr_*`**（眨眼/微笑/皱眉…）→ 表情通道全部无效。
- *   3. **没有 `jaw` / `eye` 骨**，且动画叫 `Wave`（渲染器找小写 `wave`）→ 招手不响应。
- *   另：4,491,242 顶点 / 28 个 morph 目标，实测**加载 35.7s、渲染 1.2fps**（软件渲染）。
+ * 在**荣耀 AAK-AN00（骁龙 8 Elite / Adreno 830 / Android 16）**上用 Chrome
+ * 走 USB devtools 实测：
  *
- * 已对齐契约的低模版备份在 `static/avatar/QDoctor_60k.glb`（15MB / 54.7fps /
- * 含 vis_silence / 动画已改名 wave / 骨骼已改 camelCase），
+ *   QDoctor_60k.glb（15MB）   加载 0.64s   56.4 fps   p50 16.6ms   JS堆 125MB
+ *   QDoctor_hires.glb（306MB）加载失败 —— RangeError: Array buffer allocation failed
+ *
+ * 高清件**不是"卡"，是根本分配不出内存**：4,500,071 顶点 × 28 个 morph 目标
+ * 要一次性分配几百 MB 的单个 ArrayBuffer，浏览器直接拒绝（与手机总内存无关，
+ * 是单 buffer 上限）。所以它在真机上**完全无法加载**。
+ *
+ * ⚠️ 注意：H5 无头浏览器（软件渲染）能加载它，只有 1.2 fps —— 那个环境内存模型宽松，
+ *    不能代表真机。以后判断"能不能用"必须上真机，别信无头浏览器的结论。
+ *
+ * 高清件另有三条契约缺失（都属"静默失效"，不报错）：
+ *   1. **没有 `vis_silence`** → 嘴闭不上（母版唇缝被真实切开，静止姿态就微张）
+ *   2. **没有任何 `expr_*`**（眨眼/微笑/皱眉…）→ 表情通道全部无效
+ *   3. **没有 `jaw` / `eye` 骨**，且动画叫 `Wave`（渲染器找小写 `wave`）
+ *
+ * 60k 版已对齐全部契约：18 个 morph（含 `vis_silence` + `expr_blink` 三个）、
+ * 动画名 `wave` 小写、骨骼名 camelCase、22 骨含手臂链。
  * 但按用户选择**当前未启用**——要换只改下面这一行。
  */
 export const AVATAR_ASSET = Object.freeze({
-  qdoctor: 'static/avatar/QDoctor_hires.glb',
+  qdoctor: 'static/avatar/QDoctor_60k.glb',
 })
 
 /**
@@ -51,11 +61,11 @@ export const AVATAR_ASSET = Object.freeze({
  * 而磁盘上早已是白大褂医生）。原因是 URL 没变、浏览器用了缓存副本。
  * 以后**每次重新导出资产都要把这个号加一**，否则改了等于没改。
  */
-export const ASSET_VERSION = '7'   // 2026-10-07 换成用户重新导出的 Q 版男医（checksum DF713DED）
+export const ASSET_VERSION = '8'   // 2026-10-07 真机实测后从 306MB 高清件切回 60k 低模版
 
 /** 口型 / 表情资产（运行期，vis_* / expr_*）。与 AVATAR_ASSET 同源：同一个形象只有一份件。 */
 export const AVATAR_DELIVERY_ASSET = Object.freeze({
-  qdoctor: 'static/avatar/QDoctor_hires.glb',
+  qdoctor: 'static/avatar/QDoctor_60k.glb',
 })
 
 /**
