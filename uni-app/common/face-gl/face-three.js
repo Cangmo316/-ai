@@ -225,6 +225,8 @@ export function createFaceStage(opt) {
    * 另注：three r160 的 `texture.channel` 对 ORM 打包图**不生效**
    * （实测 glTF 里 metalnessMap/roughnessMap 的 `channel` 都是 0），
    * 所以压金属度只能改**材质**的 `metalness`，改不动采样通道。
+   *
+   * 注：口腔材质（`Mouth_Cavity*`）**一并在内**，这是有意为之，不要"优化"掉。
    */
   function setMaterial(options) {
     const opt = options || {}

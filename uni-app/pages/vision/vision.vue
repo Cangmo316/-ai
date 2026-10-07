@@ -766,6 +766,11 @@ import { DEFAULT_GENDER } from '../../common/face-gl/assets.js'
 // App 端页面是 file:// 协议，而 three 的 GLTFLoader 走 fetch —— fetch 不支持 file://。
 // 这个垫片只把 file:// 的请求改成走 XHR，网络请求原样不动（详见该文件注释）。
 import { installFileFetchShim } from '../../common/face-gl/file-fetch-shim.js'
+
+// **模块级立即安装**，不放在 mounted 里：renderjs 的模块在页面初始化早期就被求值，
+// 而 three 的 FileLoader 有多个内联实例、各自的调用时机不完全一致，
+// 只在 mounted 里装会漏掉早于它的那次加载。
+installFileFetchShim()
 // #endif
 
 /**

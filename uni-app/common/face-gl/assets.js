@@ -61,7 +61,7 @@ export const AVATAR_ASSET = Object.freeze({
  * 而磁盘上早已是白大褂医生）。原因是 URL 没变、浏览器用了缓存副本。
  * 以后**每次重新导出资产都要把这个号加一**，否则改了等于没改。
  */
-export const ASSET_VERSION = '8'   // 2026-10-07 真机实测后从 306MB 高清件切回 60k 低模版
+export const ASSET_VERSION = '9'   // 2026-10-08 换成 38.78MB 低模（含 vis_silence + 口腔独立材质）
 
 /** 口型 / 表情资产（运行期，vis_* / expr_*）。与 AVATAR_ASSET 同源：同一个形象只有一份件。 */
 export const AVATAR_DELIVERY_ASSET = Object.freeze({

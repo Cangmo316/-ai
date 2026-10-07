@@ -29,6 +29,15 @@
 
 const FILE_PREFIX = 'file://'
 
+/** 排障用：垫片调用痕迹（真机上看 console 就能判断装没装、拦没拦到） */
+function trace(msg) {
+  try {
+    if (typeof window === 'undefined') return
+    window.__blShimTrace = window.__blShimTrace || []
+    if (window.__blShimTrace.length < 40) window.__blShimTrace.push(msg)
+  } catch (e) { /* 观测失败不能影响主流程 */ }
+}
+
 /** 把 fetch 的入参（string / URL / Request）统一取出 url 字符串 */
 function urlOf(input) {
   if (typeof input === 'string') return input
@@ -104,14 +113,18 @@ function xhrAsResponse(url) {
  */
 export function installFileFetchShim(scope) {
   const g = scope || (typeof window !== 'undefined' ? window : null)
+  trace('install: g=' + (g ? 'ok' : 'null') + ' fetch=' + (g && typeof g.fetch) + ' already=' + !!(g && g.__blFileFetchShim))
   if (!g || typeof g.fetch !== 'function') return false
   if (g.__blFileFetchShim) return true
 
   const nativeFetch = g.fetch.bind(g)
   g.fetch = function (input, init) {
     const url = urlOf(input)
-    // 只接管 file://，其余一律走原生
-    if (url.indexOf(FILE_PREFIX) === 0) return xhrAsResponse(url)
+    if (url.indexOf(FILE_PREFIX) === 0) {
+      trace('hit file:// …' + url.slice(-30))
+      return xhrAsResponse(url)
+    }
+    trace('pass-through ' + url.slice(0, 40))
     return nativeFetch(input, init)
   }
   g.__blFileFetchShim = true
