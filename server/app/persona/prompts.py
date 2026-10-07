@@ -16,7 +16,7 @@ system prompt 里同时落了四类硬约束，缺一条都会出事：
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .stickers import STICKER_TOKENS
 
@@ -113,6 +113,38 @@ class PersonaRegistry:
 
     def all(self) -> list[Persona]:
         return list(self._personas.values())
+
+    def for_relation(self, relation: str, peer_name: str = "") -> Persona:
+        """
+        按"关系"挑一个最贴近的内置人设，并把称呼换成真实名字。
+
+        用途：**家人会话里替对方代回**（对方不在线时）。
+        端侧的角色设置（关系/称呼/故事）只存在对方手机上，服务端拿不到，
+        所以只能用内置人设按关系近似。
+
+        匹配规则故意宽松（"儿子 小明" 也含"儿子"）：宁可匹配到相近的，
+        也不要退化成中性陪伴者——后者回出来的话不像家里人。
+        匹配不到就用中性陪伴者（比硬塞一个"儿子"给他更稳）。
+        """
+        want = str(relation or "").strip()
+        peer = str(peer_name or "").strip()
+        if want:
+            for persona in self._personas.values():
+                if want and want in (persona.relation or ""):
+                    return self._renamed(persona, peer)
+        # 兜底：中性陪伴者（p_bilin）
+        fallback = self._personas.get("p_bilin") or self._personas[self._default_id]
+        return self._renamed(fallback, peer)
+
+    @staticmethod
+    def _renamed(persona: Persona, peer_name: str):
+        """把名字换成真实的对端账号名（代回时"署名"要对得上）。"""
+        if not peer_name:
+            return persona
+        try:
+            return replace(persona, name=peer_name)
+        except Exception:  # noqa: BLE001 —— 换不了就用原人设，不影响代回
+            return persona
 
 
 def build_system_prompt(

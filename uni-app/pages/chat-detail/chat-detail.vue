@@ -21,6 +21,9 @@
           :text="m.text"
           :type="m.type"
           :mine="isMine(m)"
+          :recalled="!!m.recalledAt"
+          :quote-text="quoteTextOf(m)"
+          :ai-sent="isAiSent(m)"
           :seconds="m.seconds"
           :avatar-color="isMine(m) ? '#6E6A5E' : personaColor"
           :sticker="m.sticker"
@@ -29,6 +32,7 @@
           :status="m.status"
           @play="playVoice(m)"
           @retry="onRetry"
+          @longpress="onMessageLongPress(m)"
         />
         <!-- 接收状态：对方最新的消息下面显示「未读」，进入本页 1 秒后变已读 -->
         <view v-if="m.id === newestOtherId && unreadShown > 0" class="bl-receipt">
@@ -51,14 +55,35 @@
       </view>
     </view>
 
+    <!-- 引用预览：选了"引用"之后，在输入框上方显示被引的那条（可取消） -->
+    <view v-if="quote" class="bl-quote-bar">
+      <view class="bl-quote-bar__main">
+        <text class="bl-quote-bar__label">引用 {{ quote.who }}</text>
+        <text class="bl-quote-bar__text">{{ quote.text }}</text>
+      </view>
+      <view class="bl-quote-bar__close" role="button" aria-label="取消引用" @click="quote = null">
+        <bl-icon name="back" color="#8A8A8A" :size="36" />
+      </view>
+    </view>
+
     <view class="bl-composer">
-      <view class="bl-composer__btn" @click="toast('长按就能说话（语音在 P3 接入）')">
-        <bl-icon name="mic" color="#1F211D" :size="48" />
+      <!-- 语音输入：接入真 ASR（按住说话 → 上传 → 转文字进输入框） -->
+      <view
+        class="bl-composer__btn"
+        :class="{ 'is-recording': recording }"
+        role="button"
+        :aria-label="recording ? '松开结束录音' : '按住说话'"
+        @touchstart.prevent="startVoice"
+        @touchend.prevent="stopVoice"
+        @touchcancel.prevent="cancelVoice"
+        @longpress="toast('按住说话，松开就把您说的变成字')"
+      >
+        <bl-icon name="mic" :color="recording ? '#FFFFFF' : '#1F211D'" :size="48" />
       </view>
       <input
         v-model="draft"
         class="bl-composer__input"
-        placeholder="说点什么…"
+        :placeholder="recording ? '正在听您说…' : '说点什么…'"
         placeholder-class="bl-composer__ph"
         confirm-type="send"
         @confirm="onSend"
@@ -82,8 +107,11 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { settings } from '@/common/store.js'
 import { chat, initChat, onLiveTurn, retry, send, stop } from '@/stores/chat.js'
 import { pending, remarkOf, refreshConversations } from '@/stores/contacts.js'
-import { fetchMessages, markConversationRead, sendMessage } from '@/api/index.js'
+import { deleteMessage, fetchFamilyOverview, fetchMessages, markConversationRead, recallMessage, requestAutoReply, sendMessage } from '@/api/index.js'
 import { readAccount, readToken } from '@/stores/account.js'
+// 语音输入：按住说话 → 识别成文字（两端录音 API 差异关在 common/voice-input.js 里）
+import { VoiceRecorder, transcribeAudio, voiceSupported } from '@/common/voice-input.js'
+import { getBaseURL } from '@/api/config.js'
 
 const EMOJIS = [
   { ch: '❤️', label: '爱心' },
@@ -139,6 +167,14 @@ const familyMessages = ref([])
  */
 const myAccountId = ref('')
 
+/** 当前引用（长按"引用"后设置；发送时带上 quoteId）。null 表示没引用。 */
+const quote = ref(null)
+
+/** 正在录音 */
+const recording = ref(false)
+/** 当前录音器实例（一次录音一个） */
+let recorder = null
+
 /**
  * 一条消息是不是我发的。
  *
@@ -158,6 +194,18 @@ function isMine(m) {
   const mine = String(myAccountId.value || '')
   if (sender && mine) return sender === mine
   return m.role === 'elder'
+}
+
+/**
+ * 这条是不是「对方的智能体」代他发的。
+ *
+ * 判定：senderId 带 `agent:` 前缀，且不是我自己这边产生的。
+ * 端侧据此显示「AI 发送」角标 —— **代人发言必须看得出来**。
+ */
+function isAiSent(m) {
+  if (!m || isMine(m)) return false
+  const sender = String(m.senderId || '')
+  return sender.indexOf('agent:') === 0
 }
 
 /** 未读数（进入本页时快照，1 秒后归零） */
@@ -324,17 +372,25 @@ function onSend() {
     toast('等我说完再发哦')
     return
   }
+  if (recording.value) {
+    toast('正在录音，先松开手')
+    return
+  }
   const text = draft.value
   if (!text || !text.trim()) {
     toast('说点什么吧')
     return
   }
 
+  // 引用：带着 quoteId 发出去，发完清掉引用态
+  const quotedId = quote.value ? quote.value.id : ''
+
   // 与家人的会话：消息走服务端，双方共享同一份记录
   if (isFamily.value) {
     draft.value = ''
     emojiOpen.value = false
-    sendFamilyText(text.trim())
+    quote.value = null
+    sendFamilyText(text.trim(), quotedId)
     return
   }
 
@@ -343,13 +399,256 @@ function onSend() {
   if (send(text)) {
     draft.value = ''
     emojiOpen.value = false
-    persistAiMessage(text.trim(), 'elder')
+    quote.value = null
+    persistAiMessage(text.trim(), 'elder', quotedId)
     scrollToBottom()
   }
 }
 
+/* --------------------------------------- 对方不在线时，他的智能体代回一句 */
+
+/** 正在等代回（避免连点造成多条代回） */
+let autoReplyBusy = false
+
+/**
+ * 把对方今天的日程拼成一句话，给代回的 prompt 用。
+ *
+ * 需求：「回复的内容为对方现在正在干嘛（参考日程安排）比如有特殊安排时」。
+ *
+ * 取不到（没绑定 / 接口失败 / 今天没安排）都返回空串 —— 代回照常进行，
+ * 只是不提"在干嘛"，而不是整条代回失败。
+ */
+function buildPeerSchedule() {
+  const token = readToken()
+  if (!token || !pending.peerNumber) return Promise.resolve('')
+  return fetchFamilyOverview(token, pending.peerNumber)
+    .then((data) => {
+      const today = (data && data.today) || {}
+      const items = Array.isArray(today.items) ? today.items : []
+      if (!items.length) return ''
+      // 只挑"还没做"的：已完成的事说"正在做"就不对了
+      const pendingItems = items.filter((it) => !it.done)
+      const list = (pendingItems.length ? pendingItems : items).slice(0, 3)
+      const parts = list.map((it) => {
+        const time = it.time ? it.time + ' ' : ''
+        return time + (it.title || it.type || '有事')
+      })
+      return '他今天的安排：' + parts.join('；') + '。'
+    })
+    .catch(() => '')
+}
+
+/**
+ * 我发完消息后，请求服务端让**对方的智能体**代他回一句。
+ *
+ * 为什么放在端侧触发而不是服务端自动：
+ * "对方在不在线"这个判断只有端侧知道（他在用 App 就不会需要代回）。
+ * 服务端一旦自动代回，真人自己回的时候就会变成两个人各说一句。
+ *
+ * 代回失败**不打扰老人**：这只是"对方没及时回"的兜底，不是主流程。
+ */
+function maybePeerAutoReply() {
+  if (!isFamily.value || autoReplyBusy) return
+  if (!pending.peerNumber) return
+  autoReplyBusy = true
+  buildPeerSchedule()
+    .then((schedule) => {
+      const token = readToken()
+      if (!token) return null
+      return requestAutoReply(token, {
+        conversationId: conversationId.value,
+        schedule,
+        peerName: serverTitle.value || ''
+      })
+    })
+    .then((data) => {
+      if (!data || !data.ok) return
+      // 直接把代回那条追加进来，不等下一次拉历史（老人很快就能看到回应）
+      const msg = data.message
+      if (!msg || !msg.id) return
+      const exists = familyMessages.value.some((m) => m.id === msg.id)
+      if (!exists) {
+        familyMessages.value = familyMessages.value.concat([msg])
+        scrollToBottom()
+      }
+      refreshConversations()
+    })
+    .catch(() => {
+      // 代回是兜底能力，失败就静默（老人不该为这个看到报错）
+    })
+    .then(() => {
+      autoReplyBusy = false
+    })
+}
+
+/* ------------------------------------------------- 长按菜单：撤回 / 引用 / 删除 */
+
+/**
+ * 取一条消息要显示的引用文字。
+ * 被引的那条可能已被撤回（text 为空）或已被删掉（本地找不到），两种都给明确占位。
+ */
+function quoteTextOf(m) {
+  if (!m || !m.quoteId) return ''
+  const all = messages.value
+  const target = all.find((x) => x.id === m.quoteId)
+  if (!target) return '引用的消息已不在'
+  if (target.recalledAt) return '引用的消息已撤回'
+  return String(target.text || '').slice(0, 60)
+}
+
+/** 引用弹层里显示"谁说的" */
+function whoOf(m) {
+  if (isMine(m)) return '我'
+  return serverTitle.value || pageTitle.value || '对方'
+}
+
+/** 撤回时间窗（秒），与服务端 RECALL_WINDOW_SECONDS 对齐 */
+const RECALL_WINDOW_SECONDS = 120
+
+/** 这条消息现在还能不能撤回（自己发的、未撤回、且在窗口内） */
+function canRecall(m) {
+  if (!m || m.recalledAt) return false
+  if (!isMine(m)) return false
+  // 本地还没落库的条目本来就没发出去，谈不上撤回
+  if (String(m.id || '').indexOf('local_') === 0) return false
+  const stamp = Date.parse(m.createdAt || '')
+  if (isNaN(stamp)) return true
+  return (Date.now() - stamp) / 1000 <= RECALL_WINDOW_SECONDS
+}
+
+/** 能不能删（只允许删自己发的；别人的消息在任何 IM 里都不能替对方删） */
+function canDelete(m) {
+  return !!m && isMine(m)
+}
+
+/**
+ * 长按一条消息 → 弹选项。
+ *
+ * 与微信/QQ 一致：**自己发的**才有「撤回」「删除」，「引用」双方消息都有。
+ * 用 `uni.showActionSheet` 而不是自绘弹层：原生弹层在 App 与 H5 上行为一致、
+ * 层级不会被 WebView 里的 3D canvas 盖住，也不必处理滚动锁定。
+ */
+function onMessageLongPress(m) {
+  if (!m || m.type === 'time' || m.type === 'system') return
+  if (chat.streaming) { toast('等我说完再操作') ; return }
+
+  const actions = []
+  if (canRecall(m)) actions.push({ key: 'recall', label: '撤回' })
+  actions.push({ key: 'quote', label: '引用' })
+  if (canDelete(m)) actions.push({ key: 'delete', label: '删除' })
+
+  // 只有一项（比如对方的消息）时也照常弹，保持行为一致
+  uni.showActionSheet({
+    itemList: actions.map((a) => a.label),
+    success: (res) => {
+      const picked = actions[res.tapIndex]
+      if (!picked) return
+      if (picked.key === 'recall') doRecall(m)
+      else if (picked.key === 'quote') doQuote(m)
+      else if (picked.key === 'delete') doDelete(m)
+    },
+    fail: () => {}
+  })
+}
+
+/** 引用：记下来，发送时带上 quoteId */
+function doQuote(m) {
+  const text = m.recalledAt ? '（已撤回）' : String(m.text || '')
+  quote.value = { id: m.id, text: text.slice(0, 60), who: whoOf(m) }
+  // 引用文本不该把输入框占满
+  if (m.type === 'voice') quote.value.text = '[语音]'
+  else if (m.type === 'sticker') quote.value.text = '[表情]'
+  else if (m.type === 'card') quote.value.text = '[卡片]'
+  toast('已引用，说点什么吧')
+}
+
+/** 撤回：先本地乐观更新，再落服务端；失败则回滚 */
+function doRecall(m) {
+  const token = readToken()
+  if (!token) { toast('请先登录'); return }
+  const backup = m.recalledAt
+  m.recalledAt = new Date().toISOString()
+  recallMessage(token, conversationId.value, m.id)
+    .then(() => {
+      loadFamilyMessages()
+      toast('已撤回')
+    })
+    .catch((error) => {
+      m.recalledAt = backup || ''
+      toast((error && error.message) || '撤不回来了')
+    })
+}
+
+/** 删除：二次确认，删完刷新列表 */
+function doDelete(m) {
+  const token = readToken()
+  if (!token) { toast('请先登录'); return }
+  uni.showModal({
+    title: '删除这条消息？',
+    content: '删除后双方都看不到了',
+    confirmText: '删除',
+    cancelText: '再想想',
+    success: (res) => {
+      if (!res.confirm) return
+      deleteMessage(token, conversationId.value, m.id)
+        .then(() => {
+          familyMessages.value = familyMessages.value.filter((x) => x.id !== m.id)
+          refreshConversations()
+          toast('已删除')
+        })
+        .catch((error) => toast((error && error.message) || '删不掉'))
+    }
+  })
+}
+
+/* --------------------------------------------------------------- 语音输入 */
+
+/**
+ * 按住麦克风 → 录音 → 松开 → 上传识别 → 文字落进输入框。
+ *
+ * 为什么不做成"识别完直接发出去"：识别难免有错（尤其方言），
+ * 让老人**先看到文字、确认后再发**比自动发出更稳妥。
+ */
+function startVoice() {
+  if (recording.value) return
+  const support = voiceSupported()
+  if (!support.ok) { toast(support.reason); return }
+  if (chat.streaming) { toast('等我说完再说') ; return }
+
+  recorder = new VoiceRecorder({ onError: (why) => toast(why) })
+  recording.value = true
+  recorder.start().then((res) => {
+    if (!res.ok) { recording.value = false; recorder = null }
+  }).catch(() => { recording.value = false; recorder = null })
+}
+
+function stopVoice() {
+  if (!recording.value || !recorder) return
+  recording.value = false
+  const token = readToken()
+  recorder.stop().then((res) => {
+    recorder = null
+    if (!res.ok) { if (res.reason) toast(res.reason); return }
+    toast('正在识别…')
+    return transcribeAudio(res.audio, { baseUrl: getBaseURL(), token })
+      .then((out) => {
+        if (!out.ok) { toast(out.reason); return }
+        // 落到输入框末尾，不覆盖已经打了一半的字
+        draft.value = (draft.value ? draft.value + ' ' : '') + out.text
+      })
+  }).catch((error) => {
+    recorder = null
+    toast((error && error.message) || '录音失败')
+  })
+}
+
+function cancelVoice() {
+  if (recorder) { recorder.cancel(); recorder = null }
+  recording.value = false
+}
+
 /** 家人会话发消息：先本地显示（老人立刻看到自己发的），再落服务端 */
-function sendFamilyText(text) {
+function sendFamilyText(text, quoteId) {
   const token = readToken()
   if (!token) {
     toast('请先登录')
@@ -361,6 +660,9 @@ function sendFamilyText(text) {
     type: 'text',
     text,
     createdAt: new Date().toISOString(),
+    // 本地也带上 quoteId，这样"引用"的效果是**立刻**可见的，
+    // 不用等服务端回包（弱网下等回包会有一段"引用没生效"的空窗）
+    quoteId: quoteId || '',
     // 明确标记"这是我本地的待发条目"：归属判定优先看它，
     // 免得服务端还没回、senderId 还是空的时候被判到对方那一侧
     optimistic: true
@@ -368,7 +670,7 @@ function sendFamilyText(text) {
   familyMessages.value = familyMessages.value.concat([local])
   scrollToBottom()
 
-  sendMessage(token, { conversationId: conversationId.value, text, senderRole: 'elder' })
+  sendMessage(token, { conversationId: conversationId.value, text, senderRole: 'elder', quoteId: quoteId || '' })
     .then((data) => {
       // 用服务端返回的那条替换本地临时条目（拿到真 id / senderId / 时间）
       const saved = (data && data.message) || null
@@ -383,12 +685,16 @@ function sendFamilyText(text) {
                 role: 'elder',
                 type: 'text',
                 text: saved.text,
-                createdAt: saved.createdAt
+                createdAt: saved.createdAt,
+                quoteId: saved.quoteId || '',
+                recalledAt: saved.recalledAt || ''
               }
             : m
         )
       }
       refreshConversations()
+      // 我发出去了 → 让对方（不在线时）的智能体代他回一句
+      maybePeerAutoReply()
     })
     .catch((error) => {
       // 发失败就撤掉本地那条，别让老人以为发出去了
@@ -403,13 +709,14 @@ function sendFamilyText(text) {
  * 智能体那条用 senderRole=agent，服务端会换成独立的 sender id，
  * 这样未读/已读才分得清"谁发给谁"。
  */
-function persistAiMessage(text, role) {
+function persistAiMessage(text, role, quoteId) {
   const token = readToken()
   if (!token || !conversationId.value) return
   sendMessage(token, {
     conversationId: conversationId.value,
     text,
-    senderRole: role === 'agent' ? 'agent' : 'elder'
+    senderRole: role === 'agent' ? 'agent' : 'elder',
+    quoteId: quoteId || ''
   })
     .then(() => refreshConversations())
     .catch(() => {
@@ -530,6 +837,47 @@ function toVision() {
   justify-content: center;
 }
 .bl-composer__btn:active { background-color: rgba(0, 0, 0, .06); }
+/* 录音中：按钮变实心主色，给一个明确的"正在听"的视觉信号
+   （老人看不见后台状态，只能靠这个判断手有没有按住生效） */
+.bl-composer__btn.is-recording {
+  background-color: var(--bl-primary, #2F5D4E);
+}
+
+/* 引用预览条：贴在输入框上方，可点右侧取消 */
+.bl-quote-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 12rpx var(--bl-space-lg);
+  background-color: rgba(47, 93, 78, .08);
+  border-top: 1rpx solid var(--bl-divider);
+}
+.bl-quote-bar__main { flex: 1; min-width: 0; }
+.bl-quote-bar__label {
+  display: block;
+  font-size: 22rpx;
+  color: var(--bl-primary, #2F5D4E);
+}
+.bl-quote-bar__text {
+  display: block;
+  font-size: 24rpx;
+  color: var(--bl-text-2);
+  /* 单行省略：引用条不该把输入区顶高 */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.bl-quote-bar__close {
+  width: 56rpx;
+  height: 56rpx;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 复用返回图标（一个箭头），转 90 度当"关闭"用，省一个图标资源 */
+  transform: rotate(90deg);
+}
 .bl-composer__input {
   flex: 1;
   min-width: 0;

@@ -221,3 +221,52 @@ function normalize(rawEvent) {
       return null
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   智能体设置：模型选择（我的 → 智能体设置）
+   ══════════════════════════════════════════════════════════════════ */
+
+/**
+ * 读当前账号的模型设置。
+ * 服务端只回**脱敏**的 key（`apiKeyMasked` + `hasApiKey`），完整 key 永不下发。
+ */
+export function getModelSetting(token) {
+  return request({
+    url: resolveURL(ENDPOINTS.chatModel),
+    method: 'GET',
+    header: token ? { Authorization: 'Bearer ' + token } : {}
+  })
+}
+
+/**
+ * 保存模型设置。
+ * @param {object} params {mode, baseUrl, apiKey, model}
+ *   `apiKey` 留空表示**保留原来那把**（端侧拿不到完整 key，不可能回填）
+ */
+export function saveModelSetting(token, params = {}) {
+  return request({
+    url: resolveURL(ENDPOINTS.chatModel),
+    method: 'PUT',
+    header: token ? { Authorization: 'Bearer ' + token } : {},
+    data: {
+      mode: params.mode || 'builtin',
+      baseUrl: params.baseUrl || '',
+      apiKey: params.apiKey || '',
+      model: params.model || ''
+    }
+  })
+}
+
+/** 连通性测试：用填的三项真发一次模型请求（服务端 20 秒超时） */
+export function testModelSetting(token, params = {}) {
+  return request({
+    url: resolveURL(ENDPOINTS.chatModel) + '/test',
+    method: 'POST',
+    header: token ? { Authorization: 'Bearer ' + token } : {},
+    data: {
+      baseUrl: params.baseUrl || '',
+      apiKey: params.apiKey || '',
+      model: params.model || ''
+    }
+  })
+}

@@ -73,6 +73,17 @@
           <text v-if="familyCount" class="bl-row__value">已绑定 {{ familyCount }} 位</text>
           <bl-icon name="chev" color="#B9B3A4" :size="34" />
         </view>
+
+        <!-- 智能体设置：选模型（默认"比邻AI"= 自建模型），或填第三方模型的
+             API URL / API KEY / 模型名称。按需求放在「我的」这一组里。 -->
+        <view class="bl-row" @click="toAgentSettings">
+          <view class="bl-row__icon">
+            <bl-icon name="settings" color="#2F5D4E" :size="44" />
+          </view>
+          <text class="bl-row__label">智能体设置</text>
+          <text v-if="agentModelLabel" class="bl-row__value">{{ agentModelLabel }}</text>
+          <bl-icon name="chev" color="#B9B3A4" :size="34" />
+        </view>
       </view>
 
       <view class="bl-section-title--ink">
@@ -148,9 +159,22 @@ import {
   signOut
 } from '@/stores/account.js'
 import { refreshBindings, readBindings } from '@/stores/contacts.js'
+// 智能体设置：那一行右侧显示当前用的模型（默认「比邻AI」）
+import { loadModelSetting, modelLabel, modelSetting } from '@/stores/agent.js'
 
 /** 已绑定的家人数：显示在「家人绑定」行右侧 */
 const familyCount = ref(0)
+
+/**
+ * 「智能体设置」行右侧的小字 = 当前选的模型。
+ * 用 computed 包一层：模板不能直接引用 store 的模块导出（打包器会把 store
+ * 内联进多个 chunk，模板里引用模块绑定可能变成 undefined——全项目统一规则）。
+ */
+const agentModelLabel = computed(() => {
+  // 读一下 loaded 让它成为依赖（否则首次渲染后不会再更新）
+  void modelSetting.loaded
+  return modelLabel()
+})
 
 function syncFamilyCount() {
   familyCount.value = readBindings().length
@@ -192,6 +216,8 @@ onMounted(() => {
   // 已绑定家人数要显示在「家人绑定」行上
   syncFamilyCount()
   refreshBindings().then(syncFamilyCount)
+  // 智能体设置那一行右侧要显示当前模型（失败就用缓存值，不打扰用户）
+  loadModelSetting()
 })
 
 onUnmounted(() => {
@@ -350,6 +376,9 @@ function toHealth() {
 }
 function toFamily() {
   uni.navigateTo({ url: '/pages/family/family' })
+}
+function toAgentSettings() {
+  uni.navigateTo({ url: '/pages/agent-settings/agent-settings' })
 }
 </script>
 

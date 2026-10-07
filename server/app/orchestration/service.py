@@ -152,8 +152,12 @@ class ChatService:
         case_provider=None,
         after_turn=None,
         voice=None,
+        provider_resolver=None,
     ) -> None:
         self.provider = provider
+        #: 按账号解析 LLM（智能体设置里可以给某个账号换模型）。
+        #: 为空时所有账号共用 `provider`（老行为，测试里也这样）。
+        self.provider_resolver = provider_resolver
         self.store = store
         self.personas = personas
         self.settings = settings
@@ -199,13 +203,26 @@ class ChatService:
         persona_id: str | None = None,
         elder_id: str | None = None,
         client_msg_id: str = "",
+        account_id: str = "",
     ) -> AsyncIterator[tuple[str, dict]]:
-        """产出一轮对话的事件序列：meta → (token | sticker)* → done / error。"""
+        """产出一轮对话的事件序列：meta → (token | sticker)* → done / error。
+
+        `account_id`：用哪个账号的模型配置（智能体设置）。为空则用服务端内置模型。
+        """
         persona = self.personas.get(persona_id)
         # 单老人原型：调用方没给 elder_id 时落到默认档案。
         # 不这么做的话，少传一个参数就会**静默丢掉 L1 档案与 L2/L3 记忆**——
         # 表现是"智能体突然不记得我是谁了"，且极难排查
         elder_id = elder_id or DEFAULT_ELDER_ID
+
+        # 按账号挑模型：没配 resolver（或没配自定义）就是内置那个
+        provider = self.provider
+        if self.provider_resolver is not None:
+            try:
+                provider = self.provider_resolver.resolve(account_id).provider
+            except Exception:  # noqa: BLE001 —— 解析失败退回内置，绝不能让对话打不开
+                logger.exception("解析账号模型配置失败，本轮改用内置模型")
+                provider = self.provider
 
         # ── 幂等闸门放在最前面 ──
         # 端侧网络抖动重试时会复用同一个 clientMsgId：命中缓存就直接回放，
@@ -267,7 +284,7 @@ class ChatService:
         # 只有真正产出内容才算"完成"，否则在 finally 里放开幂等记录（见下面的注释）
         completed = False
         try:
-            async for delta in self.provider.stream(messages):
+            async for delta in provider.stream(messages):
                 plain, sticker_tokens = extractor.feed(delta)
                 if plain:
                     chunk = streamer.feed(plain)
@@ -397,6 +414,7 @@ class ChatService:
         persona_id: str | None = None,
         elder_id: str | None = None,
         client_msg_id: str = "",
+        account_id: str = "",
     ) -> AsyncIterator[str]:
         """把事件序列编码成 SSE 帧，并在等模型时插入心跳注释。
 
@@ -414,7 +432,7 @@ class ChatService:
         async def produce() -> None:
             try:
                 async for item in self.generate(
-                    conversation_id, text, persona_id, elder_id, client_msg_id
+                    conversation_id, text, persona_id, elder_id, client_msg_id, account_id
                 ):
                     await queue.put(item)
             finally:
@@ -520,6 +538,7 @@ class ChatService:
         persona_id: str | None = None,
         elder_id: str | None = None,
         client_msg_id: str = "",
+        account_id: str = "",
     ) -> dict:
         """非流式路径（/v1/chat/send）。契约里 text/sticker/card 各最多一个。"""
         body = ""
@@ -530,7 +549,7 @@ class ChatService:
         error: dict | None = None
 
         async for name, payload in self.generate(
-            conversation_id, text, persona_id, elder_id, client_msg_id
+            conversation_id, text, persona_id, elder_id, client_msg_id, account_id
         ):
             if name == events.EVENT_META:
                 assistant_id = payload["assistantMsgId"]

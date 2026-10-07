@@ -20,8 +20,10 @@
 import { reactive } from 'vue'
 import {
   bindFamily,
+  fetchAllBindings,
   fetchBindings,
   fetchConversations,
+  respondBindFamily,
   unbindFamily
 } from '@/api/index.js'
 import { readAccount, readToken } from '@/stores/account.js'
@@ -29,7 +31,10 @@ import { readAccount, readToken } from '@/stores/account.js'
 /** 会话列表状态（模板请用 readConversations() 取副本） */
 export const contacts = reactive({
   list: [],
+  //: 已生效的家人（服务端只回 accepted）
   bindings: [],
+  //: 全部绑定关系，含 pending 待同意 / rejected 已拒绝（家人绑定页显示邀请用）
+  allBindings: [],
   totalUnread: 0,
   ready: false,
   lastError: ''
@@ -164,6 +169,16 @@ export function readBindings() {
   return contacts.bindings.map((item) => Object.assign({}, item))
 }
 
+/**
+ * **全部**绑定关系（含 `pending` 待同意 / `rejected` 已拒绝）。
+ *
+ * 与 `readBindings()` 的区别：那个只有已生效的家人（服务端只回 accepted），
+ * 而"谁在等我同意""我发出去的邀请对方还没回"必须看全部状态。
+ */
+export function readAllBindings() {
+  return contacts.allBindings.map((item) => Object.assign({}, item))
+}
+
 export function totalUnread() {
   return contacts.totalUnread
 }
@@ -208,6 +223,7 @@ export function refreshBindings() {
   const token = readToken()
   if (!token) {
     contacts.bindings = []
+    contacts.allBindings = []
     return Promise.resolve({ ok: false })
   }
   return fetchBindings(token)
@@ -217,6 +233,38 @@ export function refreshBindings() {
       return { ok: true, bindings: readBindings() }
     })
     .catch(() => ({ ok: false }))
+}
+
+/** 拉**全部**绑定（含待同意/已拒绝）。家人绑定页用它显示邀请。 */
+export function refreshAllBindings() {
+  const token = readToken()
+  if (!token) {
+    contacts.allBindings = []
+    return Promise.resolve({ ok: false })
+  }
+  return fetchAllBindings(token)
+    .then((data) => {
+      contacts.allBindings = (data && data.bindings) || []
+      emitChanged()
+      return { ok: true, bindings: readAllBindings() }
+    })
+    .catch(() => ({ ok: false }))
+}
+
+/**
+ * 同意 / 拒绝一条绑定邀请。
+ * @returns {Promise<{ok:boolean, accepted?:boolean, message?:string}>}
+ */
+export function respondBinding(number, accept) {
+  const token = readToken()
+  if (!token) return Promise.resolve({ ok: false, message: '请先登录' })
+  return respondBindFamily(token, number, accept)
+    .then((data) => {
+      const accepted = !!(data && data.accepted)
+      return Promise.all([refreshBindings(), refreshAllBindings(), refreshConversations()])
+        .then(() => ({ ok: true, accepted }))
+    })
+    .catch((error) => ({ ok: false, message: friendly(error) }))
 }
 
 /* ------------------------------------------------------------ 家人绑定 */

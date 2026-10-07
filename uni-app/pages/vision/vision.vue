@@ -1,5 +1,12 @@
 <template>
-  <view class="bl-vision" :class="{ 'bl-large': settings.largeFont }">
+  <!-- 顶部让位高度用 JS 实测值（--bl-top-gap）。
+       为什么不用 env(safe-area-inset-top)：App 端该变量返回 0，
+       顶栏/返回键会顶到状态栏，挖孔屏上被摄像头压住。见 common/safe-area.js -->
+  <view
+    class="bl-vision"
+    :class="{ 'bl-large': settings.largeFont }"
+    :style="{ '--bl-top-gap': topGapPx + 'px' }"
+  >
     <!-- 教室场景：**纯 CSS 画**，零依赖、不加载外部图片。
          为什么不用 3D 背景：渲染器只做人物（`scene.background` 是空的），
          背景一直是 CSS 层。沿用这个分层就不必动渲染器，换场景也只是换样式。
@@ -101,10 +108,15 @@ import { settings } from '@/common/store.js'
 import { UI_COPY } from '@/common/face/face-index.js'
 import { DEFAULT_GENDER } from '@/common/face-gl/assets.js'
 import { getBaseURL } from '@/api/config.js'
+// 顶部让位：App 端 env(safe-area-inset-top) 返回 0，必须用系统信息实测（见 safe-area.js）
+import { topGap } from '@/common/safe-area.js'
 import { chat, send as sendChat, stop as stopChat, onLiveTurn, DEFAULT_CONVERSATION_ID } from '@/stores/chat.js'
 // 口型驱动：把 SSE `lipsync` 事件的关键帧变成逐帧的 viseme 权重。
 // 「渲染器只管把权重写进形态键」，插值 / 交叉淡化 / 最多混 2 个 的规则都在这个模块里。
 import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'
+// 开场白要用角色设置里的「你想我怎么称呼你？」（callYou）与账号昵称兜底
+import { findRole } from '@/stores/roles.js'
+import { readAccount } from '@/stores/account.js'
 // #ifdef H5
 import { mountFaceStage, unmountFaceStage } from '@/common/face-gl/face-three.js'
 // #endif
@@ -422,7 +434,47 @@ function resolveApiUrl(url) {
   return (base || '').replace(/\/+$/, '') + '/' + text.replace(/^\/+/, '')
 }
 
-const caption = ref('妈，今天药按时吃了没')
+/**
+ * 通话页开场白。
+ *
+ * 文案固定为「XXX，你好，你想跟我聊些什么？」——XXX 是**数字人对老人的称呼**，
+ * 取自角色设置里的「3. 你想我怎么称呼你？」（`roles.js` 的 `callYou`）。
+ *
+ * 兜底顺序（都不填也要有话说，不能显示成空白或"XXX"）：
+ *   callYou → 角色设置里的 callMe → 账号昵称 → 「朋友」
+ *
+ * 为什么要兜底到账号昵称：老人可能从没进过设置页，这时开场白不能是空的，
+ * 叫一声名字是这一页唯一的"打招呼"，空着会显得这通电话没接通。
+ */
+function resolveOpeningName() {
+  let name = ''
+  try {
+    // 当前只有一个内置角色「比邻AI」，直接取它
+    const role = findRole('p_bilin')
+    if (role && role.callYou) name = String(role.callYou).trim()
+    if (!name && role && role.callMe) name = String(role.callMe).trim()
+  } catch (e) { /* 取不到就用下面的兜底 */ }
+  if (!name) {
+    try {
+      const account = readAccount()
+      if (account && account.name) name = String(account.name).trim()
+    } catch (e) { /* 同上 */ }
+  }
+  return name || '朋友'
+}
+
+/** 开场白文案：进页面时显示，用户没开口前一直停在这句上 */
+function buildOpeningLine() {
+  return resolveOpeningName() + '，你好，你想跟我聊些什么？'
+}
+
+const caption = ref(buildOpeningLine())
+
+/**
+ * 顶部让位高度（px）→ 绑到根元素的 CSS 变量 `--bl-top-gap`，
+ * 黑板/挂钟等绝对定位的装饰都用它跟着状态栏下移。
+ */
+const topGapPx = ref(topGap())
 /** 输入框内容（暂时用"打字"代替说话；等 ASR 接上后换成按住说话） */
 const question = ref('')
 
@@ -912,7 +964,7 @@ export default {
 .bl-room__board {
   position: absolute;
   left: 50%;
-  top: calc(300rpx + env(safe-area-inset-top));
+  top: calc(300rpx + var(--bl-top-gap, env(safe-area-inset-top)));
   transform: translateX(-50%);
   width: 660rpx;
   height: 660rpx;
@@ -958,7 +1010,7 @@ export default {
 .bl-room__clock {
   position: absolute;
   right: 46rpx;
-  top: calc(122rpx + env(safe-area-inset-top));
+  top: calc(122rpx + var(--bl-top-gap, env(safe-area-inset-top)));
   width: 104rpx;
   height: 104rpx;
   border-radius: 50%;
@@ -993,7 +1045,7 @@ export default {
 .bl-room__window {
   position: absolute;
   left: -230rpx;
-  top: calc(250rpx + env(safe-area-inset-top));
+  top: calc(250rpx + var(--bl-top-gap, env(safe-area-inset-top)));
   width: 300rpx;
   height: 460rpx;
   background: linear-gradient(180deg, #BFDCEA 0%, #DCEAF0 55%, #EAF1F2 100%);
@@ -1041,7 +1093,7 @@ export default {
   align-items: flex-start;
   justify-content: space-between;
   padding: 32rpx;
-  padding-top: calc(68rpx + env(safe-area-inset-top));
+  padding-top: calc(68rpx + var(--bl-top-gap, env(safe-area-inset-top)));
 }
 .bl-vision__topbar-left { min-width: 0; }
 /* 「AI 数字人通话」与「本形象为 AI 数字人」并排同一行 */

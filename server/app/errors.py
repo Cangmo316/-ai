@@ -107,8 +107,26 @@ MESSAGING: dict[str, ErrorSpec] = {
     "not_a_participant": ErrorSpec(403, "这个会话不是你的", False),
     "bind_self": ErrorSpec(400, "不能绑定自己，换一个编号", False),
     "bind_already": ErrorSpec(409, "已经绑过这个家人了", False),
+    # 绑定要对方同意（2026-10）
+    "bind_pending": ErrorSpec(409, "已经发过邀请了，等对方同意", False),
+    "bind_rejected_before": ErrorSpec(409, "对方之前拒绝了，先跟他说一声", False),
+    "no_pending_invite": ErrorSpec(404, "没有等着你同意的邀请", False),
     "bind_not_found": ErrorSpec(404, "没绑过这个家人", False),
     "peer_not_bound": ErrorSpec(403, "只能查看已绑定的家人", False),
+    # 撤回 / 删除（长按消息菜单）
+    "message_not_found": ErrorSpec(404, "这条消息不在了", False),
+    "not_your_message": ErrorSpec(403, "只能撤回或删除自己发的消息", False),
+    "already_recalled": ErrorSpec(409, "这条消息已经撤回过了", False),
+    "recall_expired": ErrorSpec(400, "超过 2 分钟了，撤不回来了", False),
+    # 对方智能体代回
+    "not_a_family_conversation": ErrorSpec(400, "只有和家人的会话才能代回", False),
+    "nothing_to_reply": ErrorSpec(400, "还没有可以接的话", False),
+    # 智能体设置（模型选择）
+    "model_settings_unavailable": ErrorSpec(503, "模型设置暂时不可用", True),
+    "model_mode_invalid": ErrorSpec(400, "模型选择只能是内置或自定义", False),
+    "model_field_missing": ErrorSpec(400, "自定义模型的三项都要填", False),
+    "model_url_invalid": ErrorSpec(400, "地址要以网络协议开头，看看是不是漏了", False),
+    "model_save_failed": ErrorSpec(500, "模型设置没存上，再试一次", True),
 }
 
 # ── 健康档案（血压 / 血糖 / 体重…）────────────────────────────────────

@@ -63,12 +63,25 @@ class FamilyOverviewTestCase(unittest.TestCase):
         return {"Authorization": "Bearer " + who["token"]}
 
     def bind(self, who: dict, peer: dict) -> None:
+        """发起邀请 + 对方同意。
+
+        绑定现在**要对方同意**才生效（见 messaging/models.Binding 的说明），
+        只发邀请拿到的是 pending —— 没有共享会话，也看不到对方数据。
+        """
         response = self.client.post(
             "/v1/conversations/bindings",
             json={"number": peer["account"]["number"]},
             headers=self.auth(who),
         )
         self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["binding"]["status"], "pending")
+
+        response = self.client.post(
+            "/v1/conversations/bindings/respond",
+            json={"number": who["account"]["number"], "accept": True},
+            headers=self.auth(peer),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
 
     def overview(self, who: dict, number: str):
         return self.client.get(

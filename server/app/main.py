@@ -46,6 +46,8 @@ from .errors import code_for_status
 from .errors import table as error_table
 from .knowledge.loader import KnowledgeBase, KnowledgeError, load_knowledge
 from .llm import build_provider
+from .llm.overrides import ModelOverrideStore, default_store_path
+from .llm.resolver import ProviderResolver
 from .memory import (
     MemoryStore,
     SqlMemoryStore,
@@ -100,6 +102,10 @@ def create_app(
             "或把 AUTH_MODE 改成 auto/off（仅限本机开发）"
         )
     llm = provider or build_provider(config)
+    # 按账号换模型：读 server/data/llm_overrides.json（不在主库里存明文密钥）
+    model_overrides = ModelOverrideStore(default_store_path())
+    loaded_overrides = model_overrides.load()
+    provider_resolver = ProviderResolver(builtin=llm, store=model_overrides, settings=config)
     # P2 落库：有库就落库（默认 sqlite），DATABASE_URL=memory:// 时退回纯内存（测试/CI）。
     # 建库放在最前面：会话 / 记忆 / 计划三个 store 都要在装配期挂到同一条库上
     database = open_database(config.database_url, base_dir=Path(__file__).resolve().parents[1])
@@ -248,6 +254,9 @@ def create_app(
         # 病例病史：让智能体知道「医生说过什么」（诊断 / 就诊日期 / 医院）
         case_provider=lambda elder_id: cases.snapshot_for_prompt(elder_id),
         after_turn=after_turn,
+        # 按账号换模型：智能体设置里能选内置模型或填第三方
+        # （API URL / KEY / 模型名）。不接这个的话界面填了也不生效。
+        provider_resolver=provider_resolver,
     )
 
     @asynccontextmanager
@@ -262,6 +271,9 @@ def create_app(
         )
         if not config.uses_real_model:
             logger.warning("当前使用假模型（未配置 LLM_API_KEY）—— 端侧能连通，但回复是固定话术")
+        # 有多少账号换了自己的模型配置 —— 不说的话，"某人配了但没生效"很难发现
+        if loaded_overrides:
+            logger.info("账号自定义模型配置：%s 条（%s）", loaded_overrides, model_overrides.path)
         # 落库后端也要喊出来：跑了一整天以为在落库、其实 DATABASE_URL=memory:// 最坑
         logger.info("存储后端：%s（记忆 / 会话 / 计划 / 打卡）", database.describe())
         if not database.enabled:
@@ -298,8 +310,13 @@ def create_app(
 
     app.state.settings = config
     app.state.provider = llm
+    app.state.model_overrides = model_overrides
+    app.state.provider_resolver = provider_resolver
     app.state.chat_service = service
     app.state.knowledge = knowledge
+    #: 人设表。代回接口（/v1/conversations/messages/auto-reply）要按关系挑人设，
+    #: 漏挂的话它只能退回中性文案，代出来的话不像家里人。
+    app.state.personas = personas
     app.state.plan_engine = engine
     app.state.elders = elders
     app.state.scheduler = scheduler

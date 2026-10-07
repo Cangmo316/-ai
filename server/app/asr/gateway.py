@@ -25,6 +25,15 @@
     配了 ASR → 语音转文字可用（`/v1/asr/transcribe` 正常返回）
        ↓ 没配 / 引擎失败
     返回明确错误 + `available: false`，端侧提示"暂时听不清"，**老人仍可打字**
+
+## 2026-10 补充：托管路线已经打通
+
+上面那段是把 whisper.cpp 当首选写的。后来发现**这个 key（DASHSCOPE_API_KEY）
+本来就有**（TTS 与识图都在用），于是加了 `QwenAsrProvider`
+（`qwen3-asr-flash`）—— 不用装任何东西就能真跑，实测把
+"今天天气不错，我吃过药了" 一字不差地识别出来。
+`build_asr_provider()` 在没显式指定引擎、又检测到 key 时会自动选它。
+本地 whisper.cpp 那条路仍然保留（`BILIN_ASR_CMD`），弱网或要离线时可切。
 """
 
 from __future__ import annotations
@@ -36,6 +45,10 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 
+# ⚠️ 不要在这里 import .qwen_asr：
+#    `qwen_asr` 需要 `AsrProvider`/`AsrResult`，而它们定义在本模块**下面**，
+#    顶层互相 import 会造成 partially initialized module 的循环导入。
+#    与 `voice/gateway.py` 引用 `qwen_tts` 同一做法：**在函数里延迟导入**。
 logger = logging.getLogger(__name__)
 
 # 支持的音频格式（端侧录音给的格式；转码交给引擎命令自己处理）
@@ -217,18 +230,42 @@ def suffix_for(filename: str, content_type: str = "") -> str:
 
 
 def build_asr_provider() -> AsrProvider:
-    """按环境变量装配 ASR（优先级与 TTS 一致：显式指定 > URL > 命令行 > Null）。"""
+    """按环境变量装配 ASR。
+
+    优先级（显式指定 > 托管 > URL > 命令行 > Null）：
+      BILIN_ASR_PROVIDER=qwen  → DashScope 通义千问（复用 DASHSCOPE_API_KEY）
+      BILIN_ASR_URL            → 本地/内网 ASR 服务
+      BILIN_ASR_CMD            → 本机命令行引擎（whisper.cpp 等）
+      都不配                   → NullAsrProvider（端侧提示"暂时听不清"，仍可打字）
+    """
     kind = (os.environ.get("BILIN_ASR_PROVIDER") or "").strip().lower()
+    # 延迟导入（避免循环导入，见文件顶部说明）
+    from .qwen_asr import QwenAsrProvider
+
+    if kind in ("qwen", "dashscope", "qwen3-asr", "qwen3-asr-flash"):
+        return QwenAsrProvider()
     if kind in ("whisper.cpp", "whispercpp", "command", "cli"):
         command = (os.environ.get("BILIN_ASR_CMD") or "").strip()
         return CommandAsrProvider(command) if command else NullAsrProvider()
+    # 没显式指定时：配了 URL 用 URL，配了 CMD 用 CMD；否则托管（有 key 就用）
     url = (os.environ.get("BILIN_ASR_URL") or "").strip()
     if url:
         return HttpAsrProvider(url)
     command = (os.environ.get("BILIN_ASR_CMD") or "").strip()
     if command:
         return CommandAsrProvider(command)
+    if _dashscope_ready():
+        return QwenAsrProvider()
     return NullAsrProvider()
+
+
+def _dashscope_ready() -> bool:
+    """有 key 且 SDK 在 → 可以直接走托管 ASR。"""
+    if not (os.environ.get("DASHSCOPE_API_KEY") or "").strip():
+        return False
+    from .qwen_asr import sdk_available
+
+    return sdk_available()
 
 
 def describe() -> dict:

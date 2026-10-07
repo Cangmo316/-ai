@@ -179,12 +179,26 @@ class MessagingTestCase(unittest.TestCase):
     # ---------------------------------------------------------------- 共享会话
 
     def bind_and_conv(self) -> str:
+        """发起邀请 + 对方同意，返回共享会话 id。
+
+        绑定现在**要对方同意**（见 messaging/models.Binding）：
+        只发邀请拿到的是 pending —— `conversationId` 是空的、也没有共享会话。
+        """
         response = self.client.post(
             "/v1/conversations/bindings",
             json={"number": self.yi["account"]["number"]},
             headers=self.auth(self.jia),
         )
         self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["binding"]["status"], "pending")
+
+        response = self.client.post(
+            "/v1/conversations/bindings/respond",
+            json={"number": self.jia["account"]["number"], "accept": True},
+            headers=self.auth(self.yi),
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["binding"]["status"], "accepted")
         return response.json()["binding"]["conversationId"]
 
     def test_bind_creates_shared_conversation(self) -> None:
@@ -211,6 +225,7 @@ class MessagingTestCase(unittest.TestCase):
             headers=self.auth(self.jia),
         )
         self.assertEqual(again.status_code, 409)
+        # 已生效之后再发 → bind_already；还在等同意 → bind_pending（两者都是 409）
         self.assertEqual((again.json()["error"])["code"], "bind_already")
 
     def test_cannot_bind_self(self) -> None:

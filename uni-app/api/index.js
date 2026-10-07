@@ -25,7 +25,10 @@ export {
   CHAT_EVENT,
   chatStream,
   chatSendOnce,
-  chatHistory
+  chatHistory,
+  getModelSetting,
+  saveModelSetting,
+  testModelSetting
 } from './chat.js'
 
 export {
@@ -65,11 +68,16 @@ export {
 
 export {
   bindFamily,
+  fetchAllBindings,
   fetchBindings,
   fetchConversations,
   fetchFamilyOverview,
+  deleteMessage,
   fetchMessages,
   markConversationRead,
+  recallMessage,
+  requestAutoReply,
+  respondBindFamily,
   sendMessage,
   unbindFamily
 } from './conversations.js'

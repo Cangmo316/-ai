@@ -17,6 +17,7 @@
     { "path": "pages/register/register",       "style": { "navigationStyle": "custom" } },
     { "path": "pages/roles/roles",             "style": { "navigationStyle": "custom" } },
     { "path": "pages/role-new/role-new",       "style": { "navigationStyle": "custom" } },
+    { "path": "pages/agent-settings/agent-settings", "style": { "navigationStyle": "custom" } },
     { "path": "pages/face/face",               "style": { "navigationStyle": "custom" } },
     { "path": "pages/health/health",           "style": { "navigationStyle": "custom" } },
     { "path": "pages/tokens/tokens",           "style": { "navigationStyle": "custom" } }

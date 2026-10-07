@@ -51,7 +51,23 @@
     </view>
 
     <view class="bl-bubble-wrap">
-      <view class="bl-bubble" :class="mine ? 'bl-bubble--me' : 'bl-bubble--ai'">
+      <!-- 引用的那条：在上面缩一行显示（微信/QQ 的做法）。
+           只有 `quoteText` 有值时才渲染，普通消息完全不受影响。 -->
+      <view v-if="quoteText" class="bl-quote">
+        <text class="bl-quote__text">{{ quoteText }}</text>
+      </view>
+
+      <!-- 撤回后的占位：不再显示正文，也不可长按（没什么可操作的） -->
+      <view v-if="recalled" class="bl-bubble bl-bubble--recalled">
+        <text class="bl-bubble__recalled">{{ mine ? '你撤回了一条消息' : '对方撤回了一条消息' }}</text>
+      </view>
+
+      <view
+        v-else
+        class="bl-bubble"
+        :class="mine ? 'bl-bubble--me' : 'bl-bubble--ai'"
+        @longpress="$emit('longpress', $event)"
+      >
         <view v-if="type === 'voice'" class="bl-bubble__voice" @click="$emit('play')">
           <bl-icon name="speaker" :color="voiceColor" :size="36" />
           <view class="bl-wave">
@@ -71,6 +87,10 @@
         </view>
       </view>
 
+      <!-- AI 代家人发的：必须显式标出来（身份透明是这套系统的红线）。
+           `sender_role === 'agent'` 且不是自己的消息 → 这条是"对方的智能体"说的。 -->
+      <text v-if="aiSent" class="bl-bubble__ai-tag">AI 发送</text>
+
       <!-- 失败可重发；停止只是告知，不做操作 -->
       <text v-if="status === 'failed'" class="bl-msg__tip bl-msg__tip--retry" @click="$emit('retry')">
         没发出去 点这里重发
@@ -89,6 +109,12 @@ const props = defineProps({
   text: { type: String, default: '' },
   /** 右侧「我」的消息 */
   mine: { type: Boolean, default: false },
+  /** 已撤回：不再显示正文，改显示占位文案 */
+  recalled: { type: Boolean, default: false },
+  /** 引用的那条消息的文字（没有引用就为空） */
+  quoteText: { type: String, default: '' },
+  /** 这条是「对方的智能体」代他发的（端侧据此显示 AI 发送角标） */
+  aiSent: { type: Boolean, default: false },
   /** text | voice | sticker | card | system | time */
   type: { type: String, default: 'text' },
   seconds: { type: [Number, String], default: 6 },
@@ -103,7 +129,7 @@ const props = defineProps({
   status: { type: String, default: 'sent' }
 })
 
-defineEmits(['play', 'retry'])
+defineEmits(['play', 'retry', 'longpress'])
 
 /** 语音波纹高度（rpx），对应设计稿里的波形 */
 const WAVE = [12, 24, 36, 20, 32, 16, 28, 24, 36, 12]
@@ -185,6 +211,48 @@ const planData = computed(() => plainData.value.plan || plainData.value)
 .bl-bubble--ai {
   background-color: var(--bl-surface);
   border-top-left-radius: 8rpx;
+}
+
+/* 引用块：贴在被引用消息那一侧，颜色浅一档，右侧一条竖线（微信/QQ 的做法）。
+   只占一行，长了省略——引用只是"提个醒"，不该把气泡撑高。 */
+.bl-quote {
+  max-width: 464rpx;
+  box-sizing: border-box;
+  padding: 12rpx 20rpx;
+  margin-bottom: 8rpx;
+  border-left: 6rpx solid var(--bl-primary, #2F5D4E);
+  border-radius: 6rpx;
+  background-color: rgba(47, 93, 78, .08);
+}
+.bl-quote__text {
+  font-size: 24rpx;
+  color: var(--bl-text-2);
+  /* 单行省略：引用只是提示，不展开 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+/* 撤回占位：灰字、无气泡底色，居中偏自己那一侧 */
+.bl-bubble--recalled {
+  background-color: transparent !important;
+  padding: 8rpx 0;
+}
+.bl-bubble__recalled {
+  font-size: 24rpx;
+  color: var(--bl-icon-muted);
+}
+
+/* 「AI 发送」角标：放在气泡下方。
+   身份透明是硬要求——代人发言必须看得出来，不能伪装成本人真的回了话。 */
+.bl-bubble__ai-tag {
+  margin-top: 8rpx;
+  padding: 2rpx 12rpx;
+  font-size: 20rpx;
+  color: var(--bl-primary, #2F5D4E);
+  background-color: rgba(47, 93, 78, .10);
+  border-radius: 6rpx;
 }
 .bl-bubble__line { display: flex; flex-direction: row; align-items: flex-end; }
 .bl-bubble__text {

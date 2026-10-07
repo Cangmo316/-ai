@@ -42,6 +42,7 @@ export function fetchMessages(token, conversationId, limit) {
  * @param {string} params.conversationId
  * @param {string} params.text
  * @param {string} [params.senderRole] 'elder'（本人，默认）/ 'agent'（智能体代发）
+ * @param {string} [params.quoteId] 引用的那条消息 id（长按"引用"时带上）
  */
 export function sendMessage(token, params = {}) {
   return request({
@@ -51,8 +52,32 @@ export function sendMessage(token, params = {}) {
     data: {
       conversationId: params.conversationId || '',
       text: params.text || '',
-      senderRole: params.senderRole || 'elder'
+      senderRole: params.senderRole || 'elder',
+      quoteId: params.quoteId || ''
     }
+  })
+}
+
+/**
+ * 撤回一条自己发的消息（2 分钟窗口，服务端判定）。
+ * 撤回是**打标记**不是删除：双方都会看到"已撤回"，但不显示正文。
+ */
+export function recallMessage(token, conversationId, messageId) {
+  return request({
+    url: resolveURL(ENDPOINTS.conversationMessages) + '/recall',
+    method: 'POST',
+    header: authHeader(token),
+    data: { conversationId: conversationId || '', messageId: messageId || '' }
+  })
+}
+
+/** 删除一条自己发的消息（物理删除，与"撤回"区分） */
+export function deleteMessage(token, conversationId, messageId) {
+  return request({
+    url: resolveURL(ENDPOINTS.conversationMessages) + '/delete',
+    method: 'POST',
+    header: authHeader(token),
+    data: { conversationId: conversationId || '', messageId: messageId || '' }
   })
 }
 
@@ -107,5 +132,54 @@ export function fetchFamilyOverview(token, number, date) {
   return request({
     url: resolveURL(ENDPOINTS.familyOverview) + '?' + query.join('&'),
     header: authHeader(token)
+  })
+}
+
+/**
+ * 让对方（不在线的家人）的智能体代回一句。
+ *
+ * **身份透明**：服务端以 `sender_role='agent'` 落库，端侧据此显示「AI 发送」角标。
+ *
+ * @param {object} params
+ * @param {string} params.conversationId
+ * @param {string} [params.schedule] 对方的日程摘要（端侧从 /v1/family/overview 取）
+ * @param {string} [params.peerName] 对方名字（代回的署名）
+ */
+export function requestAutoReply(token, params = {}) {
+  return request({
+    url: resolveURL(ENDPOINTS.conversationMessages) + '/auto-reply',
+    method: 'POST',
+    header: authHeader(token),
+    data: {
+      conversationId: params.conversationId || '',
+      schedule: params.schedule || '',
+      peerName: params.peerName || ''
+    }
+  })
+}
+/* ══════════════════════════════════════════════════════════════════
+   绑定要对方同意（2026-10）
+   ══════════════════════════════════════════════════════════════════ */
+
+/** 全部绑定关系，**含 pending 待同意 / rejected 已拒绝**（家人绑定页显示邀请用） */
+export function fetchAllBindings(token) {
+  return request({
+    url: resolveURL(ENDPOINTS.conversationBindings) + '/all',
+    method: 'GET',
+    header: authHeader(token)
+  })
+}
+
+/**
+ * 同意 / 拒绝一条绑定邀请。
+ * @param {string} number 发起邀请那一方的编号
+ * @param {boolean} accept true=同意（此时才开通共享会话），false=拒绝
+ */
+export function respondBindFamily(token, number, accept) {
+  return request({
+    url: resolveURL(ENDPOINTS.conversationBindings) + '/respond',
+    method: 'POST',
+    header: authHeader(token),
+    data: { number: number || '', accept: !!accept }
   })
 }

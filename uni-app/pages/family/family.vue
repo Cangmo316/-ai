@@ -7,6 +7,46 @@
         <text class="bl-fam__tip">填家里人的编号绑定。绑定后点家人卡片，能看他的情况；在「对话」里能跟他发消息</text>
       </view>
 
+      <!-- 别人发给我、等我同意（绑定要对方同意，见 server 的 Binding 说明）。
+           放在最上面：有等人回应的邀请时它是**最该先处理**的事。 -->
+      <view v-if="pendingInvites.length" class="bl-fam__section">
+        <view class="bl-section-title--ink">
+          <view class="bl-brush-rule" />
+          <text class="bl-section-title__text">等你同意（{{ pendingInvites.length }} 位）</text>
+        </view>
+
+        <view class="bl-fam__list">
+          <view v-for="p in pendingInvites" :key="p.peerId" class="bl-fam bl-fam--invite">
+            <view class="bl-fam__avatar">
+              <text class="bl-fam__initial">{{ (p.peerName || '家').slice(0, 1) }}</text>
+            </view>
+            <view class="bl-fam__main">
+              <text class="bl-fam__name">{{ p.peerName || '家人' }}</text>
+              <text class="bl-fam__id">ID:{{ p.peerNumber }}</text>
+              <text class="bl-fam__go">想跟你绑定家人，同意后他能看你的日程</text>
+            </view>
+            <view class="bl-fam__invite-actions">
+              <view
+                class="bl-fam__accept"
+                role="button"
+                :aria-label="'同意与' + (p.peerName || '家人') + '绑定'"
+                @click.stop="respondInvite(p, true)"
+              >
+                <text class="bl-fam__accept-text">同意</text>
+              </view>
+              <view
+                class="bl-fam__reject"
+                role="button"
+                :aria-label="'拒绝与' + (p.peerName || '家人') + '绑定'"
+                @click.stop="respondInvite(p, false)"
+              >
+                <text class="bl-fam__reject-text">拒绝</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+
       <!-- 已绑定：列出家人，点一下就能去跟他说话 -->
       <view v-if="bindings.length" class="bl-fam__section">
         <view class="bl-section-title--ink">
@@ -70,6 +110,29 @@
           <text v-if="error" class="bl-f__err">{{ error }}</text>
           <text v-else-if="found" class="bl-f__ok">已找到：{{ found.name }}（ID:{{ found.number }}）</text>
 
+          <!-- 我已经发出去、还在等对方同意的邀请。
+               不列出来的话，用户点完"绑定"看不到任何变化，会以为没成功而反复点。 -->
+          <view v-if="outgoingInvites.length" class="bl-fam__outgoing">
+            <text class="bl-f__label">已发出邀请（等对方同意）</text>
+            <view
+              v-for="o in outgoingInvites"
+              :key="o.peerId"
+              class="bl-fam__pending-row"
+            >
+              <text class="bl-fam__pending-text">
+                {{ o.peerName || '家人' }} · ID:{{ o.peerNumber }}
+              </text>
+              <view
+                class="bl-fam__cancel"
+                role="button"
+                :aria-label="'撤回发给' + (o.peerName || '家人') + '的邀请'"
+                @click="cancelInvite(o)"
+              >
+                <text class="bl-fam__cancel-text">撤回邀请</text>
+              </view>
+            </view>
+          </view>
+
           <!-- 常用：拿本机已有账号当快捷入口（同设备测试用） -->
           <view v-if="candidates.length" class="bl-fam__quick">
             <text class="bl-f__label">本机上还有这些账号</text>
@@ -115,9 +178,18 @@
  * 绑定之后会产生一条**共享会话**：双方在「对话」里都能看到、
  * 都能发消息、都能看到已读状态（见 server/app/messaging）。
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { settings } from '@/common/store.js'
-import { bind, readBindings, refreshBindings, setPendingFamily, unbind } from '@/stores/contacts.js'
+import {
+  bind,
+  readAllBindings,
+  readBindings,
+  refreshAllBindings,
+  refreshBindings,
+  respondBinding,
+  setPendingFamily,
+  unbind
+} from '@/stores/contacts.js'
 import { lookupAccount } from '@/api/index.js'
 import { readAccount } from '@/stores/account.js'
 
@@ -126,6 +198,24 @@ const error = ref('')
 const found = ref(null)
 const binding = ref(false)
 const bindings = ref(readBindings())
+
+/**
+ * 别人发给我、等我同意的邀请。
+ *
+ * 绑定**要对方同意**（见 server 的 Binding 说明）：只发邀请不生效，
+ * 所以在页面上必须让人看得到"谁在等我同意"，否则邀请就石沉大海。
+ */
+const pendingInvites = computed(() =>
+  allBindings.value.filter((b) => b.status === 'pending' && !b.outgoing)
+)
+
+/** 我发出去、等对方同意的邀请 */
+const outgoingInvites = computed(() =>
+  allBindings.value.filter((b) => b.status === 'pending' && b.outgoing)
+)
+
+/** 全部绑定（含 pending / rejected），拉一次给上面两个 computed 用 */
+const allBindings = ref(readAllBindings())
 
 /** 本机上存过的账号（登录过就会有 bl_account_profile；多个账号靠测试时自己记） */
 const candidates = ref(collectLocalAccounts())
@@ -203,13 +293,74 @@ function doBind() {
       }
       number.value = ''
       found.value = null
-      bindings.value = readBindings()
-      uni.showToast({ title: '绑定成功，去「对话」跟他说话吧', icon: 'none' })
+      refreshAll().then(() => {
+        // ⚠️ 文案要说清"要对方同意"：只说"绑定成功"会让人以为已经生效，
+        //    然后跑去对话里找不到对方（其实还在等同意）。
+        uni.showToast({ title: '邀请已发出，等对方同意', icon: 'none' })
+      })
     })
     .catch(() => {
       binding.value = false
       error.value = '绑定失败，再试一次'
     })
+}
+
+/** 同时刷新"已绑定"和"全部（含待同意）"两份数据 */
+function refreshAll() {
+  return Promise.all([refreshBindings(), refreshAllBindings()]).then(() => {
+    bindings.value = readBindings()
+    allBindings.value = readAllBindings()
+  })
+}
+
+/** 同意 / 拒绝一条邀请 */
+function respondInvite(invite, accept) {
+  if (binding.value) return
+  const who = invite.peerName || '家人'
+  const ask = accept
+    ? { title: '同意绑定？', content: '同意后 ' + who + ' 能看到你的日程和聊天活跃情况' }
+    : { title: '拒绝绑定？', content: who + ' 会收到"你拒绝了"的提示' }
+
+  uni.showModal({
+    title: ask.title,
+    content: ask.content,
+    confirmText: accept ? '同意' : '拒绝',
+    cancelText: '再想想',
+    success: (res) => {
+      if (!res.confirm) return
+      binding.value = true
+      respondBinding(invite.peerNumber, accept)
+        .then((result) => {
+          binding.value = false
+          if (!result.ok) {
+            uni.showToast({ title: result.message || '没处理成功', icon: 'none' })
+            return
+          }
+          refreshAll().then(() => {
+            uni.showToast({ title: accept ? '已同意，可以互相说话了' : '已拒绝', icon: 'none' })
+          })
+        })
+        .catch(() => {
+          binding.value = false
+          uni.showToast({ title: '没处理成功，再试一次', icon: 'none' })
+        })
+    }
+  })
+}
+
+/** 撤回自己发出的邀请（对方还没回应时） */
+function cancelInvite(invite) {
+  const who = invite.peerName || '家人'
+  uni.showModal({
+    title: '撤回邀请？',
+    content: '撤回后 ' + who + ' 那边就看不到这条邀请了',
+    confirmText: '撤回',
+    cancelText: '算了',
+    success: (res) => {
+      if (!res.confirm) return
+      unbind(invite.peerNumber).then(() => refreshAll())
+    }
+  })
 }
 
 /**

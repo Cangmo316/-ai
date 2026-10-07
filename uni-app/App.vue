@@ -162,8 +162,19 @@ page,
   min-height: 0;
 }
 
-/* 安全区：非全面屏手动兜底，全面屏交给 env() */
-.bl-safe-top { height: calc(env(safe-area-inset-top) + 20rpx); }
+/* 安全区。
+ *
+ * ⚠️ 顶部**不能只靠 `env(safe-area-inset-top)`**：uni-app 的 App WebView 默认不是
+ *    edge-to-edge，该变量在真机上返回 0，顶栏会直接顶到状态栏、挖孔屏上被摄像头
+ *    压住（需求：所有界面顶栏往下挪一点、空出来一点）。
+ *    真正的高度由 JS 实测（`common/safe-area.js` 的 `topGap()`）并以
+ *    `--bl-top-gap` 注入；这里的 `env()` 只作为 H5/兜底。
+ *    组件与页面统一写：`calc(<原值> + var(--bl-top-gap, env(safe-area-inset-top)))`
+ */
+.bl-safe-top {
+  /* 用 max() 保证"至少留出 EXTRA_TOP_GAP"：拿不到状态栏高度时也不能顶格 */
+  height: max(20px, calc(var(--bl-top-gap, env(safe-area-inset-top)) + 10rpx));
+}
 .bl-safe-bottom { height: env(safe-area-inset-bottom); }
 
 /* ==========================================================================
