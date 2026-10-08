@@ -17,11 +17,44 @@
  *   - 运行到真机 / 微信开发者工具真机预览：需改成开发机局域网 IP，如 http://192.168.1.5:8000
  *   - 微信开发者工具：需在「详情 → 本地设置」勾选「不校验合法域名」
  *
- * 改法有两种，优先级从高到低：
- *   1) 运行期：setBaseURL('http://192.168.x.x:8000')（写入本地缓存，不用重新编译）
- *   2) 源码：直接改这个常量
+ * ## 打包成 APK 后为什么连不上（踩过的坑，务必理解）
+ *
+ * **真机上的 `127.0.0.1` 是手机自己，不是你的电脑。**
+ * 开发时能通，是因为有一条 USB 专用的转发：
+ *     adb reverse tcp:8000 tcp:8000
+ * 这条转发只在 USB 调试连接时存在。打包装到手机上以后没有它，
+ * `http://127.0.0.1:8000` 就指向手机自身 → 必然连不上。
+ *
+ * 所以**正式的 APK 必须指向一个手机能访问到的地址**（公网域名 + HTTPS）。
+ *
+ * ## 地址来源（优先级从高到低）
+ *
+ *   1) 运行期覆盖：`setBaseURL('https://api.xxx.com')` —— 写本地缓存，不用重编
+ *   2) **构建期注入**：环境变量 `VITE_API_BASE_URL`（见 `.env.production`）
+ *      —— 换服务器只改配置文件，**不动源码**
+ *   3) 源码默认值（开发用）
+ *
+ * 第 2 条是给部署用的：`VITE_API_BASE_URL=https://api.bilin.com` 打一次包，
+ * 以后换服务器改这一个文件重打包即可。
  */
 export const DEFAULT_BASE_URL = 'http://127.0.0.1:8000'
+
+/**
+ * 构建期注入的地址（部署用）。
+ *
+ * `import.meta.env` 是 Vite 的能力：H5 / App 走 Vite 编译，能拿到；
+ * 小程序三端不保证有这个对象，所以外面套了 typeof 判断，
+ * 拿不到就安静地回落到默认值（而不是在启动时抛错）。
+ */
+function buildTimeBaseURL() {
+  try {
+    if (typeof import.meta === 'undefined' || !import.meta.env) return ''
+    const value = import.meta.env.VITE_API_BASE_URL
+    return String(value || '').trim().replace(/\/+$/, '')
+  } catch (e) {
+    return ''
+  }
+}
 
 /** 本地缓存 key：运行期覆盖 baseURL 用 */
 export const STORAGE_KEY_BASE_URL = 'bl_api_base'
@@ -93,7 +126,12 @@ export const TIMEOUT = {
   total: 60000
 }
 
-/** 读取当前 baseURL（去掉结尾斜杠） */
+/**
+ * 读取当前 baseURL（去掉结尾斜杠）。
+ *
+ * 优先级：运行期覆盖 → 构建期注入 → 源码默认值。
+ * `setBaseURL('')` 可以清掉运行期覆盖，回落到构建期注入的地址。
+ */
 export function getBaseURL() {
   let base = ''
   try {
@@ -101,10 +139,17 @@ export function getBaseURL() {
   } catch (e) {
     base = ''
   }
-  return String(base || DEFAULT_BASE_URL).replace(/\/+$/, '')
+  // 空字符串要能往下一级回落（`||` 对 '' 是假值，正好）
+  const resolved = base || buildTimeBaseURL() || DEFAULT_BASE_URL
+  return String(resolved).replace(/\/+$/, '')
 }
 
-/** 运行期切换 baseURL（写本地缓存，下次启动仍生效） */
+/**
+ * 运行期切换 baseURL（写本地缓存，下次启动仍生效）。
+ *
+ * 部署后一般**不需要**用它——地址已经由 `VITE_API_BASE_URL` 在打包时定好。
+ * 它留给"现场排查"：比如服务器换了地址、又不想重新打包时应急。
+ */
 export function setBaseURL(url) {
   const value = String(url || '').replace(/\/+$/, '')
   try {
@@ -113,7 +158,7 @@ export function setBaseURL(url) {
   } catch (e) {
     // 存储失败不影响本次会话，下次启动会回到默认值
   }
-  return value || DEFAULT_BASE_URL
+  return value || buildTimeBaseURL() || DEFAULT_BASE_URL
 }
 
 /** 拼接完整 URL：path 以 / 开头 */

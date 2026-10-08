@@ -1,87 +1,126 @@
 {
-  "name": "比邻AI",
-  "appid": "",
-  "description": "面向老人的亲友陪伴康养 App · 适老化原型",
-  "versionName": "1.0.0",
-  "versionCode": "100",
-  "transformPx": false,
-  "app-plus": {
-    "usingComponents": true,
-    "nvueStyleCompiler": "uni-app",
-    "compilerVersion": 3,
-    "splashscreen": {
-      "alwaysShowBeforeRender": true,
-      "waiting": true,
-      "autoclose": true,
-      "delay": 0
-    },
-    "modules": {
-      "Push": {},
-      "Camera": {},
-      "Record": {}
-    },
-    "distribute": {
-      "android": {
-        "packagename": "com.bilin.ai",
-        "minSdkVersion": 21,
-        "targetSdkVersion": 34,
-        "abiFilters": ["arm64-v8a", "armeabi-v7a"],
-        "permissions": [
-          "<uses-permission android:name=\"android.permission.INTERNET\"/>",
-          "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
-          "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
-          "<uses-permission android:name=\"android.permission.RECORD_AUDIO\"/>",
-          "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\"/>",
-          "<uses-permission android:name=\"android.permission.CAMERA\"/>",
-          "<uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\"/>",
-          "<uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\"/>",
-          "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>",
-          "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>",
-          "<uses-permission android:name=\"android.permission.VIBRATE\"/>"
-        ],
-        "icons": {
-          "hdpi": "static/app/icon-72.png",
-          "xhdpi": "static/app/icon-96.png",
-          "xxhdpi": "static/app/icon-144.png",
-          "xxxhdpi": "static/app/icon-192.png"
+    "name" : "比邻AI",
+    "appid" : "__UNI__193904D",
+    "description" : "面向老人的亲友陪伴康养 App · 适老化原型",
+    "versionName" : "1.0.0",
+    "versionCode" : "100",
+    "transformPx" : false,
+    "app-plus" : {
+        "usingComponents" : true,
+        "nvueStyleCompiler" : "uni-app",
+        "compilerVersion" : 3,
+        "splashscreen" : {
+            "alwaysShowBeforeRender" : true,
+            "waiting" : true,
+            "autoclose" : true,
+            "delay" : 0
         },
-        "splashscreen": {
-          "hdpi": "static/app/splash-480x800.png",
-          "xhdpi": "static/app/splash-720x1280.png",
-          "xxhdpi": "static/app/splash-1080x1920.png"
+        "modules" : {
+            "Push" : {},
+            "Camera" : {},
+            "Record" : {}
+        },
+        "distribute" : {
+            "android" : {
+                "packagename" : "com.bilin.ai",
+                "minSdkVersion" : 21,
+                "targetSdkVersion" : 34,
+                "abiFilters" : [ "arm64-v8a", "armeabi-v7a" ],
+                "usesCleartextTraffic" : true,
+                "permissions" : [
+                    "<uses-permission android:name=\"android.permission.INTERNET\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\"/>",
+                    "<uses-permission android:name=\"android.permission.RECORD_AUDIO\"/>",
+                    "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\"/>",
+                    "<uses-permission android:name=\"android.permission.CAMERA\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_MEDIA_IMAGES\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_MEDIA_VIDEO\"/>",
+                    "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>",
+                    "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>",
+                    "<uses-permission android:name=\"android.permission.VIBRATE\"/>"
+                ],
+                "icons" : {
+                    "hdpi" : "static/app/icon-72.png",
+                    "xhdpi" : "static/app/icon-96.png",
+                    "xxhdpi" : "static/app/icon-144.png",
+                    "xxxhdpi" : "static/app/icon-192.png"
+                },
+                "splashscreen" : {
+                    "hdpi" : "static/app/splash-480x800.png",
+                    "xhdpi" : "static/app/splash-720x1280.png",
+                    "xxhdpi" : "static/app/splash-1080x1920.png"
+                }
+            },
+            "ios" : {
+                "idfa" : false,
+                "dSYMs" : false
+            },
+            "sdkConfigs" : {},
+            "icons" : {
+                "android" : {
+                    "hdpi" : "unpackage/res/icons/72x72.png",
+                    "xhdpi" : "unpackage/res/icons/96x96.png",
+                    "xxhdpi" : "unpackage/res/icons/144x144.png",
+                    "xxxhdpi" : "unpackage/res/icons/192x192.png"
+                },
+                "ios" : {
+                    "appstore" : "unpackage/res/icons/1024x1024.png",
+                    "ipad" : {
+                        "app" : "unpackage/res/icons/76x76.png",
+                        "app@2x" : "unpackage/res/icons/152x152.png",
+                        "notification" : "unpackage/res/icons/20x20.png",
+                        "notification@2x" : "unpackage/res/icons/40x40.png",
+                        "proapp@2x" : "unpackage/res/icons/167x167.png",
+                        "settings" : "unpackage/res/icons/29x29.png",
+                        "settings@2x" : "unpackage/res/icons/58x58.png",
+                        "spotlight" : "unpackage/res/icons/40x40.png",
+                        "spotlight@2x" : "unpackage/res/icons/80x80.png"
+                    },
+                    "iphone" : {
+                        "app@2x" : "unpackage/res/icons/120x120.png",
+                        "app@3x" : "unpackage/res/icons/180x180.png",
+                        "notification@2x" : "unpackage/res/icons/40x40.png",
+                        "notification@3x" : "unpackage/res/icons/60x60.png",
+                        "settings@2x" : "unpackage/res/icons/58x58.png",
+                        "settings@3x" : "unpackage/res/icons/87x87.png",
+                        "spotlight@2x" : "unpackage/res/icons/80x80.png",
+                        "spotlight@3x" : "unpackage/res/icons/120x120.png"
+                    }
+                }
+            },
+            "splashscreen" : {
+                "androidStyle" : "default",
+                "android" : {
+                    "hdpi" : "C:/Users/余云飞/Pictures/Screenshots/比邻AI图标设计 (1).png"
+                }
+            }
+        },
+        "icons" : {
+            "android" : {
+                "hdpi" : "static/app/icon-72.png",
+                "xhdpi" : "static/app/icon-96.png",
+                "xxhdpi" : "static/app/icon-144.png",
+                "xxxhdpi" : "static/app/icon-192.png"
+            }
         }
-      },
-      "ios": {
-        "idfa": false,
-        "dSYMs": false
-      },
-      "sdkConfigs": {}
     },
-    "icons": {
-      "android": {
-        "hdpi": "static/app/icon-72.png",
-        "xhdpi": "static/app/icon-96.png",
-        "xxhdpi": "static/app/icon-144.png",
-        "xxxhdpi": "static/app/icon-192.png"
-      }
-    }
-  },
-  "quickapp": {},
-  "mp-weixin": {
-    "appid": "",
-    "setting": {
-      "urlCheck": false,
-      "es6": true,
-      "minified": true
+    "quickapp" : {},
+    "mp-weixin" : {
+        "appid" : "",
+        "setting" : {
+            "urlCheck" : false,
+            "es6" : true,
+            "minified" : true
+        },
+        "usingComponents" : true
     },
-    "usingComponents": true
-  },
-  "h5": {
-    "title": "比邻AI · 适老化原型",
-    "router": {
-      "mode": "hash",
-      "base": "./"
-    }
-  },
-  "vueVersion": "3"
+    "h5" : {
+        "title" : "比邻AI · 适老化原型",
+        "router" : {
+            "mode" : "hash",
+            "base" : "./"
+        }
+    },
+    "vueVersion" : "3"
 }
