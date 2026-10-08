@@ -35,6 +35,7 @@ from ..messaging import (
     STATUS_PENDING,
     agent_sender_id,
     ai_conversation_id,
+    is_agent_sender,
     kind_of,
 )
 from ..models.message import now_iso
@@ -276,7 +277,10 @@ async def recall_message(payload: RecallRequest, request: Request):
     if target is None or target.conversation_id != conversation.id:
         return api_error("message_not_found")
 
-    # 归属校验：只能撤自己发的（智能体的消息也不允许端侧撤）
+    # 归属校验：只能撤自己发的。
+    # ⚠️ 这里**有意不**放宽到"我 AI 会话里的智能体回复"（虽然删除放宽了）：
+    #    撤回是"让对方看到我收回了这句话"，而家人会话与 AI 会话的语义不同，
+    #    放宽会牵动既有行为与测试。目前用户反馈的是「删不掉」，先只修删除。
     if target.sender_id != account.id:
         return api_error("not_your_message")
 
@@ -294,9 +298,14 @@ async def recall_message(payload: RecallRequest, request: Request):
 
 @router.post("/messages/delete")
 async def delete_message(payload: RecallRequest, request: Request):
-    """删除一条自己发的消息（物理删除，与"撤回"区分开）。
+    """删除一条**归我管**的消息（物理删除，与"撤回"区分开）。
 
-    只允许删自己发的：删别人的消息在共享会话里等于篡改对方记录。
+    可删的两种（判据见 `_can_manage`）：
+      · 我发的
+      · **AI 会话里那条智能体回复** —— 它就是替我说话的，属于我这一侧
+
+    不可删：家人在共享会话里发的、以及**对方智能体代他回的**（删了等于篡改
+    我们俩共用的那份记录）。
     """
     account, error = _require_account(request)
     if error:
@@ -310,11 +319,36 @@ async def delete_message(payload: RecallRequest, request: Request):
     target = store.find_message(payload.message_id)
     if target is None or target.conversation_id != conversation.id:
         return api_error("message_not_found")
-    if target.sender_id != account.id:
+    if not _can_manage(target, account, conversation):
         return api_error("not_your_message")
 
     store.delete_message(target.id)
     return JSONResponse(content={"ok": True, "id": target.id})
+
+
+def _can_manage(target, account, conversation) -> bool:
+    """这条消息我能不能删 / 撤。
+
+    两种允许：
+      1. **我发的**（`sender_id == 我的账号 id`）—— 自己的消息自己处置
+      2. **我自己的 AI 会话里那条智能体回复** —— 它就是替我说话的，属于我这一侧
+
+    ⚠️ 为什么第 2 条必须限定在 **AI 会话**：
+       家人会话里也有 `agent:` 消息，那是**对方的智能体代他回的**。
+       允许我在家人会话里删掉它，等于**篡改我们俩共享的那份记录** ——
+       对方下次进来看不到自己说过的话。那不是"管理自己的消息"，是动别人的记录。
+
+    所以判据不是"sender 带 agent: 前缀"，而是
+    **"这条 agent 消息是否属于我自己的 AI 会话"**。
+    会话 id 本身就编码了归属：`ai:<我的账号 id>`，不需要额外查表。
+    """
+    if target.sender_id == account.id:
+        return True
+    if not is_agent_sender(target.sender_id):
+        return False
+    if conversation.kind != KIND_AI:
+        return False
+    return conversation.id == ai_conversation_id(account.id)
 
 
 def _seconds_since(stamp: str) -> float | None:

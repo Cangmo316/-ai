@@ -37,6 +37,14 @@ class FakeProvider:
         yield self.text
 
 
+#: 建过的测试客户端，测试结束时统一关库再删临时目录。
+#:
+#: ⚠️ 必须显式关：Windows 上 SQLite 文件被连接占着时删目录会
+#:    `PermissionError: [WinError 32] 另一个程序正在使用此文件`，
+#:    而且会在**垃圾回收时**才抛出来，看起来像是"某个用例莫名其妙报错"。
+_CLIENTS: list = []
+
+
 def make_client(provider=None) -> TestClient:
     """建测试客户端。
 
@@ -58,8 +66,25 @@ def make_client(provider=None) -> TestClient:
         database_url=db_url,
     )
     app = create_app(settings=settings, provider=provider or FakeProvider())
-    app.state._test_workspace = workspace   # 挂住引用，别让临时目录被回收
-    return TestClient(app)
+    client = TestClient(app)
+    _CLIENTS.append((client, workspace))
+    return client
+
+
+def tearDownModule() -> None:
+    """关掉所有测试库连接，再删临时目录（Windows 上不关就删不掉）。"""
+    for client, workspace in _CLIENTS:
+        try:
+            db = getattr(client.app.state, "database", None)
+            if db is not None:
+                db.close()
+        except Exception:  # noqa: BLE001 —— 清理失败不该让测试结果变成错误
+            pass
+        try:
+            workspace.cleanup()
+        except Exception:  # noqa: BLE001
+            pass
+    _CLIENTS.clear()
 
 
 def register(client: TestClient, name: str) -> dict:
@@ -198,6 +223,82 @@ class MessageActionsTestCase(unittest.TestCase):
         first = self.send(self.a, "被引用的那条")
         second = self.send(self.a, "带着引用", quoteId=first["id"])
         self.assertEqual(second["quoteId"], first["id"])
+
+    # ── 智能体回复的删除权限（用户反馈："智能体发的消息我删不掉"）──
+
+    def ai_conversation(self, session) -> str:
+        res = self.client.get("/v1/conversations", headers=auth(session))
+        return next(c for c in res.json()["conversations"] if c["kind"] == "ai")["id"]
+
+    def test_can_delete_own_agent_reply_in_ai_conversation(self):
+        """**我自己 AI 会话**里的智能体回复可以删（它就是替我说话的）"""
+        ai = self.ai_conversation(self.a)
+        agent_msg = self.client.post(
+            "/v1/conversations/messages",
+            json={"conversationId": ai, "text": "妈 我在呢", "senderRole": "agent"},
+            headers=auth(self.a),
+        ).json()["message"]
+        # 服务端会给智能体一个独立的 sender id（不是我的账号 id）——
+        # 这正是原来删不掉的原因
+        self.assertTrue(agent_msg["senderId"].startswith("agent:"))
+        self.assertNotEqual(agent_msg["senderId"], self.a["account"]["id"])
+
+        res = self.client.post(
+            "/v1/conversations/messages/delete",
+            json={"conversationId": ai, "messageId": agent_msg["id"]},
+            headers=auth(self.a),
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+
+        res = self.client.get(
+            "/v1/conversations/messages", params={"conversationId": ai}, headers=auth(self.a)
+        )
+        self.assertNotIn(agent_msg["id"], [m["id"] for m in res.json()["messages"]])
+
+    def test_cannot_delete_peer_agent_reply_in_family_conversation(self):
+        """**家人会话**里对方智能体代回的**不能删** —— 那是对方记录的一部分"""
+        self.send(self.a, "在家吗")
+        res = self.client.post(
+            "/v1/conversations/messages/auto-reply",
+            json={"conversationId": self.cid, "peerName": self.b["account"]["name"]},
+            headers=auth(self.a),
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        body = res.json()
+        self.assertTrue(body.get("ok"), body)
+        agent_msg = body["message"]
+        self.assertTrue(agent_msg["senderId"].startswith("agent:"))
+
+        # A 想删掉"对方智能体代 B 回的那条" → 拒绝
+        res = self.client.post(
+            "/v1/conversations/messages/delete",
+            json={"conversationId": self.cid, "messageId": agent_msg["id"]},
+            headers=auth(self.a),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(res.json()["error"]["code"], "not_your_message")
+
+        # 那条还在（没有被篡改掉）
+        res = self.client.get(
+            "/v1/conversations/messages", params={"conversationId": self.cid}, headers=auth(self.a)
+        )
+        self.assertIn(agent_msg["id"], [m["id"] for m in res.json()["messages"]])
+
+    def test_cannot_delete_another_accounts_agent_reply(self):
+        """别人 AI 会话里的智能体回复更不能删"""
+        b_ai = self.ai_conversation(self.b)
+        b_msg = self.client.post(
+            "/v1/conversations/messages",
+            json={"conversationId": b_ai, "text": "乙的智能体回复", "senderRole": "agent"},
+            headers=auth(self.b),
+        ).json()["message"]
+
+        res = self.client.post(
+            "/v1/conversations/messages/delete",
+            json={"conversationId": b_ai, "messageId": b_msg["id"]},
+            headers=auth(self.a),
+        )
+        self.assertEqual(res.status_code, 403)
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -208,6 +208,22 @@ function isAiSent(m) {
   return sender.indexOf('agent:') === 0
 }
 
+/**
+ * 这条智能体回复是不是**我自己的**（也就是我这条 AI 会话里的那个）。
+ *
+ * 与 `isAiSent` 是互斥的两种 agent 消息：
+ *   · 我 AI 会话里的 agent 回复 → 归我管（能删）
+ *   · 家人会话里对方智能体代回的 → **不能删**（那是对方记录的一部分）
+ *
+ * 判据与服务端 `_can_manage` 一致：只有**非家人会话**里的 agent 消息才算我的。
+ * 端侧不靠 senderId 里的会话 id 去解析——那等于把服务端的编码规则复制一份，
+ * 两边一旦不同步就会「按钮给了但请求被拒」。这里只按会话类型分。
+ */
+function isMyAgentReply(m) {
+  if (!m || isFamily.value) return false
+  return String(m.senderId || '').indexOf('agent:') === 0
+}
+
 /** 未读数（进入本页时快照，1 秒后归零） */
 const unreadShown = ref(0)
 const readJustNow = ref(false)
@@ -306,6 +322,38 @@ function loadFamilyMessages() {
  * 智能体会话的历史也拉一次服务端。
  * 服务端有就用服务端的（跨设备一致），没有就保留本地种子内容。
  */
+/**
+ * 把服务端历史合并进 `chat.messages`，**不是整体替换**。
+ *
+ * ⚠️ 原来这里是 `chat.messages = list.map(...)`（覆盖赋值），有两个后果：
+ *   1. **本地刚推上去、服务端还没落库的消息会被冲掉** ——
+ *      `onSend` 先本地 push（乐观上屏）再发请求，而进页面时那次
+ *      `loadAiHistory` 是异步的；它晚一步回来就把刚发的话抹了。
+ *      现象就是用户反馈的「我发的消息没显示在聊天框里」。
+ *   2. 服务端某次返回空（或只回了早先几条）时，本地已渲染的内容会整段消失。
+ *
+ * 合并规则：
+ *   · 以服务端那份为准（它有真实 id / 顺序）
+ *   · 本地有、服务端没有的（还在路上 / 存失败）→ **保序插回**，不能丢
+ *   · 两边都有 → 用服务端的覆盖（正文更权威）
+ */
+function mergeAiHistory(serverList) {
+  const fromServer = serverList.map((m) => ({
+    id: m.id,
+    role: m.senderRole === 'agent' ? 'agent' : 'elder',
+    type: 'text',
+    text: m.text,
+    createdAt: m.createdAt
+  }))
+  const serverIds = {}
+  fromServer.forEach((m) => {
+    serverIds[m.id] = true
+  })
+  // 服务端没有、但本地已有的：保留（id 形如 local_ / 乐观条目）
+  const localOnly = chat.messages.filter((m) => m && m.id && !serverIds[m.id])
+  chat.messages = fromServer.concat(localOnly)
+}
+
 function loadAiHistory() {
   const token = readToken()
   if (!token || !conversationId.value) return
@@ -313,16 +361,11 @@ function loadAiHistory() {
     .then((data) => {
       const list = (data && data.messages) || []
       unreadShown.value = (data && data.unread) || 0
-      if (!list.length) return
-      // 不覆盖正在进行的一轮，避免把刚发的话冲掉
+      // 正在流式回复时不打断（否则会把正在打字的那条冲掉）。
+      // 注意与旧版的区别：**不再**因为 list 为空就整体跳过——
+      // 合并逻辑本身已经保证本地内容不丢，空历史同样不该抹掉它。
       if (chat.streaming) return
-      chat.messages = list.map((m) => ({
-        id: m.id,
-        role: m.senderRole === 'agent' ? 'agent' : 'elder',
-        type: 'text',
-        text: m.text,
-        createdAt: m.createdAt
-      }))
+      mergeAiHistory(list)
       scrollToBottom()
     })
     .catch(() => {
@@ -516,15 +559,31 @@ function canRecall(m) {
   return (Date.now() - stamp) / 1000 <= RECALL_WINDOW_SECONDS
 }
 
-/** 能不能删（只允许删自己发的；别人的消息在任何 IM 里都不能替对方删） */
+/**
+ * 能不能删。
+ *
+ * 允许删两种：
+ *   · 我发的
+ *   · **我这条 AI 会话里的智能体回复** —— 它就是替我说话的，归我管
+ *
+ * 不允许删：家人会话里对方发的、以及**对方智能体代他回的**。
+ * 共享会话是双方共用的一份记录，单方面删掉等于篡改对方看到的内容。
+ * （与服务端 `_can_manage` 同一套判据，两边一致才不会出现"按钮给了却被拒"。）
+ */
 function canDelete(m) {
-  return !!m && isMine(m)
+  if (!m) return false
+  if (String(m.id || '').indexOf('local_') === 0) return false
+  return isMine(m) || isMyAgentReply(m)
 }
 
 /**
  * 长按一条消息 → 弹选项。
  *
- * 与微信/QQ 一致：**自己发的**才有「撤回」「删除」，「引用」双方消息都有。
+ * 与微信/QQ 一致：「引用」双方消息都有；「撤回」只有自己发的；
+ * 「删除」除了自己发的，还包括**我 AI 会话里的智能体回复**
+ * （它就是替我说话的，用户反馈"删不掉"指的就是它）。
+ * 家人会话里对方的消息与对方智能体的代回都不给删除入口。
+ *
  * 用 `uni.showActionSheet` 而不是自绘弹层：原生弹层在 App 与 H5 上行为一致、
  * 层级不会被 WebView 里的 3D canvas 盖住，也不必处理滚动锁定。
  */
@@ -570,7 +629,9 @@ function doRecall(m) {
   m.recalledAt = new Date().toISOString()
   recallMessage(token, conversationId.value, m.id)
     .then(() => {
-      loadFamilyMessages()
+      // 家人会话要重新拉（撤回是双方共享的状态）；
+      // AI 会话本地已经有乐观标记了，不必再请求一次
+      if (isFamily.value) loadFamilyMessages()
       toast('已撤回')
     })
     .catch((error) => {
@@ -579,20 +640,34 @@ function doRecall(m) {
     })
 }
 
+/** 移除一条消息（按当前会话类型改对应的数据源）。
+ *
+ * ⚠️ 这里必须分岔：AI 会话显示的是 `chat.messages`，家人会话是 `familyMessages`。
+ * 只改后者的话，AI 会话里删完界面毫无变化——用户看到的就是"删不掉"。
+ */
+function dropMessage(id) {
+  if (isFamily.value) {
+    familyMessages.value = familyMessages.value.filter((x) => x.id !== id)
+    return
+  }
+  chat.messages = chat.messages.filter((x) => x.id !== id)
+}
+
 /** 删除：二次确认，删完刷新列表 */
 function doDelete(m) {
   const token = readToken()
   if (!token) { toast('请先登录'); return }
   uni.showModal({
     title: '删除这条消息？',
-    content: '删除后双方都看不到了',
+    // 家人会话是双方共享的记录，删了对方也看不到；自己这边则是清掉本地记录
+    content: isFamily.value ? '删除后双方都看不到了' : '删除后这条消息就没有了',
     confirmText: '删除',
     cancelText: '再想想',
     success: (res) => {
       if (!res.confirm) return
       deleteMessage(token, conversationId.value, m.id)
         .then(() => {
-          familyMessages.value = familyMessages.value.filter((x) => x.id !== m.id)
+          dropMessage(m.id)
           refreshConversations()
           toast('已删除')
         })
