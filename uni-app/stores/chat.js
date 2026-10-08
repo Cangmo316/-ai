@@ -215,7 +215,14 @@ function handleEvent(event) {
     case CHAT_EVENT.meta:
       if (event.assistantMsgId) {
         turn.serverId = event.assistantMsgId
-        if (turn.textMsg) turn.textMsg.serverId = event.assistantMsgId
+        // 续写的第二条：**另起一个气泡**而不是往同一条里追加。
+        // 服务端只在上一段停在句子边界时才这么做（见 service.py 的续写逻辑），
+        // 所以这里不用担心把半句话拆成两条。
+        if (event.continued) {
+          startContinuationMessage(event.assistantMsgId)
+        } else if (turn.textMsg) {
+          turn.textMsg.serverId = event.assistantMsgId
+        }
       }
       if (event.persona && event.persona.name) {
         chat.persona = Object.assign({}, chat.persona, event.persona)
@@ -303,6 +310,31 @@ function ensureTextMessage() {
     })
   }
   return turn.textMsg
+}
+
+/**
+ * 开一条新的回复气泡（回复太长、服务端续写时用）。
+ *
+ * 为什么需要它：服务端在回复撞上 token 上限时会**接着写**，并且会为续写
+ * 再发一个 `meta`（带 `continued: true` 和新的 assistantMsgId）。
+ * 如果端上照旧把文字往同一个气泡里追加，用户看到的就是一大块；
+ * 服务端之所以另起一条，是因为上一段已经停在句子边界，
+ * 拆成两条读起来更舒服（尤其对老人）。
+ *
+ * 返回新气泡；调用方随后收到的 token 都会进这一条。
+ */
+function startContinuationMessage(serverId) {
+  // 上一条定稿：它已经以句末标点结束了，不该再被追加
+  if (turn.textMsg) turn.textMsg.status = 'sent'
+  const message = push({
+    role: 'agent',
+    type: 'text',
+    text: '',
+    status: 'streaming',
+    serverId: serverId || ''
+  })
+  turn.textMsg = message
+  return message
 }
 
 function finishTurn(status) {

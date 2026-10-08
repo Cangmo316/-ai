@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import re
@@ -59,6 +60,59 @@ logger = logging.getLogger("bilin.chat")
 STICKER_TAG = re.compile(r"<\s*sticker\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*>")
 # 未闭合标签的兜底长度：超过这个长度还不见 '>' 就当成普通文本，防止缓冲区无限增长
 MAX_TAG_LENGTH = 64
+
+#: 撞上 max_tokens 后最多续写几次。
+#: 上限存在的意义：万一模型陷入"总也写不完"的循环，不能无休止地烧钱和时间。
+#: 3 次足够覆盖正常的长回复（每次 800 token）。
+MAX_CONTINUATIONS = 3
+
+#: "这句话说完了"的判据：以中文/英文句末标点结尾。
+#: 用来决定续写时是**另起一条消息**（读起来是两段完整的话）还是**并回同一条**
+#: （上一段停在半句中间，硬拆成两条会两句都读不通）。
+END_OF_SENTENCE = re.compile(r"[。！？!?…；;]\s*$")
+
+#: 续写时交给模型的指令。
+#: 关键是"不要重复已经说过的"——否则第二段会把第一段重抄一遍。
+CONTINUE_PROMPT = (
+    "你刚才的话被长度限制截断了。请**接着最后一句继续说完**，"
+    "不要重复已经说过的内容，不要重新打招呼，直接接着写。"
+)
+
+
+async def _stream_with_finish(
+    provider: LLMProvider,
+    messages: list[dict],
+    on_finish,
+) -> AsyncIterator[str]:
+    """调 `provider.stream`，**只在 provider 支持时**传 `on_finish`。
+
+    为什么要这层适配：
+      `on_finish` 是用来取 `finish_reason` 的（判断回复是否被 token 上限截断）。
+      但它是**新增的可选参数**，而工程里有多处自带 provider
+      （测试的 ScriptedProvider / FakeProvider 等）签名仍是 `stream(messages)`。
+      直接传 `on_finish=` 会让它们 TypeError，把既有测试全打挂——这类
+      "新功能顺手改了公共契约"造成的回归最难查，所以在这里挡掉。
+
+    支持与否用**签名自省**判断，而不是 try/except TypeError：
+    后者会把 provider 内部真正的 TypeError 一起吞掉，变成难查的静默降级。
+    """
+    if _accepts_on_finish(provider):
+        async for chunk in provider.stream(messages, on_finish=on_finish):
+            yield chunk
+        return
+    async for chunk in provider.stream(messages):
+        yield chunk
+
+
+def _accepts_on_finish(provider: LLMProvider) -> bool:
+    """provider.stream 是否声明了 on_finish 参数（含 **kwargs 的情况）。"""
+    try:
+        params = inspect.signature(provider.stream).parameters
+    except (TypeError, ValueError):
+        return False
+    if "on_finish" in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 class StickerExtractor:
@@ -284,22 +338,77 @@ class ChatService:
         # 只有真正产出内容才算"完成"，否则在 finally 里放开幂等记录（见下面的注释）
         completed = False
         try:
-            async for delta in provider.stream(messages):
-                plain, sticker_tokens = extractor.feed(delta)
-                if plain:
-                    chunk = streamer.feed(plain)
-                    if chunk:
-                        current_text_part()["text"] += chunk
-                        yield events.EVENT_TOKEN, {"t": chunk}
-                for token in sticker_tokens:
-                    if not is_allowed_sticker(token):
-                        # 模型自己编的 token：拦掉，端上不会出现空图
-                        logger.warning("丢弃白名单外的表情 token: %s", token)
-                        continue
-                    # 表情之前先结算句子，保证"先说完话再发表情"
+            # ── 撞上 token 上限时接着写，而不是把半句话丢给老人 ──
+            #
+            # 背景：max_tokens 原来是 300，模型正常长度的回复会被**说到一半硬切断**，
+            # 端上就是一句没头没尾的话（用户反馈的问题）。
+            # 现在 max_tokens 放宽到 800 作为安全阀；万一还是撞上限，
+            # 就带着"已经说过的内容"再要一次，让模型把话说完。
+            #
+            # 为什么不把两段拼进同一个气泡：两段加起来会是一大段文字，
+            # 对老人来说"两条短消息"比"一大块"好读。所以续写会**另起一条消息**
+            # （发第二个 meta，端上就是第二个气泡）。
+            # 但如果上一段是**停在半句中间**，另起一条会变成两句都读不通，
+            # 那种情况就并回同一条（先保证读得通，再谈好不好读）。
+            reply_messages = list(messages)
+            for attempt in range(MAX_CONTINUATIONS + 1):
+                finish_reason = "stop"
+
+                def _note_finish(reason: str) -> None:
+                    nonlocal finish_reason
+                    finish_reason = reason
+
+                streamed = ""
+                async for delta in _stream_with_finish(provider, reply_messages, _note_finish):
+                    streamed += delta
+                    plain, sticker_tokens = extractor.feed(delta)
+                    if plain:
+                        chunk = streamer.feed(plain)
+                        if chunk:
+                            current_text_part()["text"] += chunk
+                            yield events.EVENT_TOKEN, {"t": chunk}
+                    for token in sticker_tokens:
+                        if not is_allowed_sticker(token):
+                            # 模型自己编的 token：拦掉，端上不会出现空图
+                            logger.warning("丢弃白名单外的表情 token: %s", token)
+                            continue
+                        # 表情之前先结算句子，保证"先说完话再发表情"
+                        streamer.flush()
+                        parts.append({"type": TYPE_STICKER, "sticker": token})
+                        yield events.EVENT_STICKER, {"token": token}
+
+                # 自然说完、或已经续到上限：收工
+                if finish_reason != "length" or attempt >= MAX_CONTINUATIONS:
+                    if finish_reason == "length":
+                        logger.warning(
+                            "回复续写了 %s 次仍未收尾，按现状收下（可能仍有截断）", attempt
+                        )
+                    break
+
+                # 撞上限了。只在**上一段停在句子边界**时另起一条消息，
+                # 否则并回同一条（并回用空串表示，端侧不会新开气泡）。
+                starts_new_message = bool(END_OF_SENTENCE.search(streamed.rstrip()))
+                if starts_new_message:
                     streamer.flush()
-                    parts.append({"type": TYPE_STICKER, "sticker": token})
-                    yield events.EVENT_STICKER, {"token": token}
+                    assistant_id = new_id("a")
+                    yield events.EVENT_META, {
+                        "conversationId": conversation_id,
+                        "assistantMsgId": assistant_id,
+                        "persona": persona.to_public(),
+                        "continued": True,
+                    }
+                    parts.append({"type": TYPE_TEXT, "text": ""})
+
+                logger.info(
+                    "回复撞上 token 上限，继续生成（第 %s 次，另起消息=%s）",
+                    attempt + 1,
+                    starts_new_message,
+                )
+                # 把"已经说过的话"当作模型的上一轮回答，再请它接着说完
+                reply_messages = reply_messages + [
+                    {"role": "assistant", "content": streamed},
+                    {"role": "user", "content": CONTINUE_PROMPT},
+                ]
 
             # 收尾：把最后一段没有标点的文字吐出去
             tail_text, tail_stickers = extractor.flush()

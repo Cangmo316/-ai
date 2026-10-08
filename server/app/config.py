@@ -96,7 +96,15 @@ class Settings:
     llm_model: str = "deepseek-chat"
     llm_timeout: float = 30.0
     llm_temperature: float = 0.8
-    llm_max_tokens: int = 300
+    #: 单次生成的 token 上限。
+    #:
+    #: ⚠️ 这个值原来是 **300**，实测会把正常长度的回复**说到一半硬切断**
+    #:    （模型还没写完就撞上限，端上看到的就是半句话，且没有任何提示）。
+    #:    对老人来说"话说一半没了"比"话长一点"糟得多，所以放宽到 800。
+    #:
+    #: 它现在只是**安全阀**而不再是"回复长度的目标"：真的撞上限时，
+    #: 编排层会继续生成（见 service.py 的续写逻辑），而不是把半句话丢给用户。
+    llm_max_tokens: int = 800
     # 送进模型的历史轮数（不含本轮）。P2 接三层记忆后会换成相关性检索
     history_turns: int = 8
     # SSE 心跳间隔（秒）。作用不只是防代理掐连接：端侧有 20s 首字节看门狗，
@@ -167,7 +175,7 @@ class Settings:
             llm_model=_env_str("LLM_MODEL", "deepseek-chat"),
             llm_timeout=_env_float("LLM_TIMEOUT", 30.0),
             llm_temperature=_env_float("LLM_TEMPERATURE", 0.8),
-            llm_max_tokens=_env_int("LLM_MAX_TOKENS", 300),
+            llm_max_tokens=_env_int("LLM_MAX_TOKENS", 800),
             history_turns=_env_int("CHAT_HISTORY_TURNS", 8),
             sse_heartbeat_seconds=_env_float("SSE_HEARTBEAT_SECONDS", 10.0),
             default_persona_id=_env_str("DEFAULT_PERSONA_ID", "p_bilin"),

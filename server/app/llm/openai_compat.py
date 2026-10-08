@@ -16,7 +16,7 @@ DeepSeek、通义千问、Kimi、智谱、以及本地自建的 vLLM / Ollama / 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 
@@ -53,7 +53,30 @@ class OpenAICompatProvider(LLMProvider):
     def endpoint(self) -> str:
         return self.base_url + "/chat/completions"
 
-    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def stream(
+        self,
+        messages: list[dict],
+        on_finish: Callable[[str], None] | None = None,
+    ) -> AsyncIterator[str]:
+        """流式产出正文增量。
+
+        ## on_finish：把"为什么停下来"告诉调用方
+
+        OpenAI 兼容流在最后一片里带 `finish_reason`：
+          · `"stop"`   —— 模型自然说完了
+          · `"length"` —— **撞上 max_tokens 被硬切断**（端上看到的半句话就是这个）
+
+        这个信息以前被 `_parse_line` 丢掉了，于是编排层没法知道"这句话是没说完的"，
+        只能把半句直接发给老人。
+
+        ⚠️ 为什么用回调而不是把它变成产出的一部分：
+           `stream()` 产出 `str` 是既有契约，多处测试断言 `["妈"," 好"]` 这种序列，
+           改产出类型会连带破坏它们。回调是**可选**的，不传的调用方行为完全不变。
+
+        ⚠️ 为什么不存到 self 上：provider 实例被 `ProviderResolver` 缓存、
+           内置那个还被所有账号共享，存实例会被并发请求互相覆盖。
+           回调是请求级的，天然没有这个问题。
+        """
         if not self.api_key:
             raise LLMError("模型还没配置好，让家里人看一下", code="llm_auth", retryable=False)
 
@@ -81,7 +104,9 @@ class OpenAICompatProvider(LLMProvider):
                     if response.status_code >= 400:
                         raise self._error_from_response(response.status_code, await response.aread())
                     async for line in response.aiter_lines():
-                        chunk = self._parse_line(line)
+                        chunk, reason = self._parse_line_with_reason(line)
+                        if reason and on_finish is not None:
+                            on_finish(reason)
                         if chunk:
                             yield chunk
         except LLMError:
@@ -94,35 +119,49 @@ class OpenAICompatProvider(LLMProvider):
     # ---------------------------------------------------------------- 内部
 
     def _parse_line(self, line: str) -> str:
-        """解析一行 SSE。返回正文增量，无内容则返回空串。"""
+        """解析一行 SSE。返回正文增量，无内容则返回空串。
+
+        签名保持不变（别处与测试都在用）；需要 finish_reason 的场景
+        走 `_parse_line_with_reason`。
+        """
+        return self._parse_line_with_reason(line)[0]
+
+    def _parse_line_with_reason(self, line: str) -> tuple[str, str]:
+        """解析一行 SSE，返回 (正文增量, finish_reason)。
+
+        finish_reason 只在该片里出现时非空。调用方据此区分
+        "模型自然说完（stop）"与"撞上 max_tokens 被切断（length）"。
+        """
         if not line:
-            return ""
+            return "", ""
         line = line.strip()
         if not line or line.startswith(":"):
-            return ""
+            return "", ""
         if line.startswith("data:"):
             line = line[len("data:") :].strip()
         if not line or line == "[DONE]":
-            return ""
+            return "", ""
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
             # 上游偶发的心跳/非 JSON 行：跳过，不让整条流失败
-            return ""
+            return "", ""
 
         choices = payload.get("choices") or []
         if not choices:
-            return ""
-        delta = choices[0].get("delta") or {}
+            return "", ""
+        choice = choices[0]
+        reason = str(choice.get("finish_reason") or "")
+        delta = choice.get("delta") or {}
         # 只认 content；reasoning_content 等字段一律丢弃（见模块注释）
         content = delta.get("content")
         if isinstance(content, str):
-            return content
+            return content, reason
         if isinstance(content, list):
             # 少数实现会把 content 拆成 [{type:text, text:...}]
             parts = [item.get("text", "") for item in content if isinstance(item, dict)]
-            return "".join(parts)
-        return ""
+            return "".join(parts), reason
+        return "", reason
 
     def _error_from_response(self, status_code: int, body: bytes) -> LLMError:
         detail = ""

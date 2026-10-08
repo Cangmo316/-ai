@@ -11,6 +11,7 @@
     { "path": "pages/plans/plans",             "style": { "navigationStyle": "custom" } },
     { "path": "pages/daily/daily",             "style": { "navigationStyle": "custom" } },
     { "path": "pages/weekly/weekly",           "style": { "navigationStyle": "custom" } },
+    { "path": "pages/special/special",         "style": { "navigationStyle": "custom" } },
     { "path": "pages/calendar/calendar",       "style": { "navigationStyle": "custom" } },
     { "path": "pages/me/me",                   "style": { "navigationStyle": "custom" } },
     { "path": "pages/auth/auth",               "style": { "navigationStyle": "custom" } },
