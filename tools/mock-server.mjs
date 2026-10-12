@@ -642,6 +642,37 @@ function memorySettingsOf(elderId) {
       return
     }
 
+    // ── 语音识别（「按住说话」）：**本地假识别**，不联网、不装任何引擎 ──
+    // 用途：让"按住说话 → 上传 → 拿到文本 → 提问"整条链在本地可闭环验证。
+    // 返回的文本在几个候选里轮换，这样连续按几次能看出"确实每次都在跑"。
+    if (url.pathname === '/v1/asr/transcribe' && req.method === 'POST') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const body = Buffer.concat(chunks)
+      if (!body.length) {
+        sendJSON(res, 400, { ok: false, text: '', reason: '音频是空的' })
+        return
+      }
+      // `--asr=off` 时按"未配置 ASR"返回，用来验证端侧降级提示
+      if (asrMode === 'off') {
+        sendJSON(res, 200, {
+          ok: false, text: '', reason: '未配置语音识别（mock --asr=off）', engine: 'NullAsrProvider'
+        })
+        return
+      }
+      const candidate = MOCK_ASR_TEXTS[mockAsrCount % MOCK_ASR_TEXTS.length]
+      mockAsrCount += 1
+      sendJSON(res, 200, {
+        ok: true,
+        text: candidate,
+        reason: '',
+        language: 'zh',
+        engine: 'MockAsrProvider',
+        bytes: body.length
+      })
+      return
+    }
+
     if (url.pathname === '/healthz') {
       sendJSON(res, 200, {
         ok: true,
@@ -1354,6 +1385,20 @@ const MOCK_AUDIO_BYTES = buildToneWav(MOCK_AUDIO_SECONDS)
  * 这样 mock 也能验证"**没发过的 id 取不到**"这条约束（而不是任何 id 都给音频）。
  */
 const mockAudioBuffers = new Map()
+
+/**
+ * mock 的"语音识别"结果：在几个候选里轮换。
+ * 为什么不做真识别：mock 的职责是**契约靶子**（零依赖、离线、确定性），
+ * 真识别由 `server/app/asr/` 的可插拔网关负责。
+ */
+const MOCK_ASR_TEXTS = [
+  '妈 今天药按时吃了没',
+  '我有点睡不着 想找人说说话',
+  '明天降温 出门记得加件外套'
+]
+let mockAsrCount = 0
+/** `--asr=off` 时按"未配置语音识别"返回，用来验证端侧降级提示 */
+let asrMode = 'on'
 // 为什么按 id 存字节、而不是一个固定常量：开了真语音后每句话的时长都不同，
 // durationMs 必须来自**真实下发的那份字节**（见 prepareSpeech）。
 // 只有发过音频事件的 id 才在表里 —— 「没发过的 id 取不到」这条约束不变。
@@ -1663,12 +1708,17 @@ if (isDirectRun) {
   if (flags['tts-rate'] !== undefined) process.env.BILIN_MOCK_TTS_RATE = String(flags['tts-rate'])
   if (typeof flags['tts-voice'] === 'string') process.env.BILIN_MOCK_TTS_VOICE = flags['tts-voice']
 
+  // 语音识别：默认开（返回轮换的假识别文本，用于验证"按住说话 → 提问"整条链）。
+  // `--asr=off` 让它按"未配置 ASR"返回，用来验证端侧的降级提示是否会说人话。
+  if (typeof flags.asr === 'string') asrMode = flags.asr === 'off' ? 'off' : 'on'
+
   startMockServer({ host, port, delayMs, authToken }).then((instance) => {
     console.log('比邻AI mock agent 已启动')
     console.log('  地址   : http://' + host + ':' + instance.port)
     console.log('  每字延迟: ' + delayMs + 'ms（--delay 0 可关闭）')
     console.log('  鉴权   : ' + (authToken ? '要求 Authorization: Bearer <token>' : '关闭（--auth <token> 可打开）'))
     console.log('  接口   : POST /v1/chat/stream · POST /v1/chat/send · GET /v1/chat/history')
+    console.log('           POST /v1/asr/transcribe（按住说话；--asr=off 可模拟未配置）')
     const voice = ttsStatus()
     console.log('  语音   : ' + (voice.enabled
       ? '真人语音（' + voice.mode + '，声部 ' + voice.voice + '，语速 ' + voice.rate + '）'

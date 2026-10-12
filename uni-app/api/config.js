@@ -117,7 +117,9 @@ export const ENDPOINTS = {
   // 病例病史（医院单据图片/PDF）：自动解析后给智能体当背景知识
   caseTypes: '/v1/cases/types',
   cases: '/v1/cases',
-  visionStatus: '/v1/cases/vision/status'
+  visionStatus: '/v1/cases/vision/status',
+  /** 语音识别（「按住说话」）：multipart 上传音频，返回识别文本 */
+  asrTranscribe: '/v1/asr/transcribe'
 }
 
 /** 超时（ms）：首字节超时用看门狗实现，总超时只作用于非流式接口 */

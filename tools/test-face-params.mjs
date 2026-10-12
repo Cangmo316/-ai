@@ -17,13 +17,36 @@
  */
 
 import assert from 'node:assert/strict'
-import { openSync, readSync, closeSync } from 'node:fs'
+import { openSync, readSync, closeSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { finish, group, test } from './test-util.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const GLB = join(here, '..', 'uni-app', 'static', 'avatar', 'BilinAI_FemaleFaceRig_60k_edit.glb')
+
+/**
+ * 被测 GLB：**从 `assets.js` 读，不要硬编码文件名**。
+ *
+ * ⚠️ 踩坑记录（2026-10-08）：这里原本硬编码 `BilinAI_FemaleFaceRig_60k_edit.glb`，
+ * 资产换成单一 `QDoctor_60k.glb` 之后本测试**直接 ENOENT 崩掉** ——
+ * 明明只是换了模型文件，却要让测试跟着改，正是"改资产就牵连一片"的典型。
+ * 现在从唯一源头（`common/face-gl/assets.js`）取路径：换资产只改那一处。
+ */
+const ASSETS_JS = join(here, '..', 'uni-app', 'common', 'face-gl', 'assets.js')
+
+function resolveAssetFromSource() {
+  const source = readFileSync(ASSETS_JS, 'utf8')
+  // 取 `delivery` 那条（通话页/摄像头入口用的就是它，含 vis_* + expr_*）
+  const match = source.match(/delivery\s*:\s*'([^']+\.glb)'/)
+    || source.match(/edit\s*:\s*'([^']+\.glb)'/)
+    || source.match(/'([^']*static\/avatar\/[^']+\.glb)'/)
+  if (!match) {
+    throw new Error('在 assets.js 里找不到任何 .glb 资产路径（资产表结构变了？）')
+  }
+  return join(here, '..', 'uni-app', match[1].replace(/^static\//, 'static/'))
+}
+
+const GLB = resolveAssetFromSource()
 
 /**
  * 只读 GLB 的 JSON 块（不把 9.7MB 二进制全读进内存）。

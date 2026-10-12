@@ -118,3 +118,10 @@ export {
 
 /** 当前运行端与是否具备真流式能力（设置页/自检页展示用） */
 export { PLATFORM, CAN_STREAM } from './transport.js'
+
+/** 语音识别（「按住说话」）：录音 → 上传 → 识别文本。隐私处理见 api/asr.js 顶部说明 */
+export {
+  MAX_RECORD_SECONDS,
+  canRecord,
+  createRecordingSession
+} from './asr.js'

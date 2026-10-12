@@ -72,14 +72,31 @@
          stopAudio + lipsync.stop 全停；原「停一下」按钮同理去掉，stopSpeaking 保留给打断与验收。 -->
 
     <!-- 问一句：走**真对话流**（SSE 流式文字 → 服务端合成音频 + 口型 → 端侧边说边动嘴）。
-         现在还没有语音识别，"说"用输入框代替；等 ASR 接上后这里换成按住说话即可。 -->
+         「按住说话」是老人的**主入口**（不用打字），下面输入框是兜底（听不清时手输）。
+         录音不可用时按住键会置灰并说明原因，而不是点下去才报错。 -->
+    <view class="bl-vision__ask">
+      <view
+        class="bl-vision__hold"
+        :class="{ 'is-recording': recording, 'is-busy': chat.streaming, 'is-disabled': !recordReady }"
+        @touchstart.prevent="holdStart"
+        @touchend.prevent="holdEnd"
+        @touchcancel.prevent="holdCancel"
+        @mousedown.prevent="holdStart"
+        @mouseup.prevent="holdEnd"
+        @mouseleave.prevent="holdCancel"
+      >
+        <bl-icon name="muted" color="#FFFFFF" :size="44" />
+        <text class="bl-vision__hold-text">{{ holdLabel }}</text>
+      </view>
+    </view>
+
     <view class="bl-vision__ask">
       <input
         v-model="question"
         class="bl-vision__ask-input"
         type="text"
         confirm-type="send"
-        placeholder="想说什么，写在这里"
+        placeholder="也可以写在这里"
         placeholder-class="bl-vision__ask-ph"
         @confirm="askNow"
       />
@@ -111,6 +128,8 @@ import { getBaseURL } from '@/api/config.js'
 // 顶部让位：App 端 env(safe-area-inset-top) 返回 0，必须用系统信息实测（见 safe-area.js）
 import { topGap } from '@/common/safe-area.js'
 import { chat, send as sendChat, stop as stopChat, onLiveTurn, DEFAULT_CONVERSATION_ID } from '@/stores/chat.js'
+// 「按住说话」：录音 → 上传 → 识别文本（端侧录音分 H5/App 两套实现，见 api/asr.js）
+import { canRecord, createRecordingSession } from '@/api/asr.js'
 // 口型驱动：把 SSE `lipsync` 事件的关键帧变成逐帧的 viseme 权重。
 // 「渲染器只管把权重写进形态键」，插值 / 交叉淡化 / 最多混 2 个 的规则都在这个模块里。
 import { createLipsyncPlayer } from '@/common/face-gl/lipsync.js'
@@ -475,8 +494,22 @@ const caption = ref(buildOpeningLine())
  * 黑板/挂钟等绝对定位的装饰都用它跟着状态栏下移。
  */
 const topGapPx = ref(topGap())
-/** 输入框内容（暂时用"打字"代替说话；等 ASR 接上后换成按住说话） */
+/** 输入框内容（打字兜底；老人的主入口是「按住说话」） */
 const question = ref('')
+/** 正在录音 / 正在识别：两个状态给老人的提示不同，不能合并成一个"忙" */
+const recording = ref(false)
+const transcribing = ref(false)
+/** 当前环境能否录音（不能就置灰并说明原因，而不是点下去才报错） */
+const recordReady = ref(true)
+/** 说话键上的文字：随状态变化，老人据此知道"现在该做什么" */
+const holdLabel = computed(() => {
+  if (transcribing.value) return '正在听…'
+  if (recording.value) return '松开就说'
+  if (!recordReady.value) return '这里不能录音'
+  return '按住说话'
+})
+/** 正在进行的录音会话（**松手时才创建**，避免页面一加载就申请麦克风权限） */
+let recordSession = null
 
 /**
  * 通话计时（秒）。
@@ -558,6 +591,8 @@ function startIdle() {
 
 onMounted(() => {
   timer = setInterval(() => { seconds.value += 1 }, 1000)
+  // 判断本环境能否录音（H5 需要 HTTPS/localhost，否则 getUserMedia 不可用）
+  checkRecordReady()
   // #ifdef H5
   bootTick.value = 1
   // 首次用户手势里解锁音频：移动端 Safari 只认"手势内同步 play()"，
@@ -718,6 +753,77 @@ function askNow() {
   const result = ask(question.value)
   if (result && result.ok) question.value = ''
   else if (result && result.reason) uni.showToast({ title: result.reason, icon: 'none' })
+}
+
+/* ------------------------------------------------- 按住说话（老人主入口） */
+
+/**
+ * 按下开始录音。
+ *
+ * 适老要点：
+ * · **按下才开始**申请麦克风权限 —— 页面一打开就弹权限框会吓到老人
+ * · 录音中把键文字改成「松开就说」，让老人知道要松手
+ * · 不支持录音的环境**提前置灰并说明**，不让老人白按
+ */
+async function holdStart() {
+  if (chat.streaming) {
+    uni.showToast({ title: '等我先说这句', icon: 'none' })
+    return
+  }
+  if (recording.value || transcribing.value) return
+  if (!recordReady.value) return
+  if (recordSession) return
+  recordSession = createRecordingSession()
+  try {
+    await recordSession.start()
+    recording.value = true
+  } catch (error) {
+    recordSession = null
+    // 录音起不来通常是权限/环境问题：把原因直接告诉老人（而不是静默无反应）
+    const reason = (error && error.message) || '打不开麦克风'
+    recordReady.value = false
+    uni.showToast({ title: reason, icon: 'none' })
+  }
+}
+
+/** 松手：停止录音 → 上传识别 → 拿到文本就直接提问（老人不用再点一次）。 */
+async function holdEnd() {
+  if (!recording.value || !recordSession) return
+  recording.value = false
+  transcribing.value = true
+  const session = recordSession
+  recordSession = null
+  try {
+    const result = await session.finish()
+    if (result && result.ok && result.text) {
+      // 识别成功：直接把这句话问出去，省掉"再说一次点发送"这一步
+      const asked = ask(result.text)
+      if (asked && !asked.ok && asked.reason) {
+        uni.showToast({ title: asked.reason, icon: 'none' })
+      }
+    } else {
+      // 识别失败：把原因说出来，并**把输入框留空**让老人可以手输兜底
+      uni.showToast({ title: (result && result.reason) || '没听清，再说一次', icon: 'none' })
+    }
+  } finally {
+    transcribing.value = false
+  }
+}
+
+/** 手指滑出/来电等中断：放弃这次录音（不上传、不提问）。 */
+async function holdCancel() {
+  if (!recording.value || !recordSession) return
+  recording.value = false
+  const session = recordSession
+  recordSession = null
+  try { await session.cancel() } catch (error) { void error }
+}
+
+/** 进入页面时判断本环境能否录音（不能则置灰，并说明是 https 限制） */
+function checkRecordReady() {
+  let ok = false
+  try { ok = canRecord() } catch (error) { ok = false }
+  recordReady.value = !!ok
 }
 
 /**
@@ -1194,6 +1300,33 @@ export default {
   text-align: center;
 }
 
+
+/* 按住说话键：老人主入口。比输入框更大更高，录音中变红给出明确反馈 */
+.bl-vision__hold {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14rpx;
+  min-height: 108rpx;
+  border-radius: var(--bl-radius-pill);
+  background-color: #07C160;
+  box-shadow: 0 4rpx 0 rgba(0, 0, 0, .12);
+}
+.bl-vision__hold:active { background-color: #06AA54; }
+/* 录音中：变红 + 放大一点，老人一眼能看出"正在录" */
+.bl-vision__hold.is-recording {
+  background-color: #E64340;
+  transform: scale(1.02);
+}
+.bl-vision__hold.is-busy { background-color: rgba(255, 255, 255, .3); }
+.bl-vision__hold.is-disabled { background-color: rgba(255, 255, 255, .22); }
+.bl-vision__hold-text {
+  font-size: 34rpx;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: 2rpx;
+}
 
 /* 问一句：输入框 + 提交（这一条走真对话流，数字人会边说边动嘴） */
 .bl-vision__ask {
