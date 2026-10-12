@@ -40,6 +40,7 @@ from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, war
 from .config import Settings, get_settings
 from .errors import api_error
 from .asr import gateway as asr_gateway
+from .asr import privacy as asr_privacy
 from .voice import audio_store
 from .voice import gateway as voice_gateway
 from .errors import code_for_status
@@ -397,41 +398,58 @@ def create_app(
 
         收 `multipart/form-data` 的 `file` 字段（音频），返回 `{ok, text, reason, ...}`。
 
-        **为什么用 multipart 而不是 base64**：录音动辄几十到几百 KB，
-        base64 平白多 33% 体积，而老人端往往是弱网。
+        ## 为什么用 multipart 而不是 base64
+        录音动辄几十到几百 KB，base64 平白多 33% 体积，而老人端往往是弱网。
 
-        **失败要明确**：没配 ASR 或引擎失败时返回 `ok: false` + 中文原因，
-        端侧据此提示"暂时听不清"，**老人仍可打字** —— 语音是增强项，不是唯一入口。
-        失败返 200 而不是 4xx/5xx：这是**业务结果**，端侧按 `ok` 字段处理更简单。
+        ## 为什么用标准库解析而不是 `request.form()`
+        `request.form()` 需要 `python-multipart` 依赖，本仓库约定"只装四个包"。
+        改用标准库 `email`（实测二进制逐字节保真，见 `app/asr/privacy.py`）。
+
+        ## ⚠️ 语音数据安全（PIPL）—— 靠结构保证，不靠"记得删"
+        · 音频只写**唯一命名的系统临时目录**、权限收紧，`finally` 里**连目录一起删**
+          （成功/失败/超时都删；见 `app/asr/privacy.py` 的 `TempAudio`）
+        · **不写日志**：只记字节数与引擎名，**绝不记音频内容，也绝不记识别出的文本**
+        · 不落盘持久化、不缓存、不留副本；转写结果只经本次响应返回
+        · 引擎自身的打印由部署方用 `--no-prints` 关掉（`/healthz` 的 asr 段会体检这一项）
+
+        ## 失败返 200 而不是 4xx/5xx
+        没配 ASR 或引擎失败是**业务结果**，端侧按 `ok` 字段处理更简单：
+        提示"暂时听不清"，**老人仍可打字** —— 语音是增强项，不是唯一入口。
         """
-        form = await request.form()
-        upload = form.get("file")
-        if upload is None or not hasattr(upload, "read"):
-            return JSONResponse({"ok": False, "reason": "没有收到音频文件"}, status_code=400)
-        content = await upload.read()
-        if not content:
-            return JSONResponse({"ok": False, "reason": "音频是空的"}, status_code=400)
-        # 大小上限：60 秒 16bit/16kHz 单声道 ≈ 1.9MB，留足余量
-        if len(content) > 8 * 1024 * 1024:
+        content_type = request.headers.get("content-type", "")
+        body = await request.body()
+        if len(body) > asr_privacy.MAX_UPLOAD_BYTES:
             return JSONResponse({"ok": False, "reason": "录音太长了，一次说短一点"},
                                 status_code=413)
+        parsed = asr_privacy.parse_multipart(body, content_type)
+        if parsed is None:
+            return JSONResponse(
+                {"ok": False, "reason": "没有收到音频（需要 multipart/form-data 的 file 字段）"},
+                status_code=400)
+        filename, part_type, content = parsed
+        if not content:
+            return JSONResponse({"ok": False, "reason": "音频是空的"}, status_code=400)
 
-        suffix = asr_gateway.suffix_for(getattr(upload, "filename", ""),
-                                        getattr(upload, "content_type", ""))
-        workdir = tempfile.mkdtemp(prefix="bilin-asr-upload-")
-        audio_path = os.path.join(workdir, "input" + suffix)
-        with open(audio_path, "wb") as handle:
-            handle.write(content)
-
+        suffix = asr_gateway.suffix_for(filename, part_type)
         provider = asr_gateway.build_asr_provider()
-        result = await provider.transcribe(audio_path, language="zh")
+        byte_count = len(content)
+        # 只记"发生了什么"，不记内容 —— 老人说了什么不能进日志
+        logger.info("语音识别请求：%d 字节，引擎 %s", byte_count, type(provider).__name__)
+        # TempAudio 保证录音被删除（含异常与超时路径）
+        with asr_privacy.TempAudio(content, suffix) as audio_path:
+            result = await provider.transcribe(audio_path, language="zh")
+        # 主动断开对敏感字节的引用，缩短其在内存中的存活时间
+        content = b""
+        body = b""
+
         return JSONResponse({
             "ok": result.ok,
             "text": result.text,
             "reason": result.reason,
             "language": result.language,
-            "bytes": len(content),
             "engine": type(provider).__name__,
+            # 只回字节数，不回音频本身（端侧也不需要）
+            "bytes": byte_count,
         })
 
     @app.middleware("http")
@@ -490,6 +508,9 @@ def create_app(
             "voice": voice_gateway.describe(),
             # 语音识别（老人端"按住说话"）：同样如实报，未配置时端侧提示"暂时听不清"
             "asr": asr_gateway.describe(),
+            # 语音数据的**隐私处理方式**也报出来，便于部署方核查（PIPL）：
+            # 只临时落盘并用完即删、不记日志、是否抑制引擎打印等
+            "asrPrivacy": asr_privacy.privacy_report(),
             "storage": database.describe(),
             "storageDurable": database.enabled,
             "endpoints": [

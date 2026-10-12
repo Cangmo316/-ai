@@ -207,14 +207,16 @@ class GatewayDegradeTest(unittest.TestCase):
         # 用一个必然失败的命令：断言 ok=False 且有 reason
         import asyncio
         provider = CommandTtsProvider("definitely-not-a-real-command-xyz --out {out}")
-        result = asyncio.get_event_loop().run_until_complete(provider.synthesize("你好"))
+        # 用 asyncio.run：**不要用 get_event_loop()** —— Python 3.13 下若别的用例
+        # 已经关掉了事件循环，这里会抛 RuntimeError（全量跑测试时才暴露，单独跑是绿的）
+        result = asyncio.run(provider.synthesize("你好"))
         self.assertFalse(result.ok)
         self.assertTrue(result.reason)
 
     def test_空模板也显式失败(self):
         import asyncio
         provider = CommandTtsProvider("")
-        result = asyncio.get_event_loop().run_until_complete(provider.synthesize("你好"))
+        result = asyncio.run(provider.synthesize("你好"))
         self.assertFalse(result.ok)
 
 

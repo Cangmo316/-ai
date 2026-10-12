@@ -42,6 +42,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 
@@ -112,36 +113,48 @@ class CommandAsrProvider(AsrProvider):
         if not audio_path or not os.path.exists(audio_path):
             return AsrResult(ok=False, reason="音频文件不存在")
 
-        workdir = tempfile.mkdtemp(prefix="bilin-asr-")
-        out_file = os.path.join(workdir, "result.txt")
-        command = (self.template
-                   .replace("{audio}", audio_path)
-                   .replace("{language}", language or "zh")
-                   .replace("{out}", out_file))
+        # ⚠️ 这个 workdir 必须**无条件删除**。
+        # 踩坑记录：第一版创建了 workdir、让引擎往里写 `result.txt`，却**从不清理**
+        # —— 每次识别都在系统临时目录留下一个含**转写文本**的目录，
+        # 属于语音数据泄漏（老人说过的话被留在磁盘上）。
+        # 是"端点跑完不留临时目录"这条测试断言把它抓出来的。
+        workdir = tempfile.mkdtemp(prefix="bilin-asr-out-")
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout_s)
-            if process.returncode != 0:
-                tail = (stderr or b"").decode("utf-8", "ignore")[-300:]
-                return AsrResult(ok=False, reason="ASR 命令退出码 %d：%s" % (process.returncode, tail))
-            # 引擎若写了文件就用文件，否则从 stdout 取
-            text = ""
-            if os.path.exists(out_file):
-                with open(out_file, "r", encoding="utf-8", errors="ignore") as handle:
-                    text = handle.read().strip()
-            if not text:
-                text = _last_text_line((stdout or b"").decode("utf-8", "ignore"))
-            if not text:
-                return AsrResult(ok=False, reason="引擎没有输出识别文本")
-            return AsrResult(text=text, ok=True, language=language or "zh")
-        except asyncio.TimeoutError:
-            return AsrResult(ok=False, reason="识别超时（%.0fs）" % self.timeout_s)
-        except Exception as exc:  # noqa: BLE001 —— 识别失败不能影响 App 其他功能
-            return AsrResult(ok=False, reason="识别调用异常：%s" % exc)
+            out_file = os.path.join(workdir, "result.txt")
+            command = (self.template
+                       .replace("{audio}", audio_path)
+                       .replace("{language}", language or "zh")
+                       .replace("{out}", out_file))
+            try:
+                process = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(),
+                                                        timeout=self.timeout_s)
+                if process.returncode != 0:
+                    tail = (stderr or b"").decode("utf-8", "ignore")[-300:]
+                    return AsrResult(ok=False,
+                                     reason="ASR 命令退出码 %d：%s" % (process.returncode, tail))
+                # 引擎若写了文件就用文件，否则从 stdout 取。
+                # 注意：**不把文本写进日志**（只可能出现在返回值里）
+                text = ""
+                if os.path.exists(out_file):
+                    with open(out_file, "r", encoding="utf-8", errors="ignore") as handle:
+                        text = handle.read().strip()
+                if not text:
+                    text = _last_text_line((stdout or b"").decode("utf-8", "ignore"))
+                if not text:
+                    return AsrResult(ok=False, reason="引擎没有输出识别文本")
+                return AsrResult(text=text, ok=True, language=language or "zh")
+            except asyncio.TimeoutError:
+                return AsrResult(ok=False, reason="识别超时（%.0fs）" % self.timeout_s)
+            except Exception as exc:  # noqa: BLE001 —— 识别失败不能影响 App 其他功能
+                return AsrResult(ok=False, reason="识别调用异常：%s" % exc)
+        finally:
+            # 含转写文本的中间目录一律清掉（成功/失败/超时都走这里）
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 class HttpAsrProvider(AsrProvider):
