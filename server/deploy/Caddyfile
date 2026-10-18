@@ -1,0 +1,71 @@
+# 比邻AI · Caddyfile
+#
+# 放到 /etc/caddy/Caddyfile
+#
+# 为什么也准备一份 Caddy 配置：
+#   Caddy **自动申请并续期 HTTPS 证书**，不需要 certbot、不需要定时任务，
+#   配置只有几行。如果服务器上没有既有的 Nginx，用 Caddy 最省事。
+#   已经有 Nginx 在跑别的站点的，用 nginx-bilin.conf 那份。
+#
+# ⚠️ 和 Nginx 一样，SSE 流式回复必须单独关掉缓冲，
+#    否则聊天回复会"憋很久再整段蹦出来"。
+
+{
+    # 管理员邮箱：Let's Encrypt 证书到期提醒会发到这里
+    email you@example.com
+}
+
+api.example.com {
+    # ── SSE：聊天流式回复 ────────────────────────────────
+    # Caddy 的 flush_interval -1 表示"立刻 flush"，等价于 Nginx 的 proxy_buffering off。
+    # 这条必须放在通用反代之前，Caddy 按最具体的路径优先匹配。
+    @chatstream path /v1/chat/stream
+    handle @chatstream {
+        reverse_proxy 127.0.0.1:8000 {
+            flush_interval -1
+            transport http {
+                # 老人网络慢、思考时间长，别中途断开
+                read_timeout 300s
+                write_timeout 300s
+            }
+        }
+    }
+
+    # ── 其余接口 ────────────────────────────────────────
+    handle {
+        reverse_proxy 127.0.0.1:8000 {
+            transport http {
+                read_timeout 120s
+                write_timeout 120s
+            }
+        }
+    }
+
+    # ── 上传大小（病例图片 / PDF）────────────────────────
+    request_body {
+        max_size 32MB
+    }
+
+    # ── 安全响应头 ──────────────────────────────────────
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+
+    # ── 健康检查不写访问日志 ────────────────────────────
+    @healthz path /healthz
+    log {
+        output file /var/log/caddy/bilin-access.log {
+            roll_size 20mb
+            roll_keep 5
+        }
+        # 健康检查不记录，避免日志被刷满
+        skip @healthz
+    }
+
+    # 压缩（HTTP/2 下 SSE 已被单独 handle 拦走，不会受影响）
+    encode zstd gzip
+}

@@ -1,0 +1,53 @@
+[Unit]
+Description=比邻AI 后端服务（FastAPI）
+Documentation=https://github.com/Cangmo316/-ai
+# 依赖网络就绪；不依赖数据库服务（本项目默认 SQLite，零外部依赖）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bilin
+Group=bilin
+
+# ⚠️ WorkingDirectory 必须设成 server 目录。
+# 原因：.env 里是 `DATABASE_URL=sqlite:///data/bilin.db` —— **相对路径**。
+# 工作目录不对，数据库会被建到别的目录（甚至 / 根目录下），表现为"数据莫名清空"。
+WorkingDirectory=/opt/bilin/server
+
+# 用 venv 里的 python 直接跑 run.py。
+# run.py 内部会读 settings 的 HOST/PORT 并 uvicorn.run，与手工启动行为一致。
+ExecStart=/opt/bilin/server/.venv/bin/python run.py
+
+# 进程异常退出时自动拉起
+Restart=always
+RestartSec=3
+
+# 停止时先发 SIGTERM 让 uvicorn 优雅关闭（等在途的 SSE 流结束），15 秒后再强杀
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# 日志进 journald，用 journalctl -u bilin-api 查看
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bilin-api
+
+# ── 安全加固 ──────────────────────────────────────────────
+# 只允许写 /opt/bilin/server 下的运行数据目录；
+# 这条同时防止代码被进程自己改掉（被入侵时降低影响面）。
+ReadWritePaths=/opt/bilin/server/data /opt/bilin/server/case_files /opt/bilin/server/_voice_samples
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# 环境变量：密钥放在单独文件里（权限 600），不进 systemd 单元文件
+# 文件格式为每行 KEY=VALUE，不加 export
+EnvironmentFile=-/etc/bilin/bilin.env
+
+[Install]
+WantedBy=multi-user.target
