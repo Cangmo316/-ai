@@ -253,3 +253,27 @@ class ChannelRegistry:
                 return result
             last = result
         return last
+
+    async def deliver_all(self, task: ReminderTask, text: str) -> list[ChannelResult]:
+        """**每条通道都试一遍**，返回全部结果。
+
+        为什么需要它（与 `deliver` 的区别）：
+          `deliver` 命中第一条成功就返回 —— 提醒只要送到就够。
+          但"主动关心"要的是**双保险**：
+            inbox   写进会话（打开 App 看得到、可追溯）
+            unipush 发系统通知（关掉 App 也能收到）
+          用 deliver 的话，inbox 一成功 unipush 就永远轮不到，
+          老人关掉 App 就收不到任何消息 —— 正是最需要提醒他的时候。
+
+        ⚠️ 这是 2026-10 的教训：原来只有 deliver，导致"配了推送却从来不推送"。
+        """
+        results: list[ChannelResult] = []
+        for channel in self.channels:
+            try:
+                results.append(await channel.deliver(task, text))
+            except Exception:  # noqa: BLE001 —— 一条通道挂掉不能拖垮其余
+                logger.exception("通道 %s 投递失败", channel.name)
+                results.append(
+                    ChannelResult(ok=False, channel=channel.name, detail="通道异常")
+                )
+        return results

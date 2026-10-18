@@ -41,7 +41,7 @@ export function fetchMessages(token, conversationId, limit) {
  * @param {object} params
  * @param {string} params.conversationId
  * @param {string} params.text
- * @param {string} [params.senderRole] 'elder'（本人，默认）/ 'agent'（智能体代发）
+ * @param {string} [params.senderRole] 'elder'（本人，默认）；智能体代发已移除，传 agent 也会被当真人消息
  * @param {string} [params.quoteId] 引用的那条消息 id（长按"引用"时带上）
  */
 export function sendMessage(token, params = {}) {
@@ -135,28 +135,6 @@ export function fetchFamilyOverview(token, number, date) {
   })
 }
 
-/**
- * 让对方（不在线的家人）的智能体代回一句。
- *
- * **身份透明**：服务端以 `sender_role='agent'` 落库，端侧据此显示「AI 发送」角标。
- *
- * @param {object} params
- * @param {string} params.conversationId
- * @param {string} [params.schedule] 对方的日程摘要（端侧从 /v1/family/overview 取）
- * @param {string} [params.peerName] 对方名字（代回的署名）
- */
-export function requestAutoReply(token, params = {}) {
-  return request({
-    url: resolveURL(ENDPOINTS.conversationMessages) + '/auto-reply',
-    method: 'POST',
-    header: authHeader(token),
-    data: {
-      conversationId: params.conversationId || '',
-      schedule: params.schedule || '',
-      peerName: params.peerName || ''
-    }
-  })
-}
 /* ══════════════════════════════════════════════════════════════════
    绑定要对方同意（2026-10）
    ══════════════════════════════════════════════════════════════════ */

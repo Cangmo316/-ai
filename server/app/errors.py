@@ -125,9 +125,6 @@ MESSAGING: dict[str, ErrorSpec] = {
     "wiki_item_not_found": ErrorSpec(404, "这条记忆已经没有了", False),
     # 主动关心
     "care_unavailable": ErrorSpec(503, "这个功能暂时没打开", True),
-    # 对方智能体代回
-    "not_a_family_conversation": ErrorSpec(400, "只有和家人的会话才能代回", False),
-    "nothing_to_reply": ErrorSpec(400, "还没有可以接的话", False),
     # 智能体设置（模型选择）
     "model_settings_unavailable": ErrorSpec(503, "模型设置暂时不可用", True),
     "model_mode_invalid": ErrorSpec(400, "模型选择只能是内置或自定义", False),

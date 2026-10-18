@@ -137,9 +137,20 @@ class Settings:
     # 需求：智能体要有人的好奇心，每天主动问 1-2 次（吃了什么、有没有特别的事、
     # 有没有想做的事），并把这些记下来，在后续的标记日期里再次提出来。
     care_enabled: bool = True
+    #: 关心哪些老人。空 = 只关心"真的在用"的那一个（默认、推荐）。
+    #: 需求："主动关心只对用户绑定的这个老人" —— 不要把所有 demo 老人全问一遍。
+    care_elder_ids: list[str] = field(default_factory=list)
     #: 后台检查间隔（秒）。关心是"想起来问一句"，不需要秒级精确，
     #: 10 分钟一次足够，也避免"到点必发"的闹钟感。
     care_tick_seconds: float = 600.0
+    # ── 系统级推送（关掉 App 也能收到）──────────────────────
+    # 原来的 /v1/push/register 是进程内 SSE，只有 App 开着才收得到。
+    # 老人一天不开 App，恰恰是最该提醒他的时候 —— 所以需要系统级推送。
+    # 通道：null（默认，不推送）/ webhook（自建或厂商网关）/ jpush（极光）
+    push_provider: str = "null"
+    push_webhook_url: str = ""
+    push_jpush_app_key: str = ""
+    push_jpush_master_secret: str = ""
 
     # ── 提醒调度（P1）─────────────────────────────────────
     # 调度器开关：关掉后不再自动投递提醒（测试里常关掉，手动 tick）
@@ -212,6 +223,11 @@ class Settings:
             history_compress_threshold=_env_int("HISTORY_COMPRESS_THRESHOLD", 48),
             history_keep_recent=_env_int("HISTORY_KEEP_RECENT", 16),
             care_enabled=_env_bool("CARE_ENABLED", True),
+            care_elder_ids=[x for x in _env_str("CARE_ELDER_IDS", "").split(",") if x.strip()],
+            push_provider=_env_str("PUSH_PROVIDER", "null"),
+            push_webhook_url=_env_str("PUSH_WEBHOOK_URL", ""),
+            push_jpush_app_key=_env_str("PUSH_JPUSH_APP_KEY", ""),
+            push_jpush_master_secret=_env_str("PUSH_JPUSH_MASTER_SECRET", ""),
             care_tick_seconds=_env_float("CARE_TICK_SECONDS", 600.0),
             scheduler_enabled=_env_bool("SCHEDULER_ENABLED", True),
             scheduler_tick_seconds=_env_float("SCHEDULER_TICK_SECONDS", 30.0),

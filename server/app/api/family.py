@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 
 from ..accounts import Account
 from ..errors import api_error
-from ..messaging import ROLE_AGENT
+
 from .accounts import _current_account
 
 logger = logging.getLogger("bilin.family.api")
@@ -258,3 +258,4 @@ async def family_overview(
             "activity": _chat_activity(request, peer),
         }
     )
+

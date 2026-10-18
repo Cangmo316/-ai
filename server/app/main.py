@@ -337,11 +337,28 @@ def create_app(
         # （清醒时段、两次间隔、刚聊过就不插嘴），混在一起两边都会变复杂。
         care_loop = None
         if care is not None and config.care_enabled:
+            def care_targets() -> list[str]:
+                """主动关心只针对**真的在用**的那个老人。
+
+                需求："主动关心只对用户绑定的这个老人"。
+                老人档案里还有一堆 demo 老人，全问一遍就是骚扰。
+                判据用 `care._conversations`（他在本进程里聊过）——
+                这是唯一可靠的"绑定了"信号：没聊过，我们连往哪个会话发都不知道。
+                """
+                bound = [e for e in (config.care_elder_ids or [DEFAULT_ELDER_ID])
+                         if care._conversations.get(e)]
+                return bound
+
             care_loop = CareLoop(
                 care,
                 conversations,
-                elder_ids=[DEFAULT_ELDER_ID],
+                elder_ids=care_targets,
                 interval=config.care_tick_seconds,
+                # 系统级推送走**现成的** ChannelRegistry：
+                # 它有 inbox（写会话）+ unipush（转发云函数，关掉 App 也收得到）。
+                # 不另造一套 —— 提醒和关心共用同一条推送链路，
+                # 凭证、降级、失败处理只需要维护一处。
+                channels=scheduler.channels,
             )
             care_loop.start()
             # 手动触发接口（/v1/care/ask）要用同一个循环实例，

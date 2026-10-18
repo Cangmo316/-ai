@@ -230,22 +230,18 @@ class MessageActionsTestCase(unittest.TestCase):
         res = self.client.get("/v1/conversations", headers=auth(session))
         return next(c for c in res.json()["conversations"] if c["kind"] == "ai")["id"]
 
-    def test_can_delete_own_agent_reply_in_ai_conversation(self):
-        """**我自己 AI 会话**里的智能体回复可以删（它就是替我说话的）"""
+    def test_can_delete_own_message_in_ai_conversation(self):
+        """自己 AI 会话里自己说的话可以删"""
         ai = self.ai_conversation(self.a)
-        agent_msg = self.client.post(
+        msg = self.client.post(
             "/v1/conversations/messages",
-            json={"conversationId": ai, "text": "妈 我在呢", "senderRole": "agent"},
+            json={"conversationId": ai, "text": "妈 我在呢"},
             headers=auth(self.a),
         ).json()["message"]
-        # 服务端会给智能体一个独立的 sender id（不是我的账号 id）——
-        # 这正是原来删不掉的原因
-        self.assertTrue(agent_msg["senderId"].startswith("agent:"))
-        self.assertNotEqual(agent_msg["senderId"], self.a["account"]["id"])
 
         res = self.client.post(
             "/v1/conversations/messages/delete",
-            json={"conversationId": ai, "messageId": agent_msg["id"]},
+            json={"conversationId": ai, "messageId": msg["id"]},
             headers=auth(self.a),
         )
         self.assertEqual(res.status_code, 200, res.text)
@@ -253,43 +249,14 @@ class MessageActionsTestCase(unittest.TestCase):
         res = self.client.get(
             "/v1/conversations/messages", params={"conversationId": ai}, headers=auth(self.a)
         )
-        self.assertNotIn(agent_msg["id"], [m["id"] for m in res.json()["messages"]])
+        self.assertNotIn(msg["id"], [m["id"] for m in res.json()["messages"]])
 
-    def test_cannot_delete_peer_agent_reply_in_family_conversation(self):
-        """**家人会话**里对方智能体代回的**不能删** —— 那是对方记录的一部分"""
-        self.send(self.a, "在家吗")
-        res = self.client.post(
-            "/v1/conversations/messages/auto-reply",
-            json={"conversationId": self.cid, "peerName": self.b["account"]["name"]},
-            headers=auth(self.a),
-        )
-        self.assertEqual(res.status_code, 200, res.text)
-        body = res.json()
-        self.assertTrue(body.get("ok"), body)
-        agent_msg = body["message"]
-        self.assertTrue(agent_msg["senderId"].startswith("agent:"))
-
-        # A 想删掉"对方智能体代 B 回的那条" → 拒绝
-        res = self.client.post(
-            "/v1/conversations/messages/delete",
-            json={"conversationId": self.cid, "messageId": agent_msg["id"]},
-            headers=auth(self.a),
-        )
-        self.assertEqual(res.status_code, 403)
-        self.assertEqual(res.json()["error"]["code"], "not_your_message")
-
-        # 那条还在（没有被篡改掉）
-        res = self.client.get(
-            "/v1/conversations/messages", params={"conversationId": self.cid}, headers=auth(self.a)
-        )
-        self.assertIn(agent_msg["id"], [m["id"] for m in res.json()["messages"]])
-
-    def test_cannot_delete_another_accounts_agent_reply(self):
-        """别人 AI 会话里的智能体回复更不能删"""
+    def test_cannot_delete_another_accounts_message(self):
+        """别人会话里的消息不能删（代回功能已移除，这里只验证归属校验）"""
         b_ai = self.ai_conversation(self.b)
         b_msg = self.client.post(
             "/v1/conversations/messages",
-            json={"conversationId": b_ai, "text": "乙的智能体回复", "senderRole": "agent"},
+            json={"conversationId": b_ai, "text": "乙自己说的一句"},
             headers=auth(self.b),
         ).json()["message"]
 
@@ -418,74 +385,6 @@ class ModelSettingTestCase(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════
 
 
-class AutoReplyTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        self.provider = FakeProvider("穿上了，正去医院量血压呢")
-        self.client = make_client(self.provider)
-        self.a = register(self.client, "甲")
-        self.b = register(self.client, "乙")
-        self.cid = family_conversation(self.client, self.a, self.b)
-
-    def test_auto_reply_lands_as_agent_with_peer_name(self):
-        self.client.post("/v1/conversations/messages", headers=auth(self.a),
-                         json={"conversationId": self.cid, "text": "降温了，穿秋裤没",
-                               "senderRole": "elder"})
-        res = self.client.post("/v1/conversations/messages/auto-reply", headers=auth(self.a),
-                               json={"conversationId": self.cid,
-                                     "schedule": "他 15:00 去社区医院量血压",
-                                     "peerName": self.b["account"]["name"]})
-        self.assertEqual(res.status_code, 200, res.text)
-        body = res.json()
-        self.assertTrue(body["ok"], body)
-
-        message = body["message"]
-        self.assertEqual(message["senderRole"], "agent")           # 端侧据此显示「AI 发送」
-        self.assertTrue(message["senderId"].startswith("agent:"))  # 独立 sender id
-        self.assertEqual(message["senderName"], self.b["account"]["name"])
-
-        # 对方也能在共享会话里看到这条
-        res = self.client.get("/v1/conversations/messages",
-                              params={"conversationId": self.cid}, headers=auth(self.b))
-        roles = [m["senderRole"] for m in res.json()["messages"]]
-        self.assertIn("agent", roles)
-
-    def test_prompt_contains_history_and_schedule_but_no_private_health(self):
-        """代回的 prompt 里有聊天记录与日程，**没有**对方的健康/病例隐私"""
-        self.client.post("/v1/conversations/messages", headers=auth(self.a),
-                         json={"conversationId": self.cid, "text": "记得吃药啊",
-                               "senderRole": "elder"})
-        self.client.post("/v1/conversations/messages/auto-reply", headers=auth(self.a),
-                         json={"conversationId": self.cid,
-                               "schedule": "他下午要去公园下棋",
-                               "peerName": self.b["account"]["name"]})
-
-        self.assertTrue(self.provider.seen, "provider 没被调用")
-        prompt = json.dumps(self.provider.seen[-1], ensure_ascii=False)
-        self.assertIn("记得吃药啊", prompt)      # 两人聊天记录进去了（"越聊越像"靠它）
-        self.assertIn("公园下棋", prompt)        # 日程进去了
-        # 这几个是**对方的隐私**，代回绝不能带（我们故意不传 elder_id）
-        for forbidden in ("【最近的测量数值】", "【他去医院的情况】", "【你记得的事】"):
-            self.assertNotIn(forbidden, prompt, "代回 prompt 里不应出现 " + forbidden)
-
-    def test_auto_reply_rejected_for_ai_conversation(self):
-        res = self.client.get("/v1/conversations", headers=auth(self.a))
-        ai = next(c for c in res.json()["conversations"] if c["kind"] == "ai")
-        res = self.client.post("/v1/conversations/messages/auto-reply", headers=auth(self.a),
-                               json={"conversationId": ai["id"], "peerName": "乙"})
-        self.assertEqual(res.status_code, 400)
-        self.assertEqual(res.json()["error"]["code"], "not_a_family_conversation")
-
-    def test_auto_reply_needs_something_to_reply_to(self):
-        res = self.client.post("/v1/conversations/messages/auto-reply", headers=auth(self.a),
-                               json={"conversationId": self.cid, "peerName": "乙"})
-        self.assertEqual(res.status_code, 400)
-        self.assertEqual(res.json()["error"]["code"], "nothing_to_reply")
-
-    def test_auto_reply_requires_auth(self):
-        res = self.client.post("/v1/conversations/messages/auto-reply",
-                               json={"conversationId": self.cid})
-        self.assertEqual(res.status_code, 401)
-
 
 # ══════════════════════════════════════════════════════════════════════
 # 绑定要对方同意
@@ -602,3 +501,6 @@ class BindConsentTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

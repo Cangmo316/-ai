@@ -79,7 +79,6 @@ export {
   fetchMessages,
   markConversationRead,
   recallMessage,
-  requestAutoReply,
   respondBindFamily,
   sendMessage,
   unbindFamily

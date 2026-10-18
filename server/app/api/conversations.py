@@ -29,18 +29,14 @@ from ..errors import api_error
 from ..messaging import (
     KIND_AI,
     KIND_FAMILY,
-    ROLE_AGENT,
     ROLE_ELDER,
     STATUS_ACCEPTED,
     STATUS_PENDING,
-    agent_sender_id,
     ai_conversation_id,
     is_agent_sender,
     kind_of,
 )
 from ..models.message import now_iso
-# 代回时用真实的人设 prompt（不传 elder_id，避免注入对方隐私，见 auto_reply）
-from ..persona.prompts import build_system_prompt
 
 logger = logging.getLogger("bilin.messaging.api")
 
@@ -57,7 +53,8 @@ class SendRequest(BaseModel):
 
     conversation_id: str = Field(default="", alias="conversationId")
     text: str = Field(default="")
-    #: agent = 智能体（服务端/家人端代为发送），缺省是老人本人
+    #: 已废弃：智能体代发功能已删除，家人会话里只有真人说话。
+    #: 字段保留只为兼容老端侧（传了也被忽略，一律按真人消息处理）。
     sender_role: str = Field(default=ROLE_ELDER, alias="senderRole")
     #: 引用的那条消息 id（端侧长按"引用"时带上）
     quote_id: str = Field(default="", alias="quoteId")
@@ -229,24 +226,24 @@ async def send_message(payload: SendRequest, request: Request):
 
     store = _store(request)
     # 消息署名用当前账号的名字：家人会话里对方看到的就是这个名字。
-    # 智能体例外：它不是某个账号，必须用独立的 sender id，
-    # 否则未读/已读分不清"谁发给谁"（见 messaging/models.py 的 AGENT_ID_PREFIX）。
-    role = payload.sender_role or ROLE_ELDER
-    is_agent = role == ROLE_AGENT
+    #
+    # ⚠️ 2026-10 起**不再支持 senderRole=agent**（智能体代发功能已删除）。
+    # 家人会话里只有真人说话；AI 只在它自己的会话（ai:）里说话。
+    # 这里强制成 ROLE_ELDER 是为了兼容老端侧：万一还传 agent，
+    # 也一律当真人消息落库，免得留下"署名是家人、其实是 AI 代回"的错乱记录。
+    role = ROLE_ELDER
     message = store.add_message(
         conversation.id,
-        sender_id=agent_sender_id(conversation.id) if is_agent else account.id,
+        sender_id=account.id,
         sender_name=account.name,
         sender_role=role,
         text=text,
         quote_id=str(payload.quote_id or ""),
     )
 
-    # ── 子女说话风格：只有**真人**发的消息才是可学来源 ──
-    # 为什么排除 agent：sender_role=agent 是 AI 代回的，
-    # 从它身上学"子女怎么说话"等于学模型自己的口吻，是循环的。
-    # 也只对家人会话有意义（智能体会话里没有真人对话者）。
-    if not is_agent and conversation.kind == KIND_FAMILY:
+    # ── 家人说话风格：家人会话里都是真人的话，可以学 ──
+    # 智能体会话里"对方"是 AI 生成的，不学（学了等于学模型自己的口吻）。
+    if conversation.kind == KIND_FAMILY:
         _learn_peer_style(request, text)
 
     return JSONResponse(
@@ -390,154 +387,6 @@ def _seconds_since(stamp: str) -> float | None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - parsed).total_seconds()
 
-
-# ══════════════════════════════════════════════════════════════════════
-# 对方不在线时，用对方的智能体代回一句
-# ══════════════════════════════════════════════════════════════════════
-
-#: 往 prompt 里带几轮家人会话的历史（"越聊越像"就靠它）
-AUTO_REPLY_HISTORY_TURNS = 12
-#: 代回内容长度上限（一句话，不要长篇大论）
-AUTO_REPLY_MAX_TOKENS = 120
-
-
-class AutoReplyRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-
-    conversation_id: str = Field(default="", alias="conversationId")
-    #: 对方的日程摘要（端侧从 /v1/family/overview 取，拼成一句话传进来）
-    #: 为什么不在这里自己查：这个接口要用**对方的**计划数据，
-    #: 而现在只有已绑定的家人能查；由端侧按已授权的路径取好再传，权限边界更清楚。
-    schedule: str = Field(default="", alias="schedule")
-    #: 代回时"以谁的口吻"—— 用对方账号名，署名才对得上
-    peer_name: str = Field(default="", alias="peerName")
-
-
-@router.post("/messages/auto-reply")
-async def auto_reply(payload: AutoReplyRequest, request: Request):
-    """对方不在线时，用**对方的智能体**代他回一句。
-
-    ## 为什么需要单独一个接口
-
-    服务端有两套互不相通的存储：
-      · `conversation_messages` —— ChatService 的 store（/v1/chat/send 写这里）
-      · `messages`              —— 家人会话（本接口要写这里）
-    所以不能借用 /v1/chat/send 生成（它会把内容落到前者，家人会话里根本看不到）。
-
-    ## 隐私边界（重要）
-
-    组装 prompt 时**故意不传 `elder_id`**：一旦传了，`_build_messages` 会把
-    **对方的健康数值、病例病史、记忆**一起注入（见 orchestration/service.py），
-    那是对方的隐私，不该因为"代他回一句话"就暴露。
-    这里只注入：对方的人设（按关系近似）+ 两人聊天记录 + 端侧给的日程摘要。
-
-    ## 身份透明
-
-    落库用 `sender_role='agent'`，端侧据此显示「AI 发送」角标。
-    **代家人发言这件事必须让人看得出来**，不能伪装成他本人真的回了话。
-    """
-    account, error = _require_account(request)
-    if error:
-        return error
-
-    conversation, error = _conversation_for(request, account, payload.conversation_id)
-    if error:
-        return error
-    if conversation.kind != KIND_FAMILY:
-        return api_error("not_a_family_conversation")
-
-    store = _store(request)
-
-    # 对端账号：家人会话只有两个人
-    peer_id = next((p for p in conversation.participants() if p != account.id), "")
-    peer = _accounts(request).by_id(peer_id) if peer_id else None
-    if peer is None:
-        return api_error("peer_not_bound")
-
-    # 历史：把对方那边的消息当 assistant（他的话），我这边的当 user
-    history = store.messages_of(conversation.id, limit=AUTO_REPLY_HISTORY_TURNS * 2 + 2)
-    lines: list[str] = []
-    for message in history:
-        if message.recalled or not (message.text or "").strip():
-            continue
-        speaker = "我" if message.sender_id == peer_id else (account.name or "对方")
-        lines.append("%s：%s" % (speaker, message.text.strip()))
-
-    if not lines:
-        return api_error("nothing_to_reply")
-
-    # 人设：端侧的角色设置只在对方手机上，服务端拿不到，按关系挑一个近似的。
-    # 从"我"的视角看，对方是家人，所以按「家人」这个关系去匹配内置人设。
-    personas = getattr(request.app.state, "personas", None)
-    persona = personas.for_relation("家人", peer.name) if personas is not None else None
-
-    schedule_line = (payload.schedule or "").strip()
-    system = build_system_prompt(persona) if persona is not None else (
-        "你是「%s」，正在用手机跟家人聊天。" % (peer.name or "家人")
-    )
-    system += (
-        "\n\n【现在的情况】\n"
-        + (schedule_line or "他没有特别的安排。")
-        + "\n\n对方现在不在线，由你替他回一条**很短**的消息（一句话，20 字以内）。\n"
-        "要求：\n"
-        "· 用他平时的说话口气，像家里人聊天，不要像客服\n"
-        "· 可以提到他正在做什么（看上面的情况），但别编造没给的信息\n"
-        "· 不要提“AI”“代回”这类词，也不要说自己是智能体\n"
-        "· 直接给这一句话，不要加引号、不要解释"
-    )
-
-    user_block = "最近你们的聊天记录：\n" + "\n".join(lines[-AUTO_REPLY_HISTORY_TURNS:]) + "\n\n请替 %s 回一句。" % (
-        peer.name or "他"
-    )
-
-    provider = getattr(request.app.state, "provider", None)
-    if provider is None:
-        return api_error("llm_unavailable")
-
-    settings = getattr(request.app.state, "settings", None)
-    # 代回只要**一句话**：另建一个 max_tokens 很小的 provider，
-    # 免得它按正常对话的长度写一大段（老人那边看到一长条会莫名其妙）。
-    # 注意 stream() 本身不收 max_tokens，那是构造参数。
-    try:
-        from ..llm.openai_compat import OpenAICompatProvider
-
-        if isinstance(provider, OpenAICompatProvider):
-            provider = OpenAICompatProvider(
-                base_url=provider.base_url,
-                api_key=provider.api_key,
-                model=provider.model,
-                timeout=getattr(settings, "llm_timeout", 60.0),
-                temperature=getattr(settings, "llm_temperature", 0.7),
-                max_tokens=AUTO_REPLY_MAX_TOKENS,
-            )
-    except Exception:  # noqa: BLE001 —— 建不出来就用原 provider，只是可能话长一点
-        logger.info("代回用的短回复 provider 没建起来，改用默认 provider")
-
-    try:
-        chunks: list[str] = []
-        async for delta in provider.stream(
-            [{"role": "system", "content": system}, {"role": "user", "content": user_block}]
-        ):
-            chunks.append(delta)
-            if sum(len(c) for c in chunks) > 200:
-                break
-    except Exception as exc:  # noqa: BLE001 —— 代回失败不该影响老人自己的消息
-        logger.info("代回失败：%s", exc)
-        return JSONResponse({"ok": False, "reason": "对方暂时没回上：%s" % str(exc)[:80]})
-
-    body = "".join(chunks).strip().strip('"').strip("「」")
-    if not body:
-        return JSONResponse({"ok": False, "reason": "这次没生成出内容"})
-
-    message = store.add_message(
-        conversation.id,
-        # 用独立的 agent sender id：未读/已读才分得清"谁发给谁"
-        sender_id=agent_sender_id(conversation.id),
-        sender_name=peer.name or "家人",
-        sender_role=ROLE_AGENT,
-        text=body,
-    )
-    return JSONResponse(content={"ok": True, "message": message.to_dict(), "for": peer.name})
 
 
 @router.post("/read")
@@ -719,3 +568,4 @@ async def unbind_family(
     if not store.unbind(account.id, peer.id):
         return api_error("bind_not_found")
     return JSONResponse(content={"ok": True})
+

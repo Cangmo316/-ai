@@ -75,6 +75,27 @@ class MessagingTestCase(unittest.TestCase):
             headers=self.auth(who),
         )
 
+    def send_agent(self, who: dict, conversation_id: str, text: str):
+        """造一条**智能体**发来的消息。
+
+        为什么不走 HTTP 的 senderRole=agent：
+        2026-10 删掉了"智能体代发"功能，`/v1/conversations/messages` 现在
+        只接受真人的消息（传 agent 也按真人落库）。AI 自己的回复是
+        `/v1/chat/*` 那条链路写进会话的，所以这里直接落库，
+        模拟"智能体回了一条"的效果。
+        """
+        from app.models.message import Message, ROLE_AGENT, TYPE_TEXT
+        from app.messaging.models import agent_sender_id
+
+        store = self.client.app.state.messaging
+        return store.add_message(
+            conversation_id,
+            sender_id=agent_sender_id(conversation_id),
+            sender_name="比邻AI",
+            sender_role=ROLE_AGENT,
+            text=text,
+        )
+
     def convs(self, who: dict) -> list[dict]:
         response = self.client.get("/v1/conversations", headers=self.auth(who))
         self.assertEqual(response.status_code, 200, response.text)
@@ -295,14 +316,14 @@ class MessagingTestCase(unittest.TestCase):
         """
         conv = self.ai_conv(self.jia)
         self.send(self.jia, conv, "你好", role="elder")
-        self.send(self.jia, conv, "我是比邻，到点提醒你吃药", role="agent")
+        self.send_agent(self.jia, conv, "我是比邻，到点提醒你吃药")
         self.assertEqual(self.conv_of(self.jia, conv)["unread"], 1, "智能体回复被误算成已读")
 
     def test_agent_message_shows_receipt_state(self) -> None:
         """智能体发来的消息：老人读之前是未读，读之后归零（端侧据此显示接收状态）"""
         conv = self.ai_conv(self.jia)
         self.send(self.jia, conv, "你好", role="elder")
-        self.send(self.jia, conv, "我是比邻，到点提醒你吃药", role="agent")
+        self.send_agent(self.jia, conv, "我是比邻，到点提醒你吃药")
         # 智能体那条不是老人发的 → 老人未读 +1
         self.assertEqual(self.conv_of(self.jia, conv)["unread"], 1)
         self.client.post("/v1/conversations/read", json={"conversationId": conv}, headers=self.auth(self.jia))

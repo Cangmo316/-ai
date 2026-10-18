@@ -107,7 +107,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { settings } from '@/common/store.js'
 import { chat, initChat, onLiveTurn, retry, send, stop } from '@/stores/chat.js'
 import { pending, remarkOf, refreshConversations } from '@/stores/contacts.js'
-import { deleteMessage, fetchFamilyOverview, fetchMessages, markConversationRead, recallMessage, requestAutoReply, sendMessage } from '@/api/index.js'
+import { deleteMessage, fetchFamilyOverview, fetchMessages, markConversationRead, recallMessage, sendMessage } from '@/api/index.js'
 import { readAccount, readToken } from '@/stores/account.js'
 // 语音输入：按住说话 → 识别成文字（两端录音 API 差异关在 common/voice-input.js 里）
 import { VoiceRecorder, transcribeAudio, voiceSupported } from '@/common/voice-input.js'
@@ -211,13 +211,12 @@ function isAiSent(m) {
 /**
  * 这条智能体回复是不是**我自己的**（也就是我这条 AI 会话里的那个）。
  *
- * 与 `isAiSent` 是互斥的两种 agent 消息：
- *   · 我 AI 会话里的 agent 回复 → 归我管（能删）
- *   · 家人会话里对方智能体代回的 → **不能删**（那是对方记录的一部分）
- *
  * 判据与服务端 `_can_manage` 一致：只有**非家人会话**里的 agent 消息才算我的。
  * 端侧不靠 senderId 里的会话 id 去解析——那等于把服务端的编码规则复制一份，
  * 两边一旦不同步就会「按钮给了但请求被拒」。这里只按会话类型分。
+ *
+ * ⚠️ 2026-10：智能体代发功能已删除。家人会话里不再有 agent 消息，
+ * 所以这个判断现在实际上只有"我的 AI 会话"这一种情况。
  */
 function isMyAgentReply(m) {
   if (!m || isFamily.value) return false
@@ -448,81 +447,6 @@ function onSend() {
   }
 }
 
-/* --------------------------------------- 对方不在线时，他的智能体代回一句 */
-
-/** 正在等代回（避免连点造成多条代回） */
-let autoReplyBusy = false
-
-/**
- * 把对方今天的日程拼成一句话，给代回的 prompt 用。
- *
- * 需求：「回复的内容为对方现在正在干嘛（参考日程安排）比如有特殊安排时」。
- *
- * 取不到（没绑定 / 接口失败 / 今天没安排）都返回空串 —— 代回照常进行，
- * 只是不提"在干嘛"，而不是整条代回失败。
- */
-function buildPeerSchedule() {
-  const token = readToken()
-  if (!token || !pending.peerNumber) return Promise.resolve('')
-  return fetchFamilyOverview(token, pending.peerNumber)
-    .then((data) => {
-      const today = (data && data.today) || {}
-      const items = Array.isArray(today.items) ? today.items : []
-      if (!items.length) return ''
-      // 只挑"还没做"的：已完成的事说"正在做"就不对了
-      const pendingItems = items.filter((it) => !it.done)
-      const list = (pendingItems.length ? pendingItems : items).slice(0, 3)
-      const parts = list.map((it) => {
-        const time = it.time ? it.time + ' ' : ''
-        return time + (it.title || it.type || '有事')
-      })
-      return '他今天的安排：' + parts.join('；') + '。'
-    })
-    .catch(() => '')
-}
-
-/**
- * 我发完消息后，请求服务端让**对方的智能体**代他回一句。
- *
- * 为什么放在端侧触发而不是服务端自动：
- * "对方在不在线"这个判断只有端侧知道（他在用 App 就不会需要代回）。
- * 服务端一旦自动代回，真人自己回的时候就会变成两个人各说一句。
- *
- * 代回失败**不打扰老人**：这只是"对方没及时回"的兜底，不是主流程。
- */
-function maybePeerAutoReply() {
-  if (!isFamily.value || autoReplyBusy) return
-  if (!pending.peerNumber) return
-  autoReplyBusy = true
-  buildPeerSchedule()
-    .then((schedule) => {
-      const token = readToken()
-      if (!token) return null
-      return requestAutoReply(token, {
-        conversationId: conversationId.value,
-        schedule,
-        peerName: serverTitle.value || ''
-      })
-    })
-    .then((data) => {
-      if (!data || !data.ok) return
-      // 直接把代回那条追加进来，不等下一次拉历史（老人很快就能看到回应）
-      const msg = data.message
-      if (!msg || !msg.id) return
-      const exists = familyMessages.value.some((m) => m.id === msg.id)
-      if (!exists) {
-        familyMessages.value = familyMessages.value.concat([msg])
-        scrollToBottom()
-      }
-      refreshConversations()
-    })
-    .catch(() => {
-      // 代回是兜底能力，失败就静默（老人不该为这个看到报错）
-    })
-    .then(() => {
-      autoReplyBusy = false
-    })
-}
 
 /* ------------------------------------------------- 长按菜单：撤回 / 引用 / 删除 */
 
@@ -582,7 +506,7 @@ function canDelete(m) {
  * 与微信/QQ 一致：「引用」双方消息都有；「撤回」只有自己发的；
  * 「删除」除了自己发的，还包括**我 AI 会话里的智能体回复**
  * （它就是替我说话的，用户反馈"删不掉"指的就是它）。
- * 家人会话里对方的消息与对方智能体的代回都不给删除入口。
+ * 家人会话里对方的消息不给删除入口（智能体代发已删除，家人会话里只有真人）。
  *
  * 用 `uni.showActionSheet` 而不是自绘弹层：原生弹层在 App 与 H5 上行为一致、
  * 层级不会被 WebView 里的 3D canvas 盖住，也不必处理滚动锁定。
@@ -768,8 +692,6 @@ function sendFamilyText(text, quoteId) {
         )
       }
       refreshConversations()
-      // 我发出去了 → 让对方（不在线时）的智能体代他回一句
-      maybePeerAutoReply()
     })
     .catch((error) => {
       // 发失败就撤掉本地那条，别让老人以为发出去了
@@ -994,3 +916,4 @@ function toVision() {
   line-height: 1.2;
 }
 </style>
+
