@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..errors import api_error
 from ..llm.base import LLMError
+from ..persona.prompts import MODE_AUTO
 from ..orchestration.service import ChatService
 # 当前账号：智能体设置（按账号换模型）与模型读写接口都要用
 from .accounts import _current_account
@@ -42,6 +43,9 @@ class ChatRequest(BaseModel):
     persona_id: str | None = Field(default=None, alias="personaId")
     # 端侧的本地消息 id：重试会复用同一个 id，服务端据此幂等（见 orchestration/idempotency.py）
     client_msg_id: str | None = Field(default=None, alias="clientMsgId")
+    #: 人设模式：auto（默认，按内容自动切）/ chat（强制陪聊）/ medical（强制健康顾问）
+    #: 端侧「说话方式」开关传过来；脏值会在 persona.normalize_mode 里收敛成 auto。
+    persona_mode: str = Field(default=MODE_AUTO, alias="personaMode")
 
 
 def _service(request: Request) -> ChatService:
@@ -78,6 +82,7 @@ async def chat_stream(payload: ChatRequest, request: Request):
         elder_id=payload.elder_id,
         client_msg_id=payload.client_msg_id or "",
         account_id=_account_id(request),
+        persona_mode=payload.persona_mode,
     )
     return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
@@ -98,6 +103,7 @@ async def chat_send(payload: ChatRequest, request: Request):
             elder_id=payload.elder_id,
             client_msg_id=payload.client_msg_id or "",
             account_id=_account_id(request),
+            persona_mode=payload.persona_mode,
         )
     except LLMError as exc:
         logger.warning("一次性回复失败: code=%s", exc.code)

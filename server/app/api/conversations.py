@@ -241,6 +241,14 @@ async def send_message(payload: SendRequest, request: Request):
         text=text,
         quote_id=str(payload.quote_id or ""),
     )
+
+    # ── 子女说话风格：只有**真人**发的消息才是可学来源 ──
+    # 为什么排除 agent：sender_role=agent 是 AI 代回的，
+    # 从它身上学"子女怎么说话"等于学模型自己的口吻，是循环的。
+    # 也只对家人会话有意义（智能体会话里没有真人对话者）。
+    if not is_agent and conversation.kind == KIND_FAMILY:
+        _learn_peer_style(request, text)
+
     return JSONResponse(
         content={
             "message": message.to_dict(),
@@ -248,6 +256,25 @@ async def send_message(payload: SendRequest, request: Request):
         },
         status_code=201,
     )
+
+
+def _learn_peer_style(request: Request, text: str) -> None:
+    """让 wiki 学这条真人消息的说话风格（后台跑，失败无感）。
+
+    wiki 是增强功能：这里任何异常都只记日志，
+    绝不影响"消息本身已经发出去"这个事实。
+    """
+    wiki = getattr(request.app.state, "wiki", None)
+    provider = getattr(request.app.state, "provider", None)
+    if wiki is None or provider is None:
+        return
+    try:
+        # 单老人原型：老人档案 id 用默认那个
+        from ..models.elder import DEFAULT_ELDER_ID
+
+        wiki.schedule_peer_style_learn(DEFAULT_ELDER_ID, text, provider)
+    except Exception:  # noqa: BLE001
+        logger.exception("子女说话风格学习启动失败（不影响消息）")
 
 
 #: 撤回时间窗（秒）。与微信一致的"2 分钟内可撤回"。

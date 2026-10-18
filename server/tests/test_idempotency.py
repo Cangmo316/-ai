@@ -220,7 +220,15 @@ class IdempotencyApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.provider = CountingProvider(text="妈 好。")
         self.app = create_app(
-            settings=Settings(llm_provider="fake", llm_api_key="", scheduler_enabled=False),
+            settings=Settings(
+                llm_provider="fake",
+                llm_api_key="",
+                scheduler_enabled=False,
+                # 关掉 wiki：本组断言数的是**回复用了几次模型**，
+                # 而 wiki 学习会额外多调一次（设计如此，见 app/wiki/updater.py）。
+                # 不关掉的话 1 次回复会算成 2 次调用，测试就会误报。
+                wiki_enabled=False,
+            ),
             provider=self.provider,
         )
         self.client = TestClient(self.app)

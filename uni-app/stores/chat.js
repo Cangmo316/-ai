@@ -10,6 +10,7 @@
 
 import { reactive } from 'vue'
 import { chatStream, chatHistory, CHAT_EVENT } from '@/api/index.js'
+import { readPersonaMode } from '@/common/store.js'
 
 export const DEFAULT_CONVERSATION_ID = 'c_son'
 
@@ -196,6 +197,9 @@ function beginStream(text, clientMsgId) {
   handle = chatStream({
     conversationId: chat.conversationId,
     personaId: chat.persona.id,
+    // 说话方式：auto（默认，按内容自动切）/ chat / medical
+    // 用户在「我的 → 说话方式」里选，服务端据此决定这轮用哪个人设。
+    personaMode: readPersonaMode(),
     text,
     clientMsgId,
     onEvent: handleEvent,

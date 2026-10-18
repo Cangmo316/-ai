@@ -118,6 +118,11 @@ MESSAGING: dict[str, ErrorSpec] = {
     "not_your_message": ErrorSpec(403, "只能撤回或删除自己发的消息", False),
     "already_recalled": ErrorSpec(409, "这条消息已经撤回过了", False),
     "recall_expired": ErrorSpec(400, "超过 2 分钟了，撤不回来了", False),
+    # AI 了解我的（wiki）
+    "wiki_unavailable": ErrorSpec(503, "这个功能暂时没打开", True),
+    "wiki_kind_invalid": ErrorSpec(400, "不认识的记忆分类", False),
+    "wiki_section_invalid": ErrorSpec(400, "不认识的记忆小节", False),
+    "wiki_item_not_found": ErrorSpec(404, "这条记忆已经没有了", False),
     # 对方智能体代回
     "not_a_family_conversation": ErrorSpec(400, "只有和家人的会话才能代回", False),
     "nothing_to_reply": ErrorSpec(400, "还没有可以接的话", False),

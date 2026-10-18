@@ -114,6 +114,25 @@ class Settings:
     # ── 人设 ──────────────────────────────────────────────
     default_persona_id: str = "p_bilin"
 
+    # ── LLM wiki（老人画像 + 子女说话风格）───────────────────
+    # 开启后：每轮把相关小节注进 prompt，**每 N 轮**才异步学一次。
+    # ⚠️ 学习会多调一次模型。原来是每轮都学（成本翻倍），
+    #    改成攒 N 轮学一次：效果接近，成本降到 1/N。
+    wiki_enabled: bool = True
+    #: 多少轮学一次。1 = 每轮都学（老行为，最贵）。
+    #: 5 是实测折中：一次学 5 轮的对话，信息足够，也不至于拖太久才更新。
+    wiki_learn_every: int = 5
+
+    # ── 对话历史压缩 ─────────────────────────────────────
+    # history_turns=8 意味着只喂最近 8 轮，更早的全丢 ——
+    # 聊到 50 轮时前 42 轮的记忆就没了，表现为"又问我一遍说过的事"。
+    # 开启后：超过阈值把旧对话压成摘要，摘要注进 prompt。
+    history_compress_enabled: bool = True
+    #: 消息条数（含双方）超过这个就压缩。8 轮 ≈ 16 条，这里留 3 倍余量。
+    history_compress_threshold: int = 48
+    #: 压缩后仍保留多少条最近原文（不压）。
+    history_keep_recent: int = 16
+
     # ── 提醒调度（P1）─────────────────────────────────────
     # 调度器开关：关掉后不再自动投递提醒（测试里常关掉，手动 tick）
     scheduler_enabled: bool = True
@@ -179,6 +198,11 @@ class Settings:
             history_turns=_env_int("CHAT_HISTORY_TURNS", 8),
             sse_heartbeat_seconds=_env_float("SSE_HEARTBEAT_SECONDS", 10.0),
             default_persona_id=_env_str("DEFAULT_PERSONA_ID", "p_bilin"),
+            wiki_enabled=_env_bool("WIKI_ENABLED", True),
+            wiki_learn_every=_env_int("WIKI_LEARN_EVERY", 5),
+            history_compress_enabled=_env_bool("HISTORY_COMPRESS_ENABLED", True),
+            history_compress_threshold=_env_int("HISTORY_COMPRESS_THRESHOLD", 48),
+            history_keep_recent=_env_int("HISTORY_KEEP_RECENT", 16),
             scheduler_enabled=_env_bool("SCHEDULER_ENABLED", True),
             scheduler_tick_seconds=_env_float("SCHEDULER_TICK_SECONDS", 30.0),
             scheduler_manual_tick=_env_bool("SCHEDULER_MANUAL_TICK", True),

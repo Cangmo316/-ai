@@ -371,6 +371,8 @@ function readLocalPlans() {
   }
   read('bl_daily_plans_v1', 'daily')
   read('bl_weekly_plans_v1', 'weekly')
+  // 特殊计划：只在它指定的那一天提醒（见 activeToday 的 special 分支）
+  read('bl_special_plans_v1', 'special')
   return out
 }
 
@@ -387,6 +389,16 @@ function activeToday(entry, now) {
     const days = Array.isArray(item.days) ? item.days.map(Number) : []
     if (days.indexOf(isoWeekday(now)) === -1) return null
   }
+
+  // 特殊计划：**只在它指定的那一天**提醒。
+  // 日期不匹配就是"这天不是它"，直接不排——注意这与"关闭"不同：
+  // 关闭是用户的选择（下面 skipped 分支），日期不匹配只是还没到/已经过了。
+  if (kind === 'special') {
+    if (String(item.date || '') !== dayKeyOf(now)) return null
+    const skippedDays = Array.isArray(item.skipped) ? item.skipped : []
+    if (skippedDays.indexOf(dayKeyOf(now)) !== -1) return null
+  }
+
   // 单次关闭：时间段过完就自动恢复，所以只在本轮还没过完时算「关着」
   const nowMin = now.getHours() * 60 + now.getMinutes()
   const endMin = th * 60 + tm

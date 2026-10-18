@@ -57,6 +57,8 @@ export function chatStream(params) {
       conversationId: params.conversationId,
       elderId: params.elderId,
       personaId: params.personaId,
+      // 说话方式：auto / chat / medical（见 common/store.js 的 PERSONA_MODES）
+      personaMode: params.personaMode,
       text: params.text,
       clientMsgId: params.clientMsgId
     },
@@ -97,6 +99,7 @@ export function chatSendOnce(params) {
       conversationId: params.conversationId,
       elderId: params.elderId,
       personaId: params.personaId,
+      personaMode: params.personaMode,
       text: params.text,
       clientMsgId: params.clientMsgId
     }

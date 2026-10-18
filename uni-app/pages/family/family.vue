@@ -178,9 +178,10 @@
  * 绑定之后会产生一条**共享会话**：双方在「对话」里都能看到、
  * 都能发消息、都能看到已读状态（见 server/app/messaging）。
  */
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { settings } from '@/common/store.js'
 import {
+  EVENT_CONTACTS_CHANGED,
   bind,
   readAllBindings,
   readBindings,
@@ -312,6 +313,28 @@ function refreshAll() {
     allBindings.value = readAllBindings()
   })
 }
+
+/**
+ * 进入页面时**必须**拉一次绑定数据。
+ *
+ * ⚠️ 补的是个真 bug：原来这个页面**没有任何生命周期钩子**，
+ * `refreshBindings()` 只在「绑定成功后 / 解绑后 / 回应邀请后」才调用。
+ * 后果是——首次进入（或换账号后）页面永远显示"还没有已绑定的家人"，
+ * 必须先去点一次绑定操作，已绑定的家人才会冒出来。
+ * 家人绑定页正好是"要看绑定情况"的地方，不刷新等于这个页面没有用。
+ *
+ * 用 Vue 的 `onMounted` / `onUnmounted`（与 chats.vue 一致）：
+ * **不要** import `@dcloudio/uni-app` 的钩子——那个包不是本项目依赖，会直接构建失败。
+ */
+onMounted(() => {
+  refreshAll()
+  // 别处（对话页备注、家人管理）改了绑定关系，回到这里要能看到最新状态
+  uni.$on(EVENT_CONTACTS_CHANGED, refreshAll)
+})
+
+onUnmounted(() => {
+  uni.$off(EVENT_CONTACTS_CHANGED, refreshAll)
+})
 
 /** 同意 / 拒绝一条邀请 */
 function respondInvite(invite, accept) {

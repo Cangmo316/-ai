@@ -36,6 +36,7 @@ from .api.memories import router as memories_router
 from .api.plans import router as plans_router
 from .api.push import router as push_router
 from .api.reminders import router as reminders_router
+from .api.wiki import router as wiki_router
 from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, warn_if_open
 from .config import Settings, get_settings
 from .errors import api_error
@@ -63,6 +64,8 @@ from .accounts import AccountStore, SqlAccountStore, ensure_dev_account
 from .messaging import MessagingStore, SqlMessagingStore
 from .health import HealthStore, SqlHealthStore
 from .docs import CaseStore, SqlCaseStore
+from .history import HistoryCompactor
+from .wiki import WikiService, WikiStore
 from .vision import build_vision_provider
 from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
@@ -117,7 +120,16 @@ def create_app(
     # 幂等：端侧重试复用同一个 clientMsgId，命中缓存就不重复生成（也不重复调模型）
     idempotency = IdempotencyStore()
     # P2 三层记忆：L2 经历 / L3 偏好（L1 档案在 elders 里）
+    # ⚠️ 已被 wiki 取代（wiki 退出对话注入，数据保留，见 app/wiki/）。
+    #    这里仍然构造它：老接口 /v1/memories 还要能用，数据不能丢。
     memories = SqlMemoryStore(database) if database.enabled else MemoryStore()
+    # LLM wiki：老人画像 + 子女说话风格（Markdown 落盘，对话中自动维护）
+    # 可按 WIKI_ENABLED=false 关掉（关掉后回到"只靠人设 prompt"的老行为）
+    wiki = (
+        WikiService(WikiStore(), learn_every=config.wiki_learn_every)
+        if config.wiki_enabled
+        else None
+    )
     # 账号（注册 / 登录）：编号必须跨重启不复用，所以有库就落库并加载
     accounts = SqlAccountStore(database) if database.enabled else AccountStore()
     if isinstance(accounts, SqlAccountStore):
@@ -239,6 +251,18 @@ def create_app(
 
         asyncio.create_task(refine())
 
+    # 对话历史压缩器：超过阈值把旧对话压成摘要（见 app/history/）。
+    # 复用 conversations 这个 store —— 压缩读的就是它的历史。
+    compactor = (
+        HistoryCompactor(
+            conversations,
+            threshold=config.history_compress_threshold,
+            keep_recent=config.history_keep_recent,
+        )
+        if config.history_compress_enabled
+        else None
+    )
+
     service = ChatService(
         llm,
         conversations,
@@ -258,6 +282,12 @@ def create_app(
         # 按账号换模型：智能体设置里能选内置模型或填第三方
         # （API URL / KEY / 模型名）。不接这个的话界面填了也不生效。
         provider_resolver=provider_resolver,
+        # LLM wiki：老人画像 + 子女说话风格两份 Markdown，由对话自动维护。
+        # 替代原来的关键词记忆检索：原来存的是孤立碎片，wiki 存的是
+        # 「这个人是什么样」，所以越聊越像认识他。
+        wiki=wiki,
+        # 对话历史压缩：超阈值把旧对话压成摘要（摘要会注进 prompt）
+        compactor=compactor,
     )
 
     @asynccontextmanager
@@ -324,6 +354,9 @@ def create_app(
     app.state.push_clients = push_clients
     app.state.idempotency = idempotency
     app.state.memories = memories
+    #: LLM wiki（老人画像 + 子女说话风格）。/v1/wiki 接口读它，编排层写它。
+    app.state.wiki = wiki
+    app.state.compactor = compactor
     app.state.accounts = accounts
     app.state.messaging = messaging
     app.state.health = health
@@ -350,6 +383,7 @@ def create_app(
     app.include_router(memories_router)
     app.include_router(accounts_router)
     app.include_router(conversations_router)
+    app.include_router(wiki_router)
     app.include_router(family_router)
     app.include_router(health_router)
     app.include_router(cases_router)

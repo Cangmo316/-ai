@@ -46,7 +46,16 @@ from ..models.message import (
     Message,
     new_id,
 )
-from ..persona.prompts import PersonaRegistry, build_system_prompt
+from ..persona.prompts import (
+    KIND_MEDICAL,
+    MODE_AUTO,
+    PersonaRegistry,
+    build_system_prompt,
+    choose_persona,
+    ensure_medical_notice,
+    guard_address,
+    normalize_mode,
+)
 from ..persona.stickers import is_allowed_sticker
 from ..style.compliance import scan
 from ..style.punctuation import StyleStreamer
@@ -207,6 +216,8 @@ class ChatService:
         after_turn=None,
         voice=None,
         provider_resolver=None,
+        wiki=None,
+        compactor=None,
     ) -> None:
         self.provider = provider
         #: 按账号解析 LLM（智能体设置里可以给某个账号换模型）。
@@ -230,6 +241,13 @@ class ChatService:
         # 病例病史回调：elder_id → 最近几份病历的标题级信息（诊断/就诊日期）。
         # 与 health_provider 同一个理由：编排层只依赖接口
         self.case_provider = case_provider
+        #: LLM wiki（老人画像 + 子女说话风格）。
+        #: 为空时完全不启用 —— 老行为照常，测试里也不注入。
+        #: 作用有两头：注入（同步，影响这轮 prompt）与学习（异步，不拖慢回复）。
+        self.wiki = wiki
+        #: 对话历史压缩器。为空时不压缩（只喂最近 N 轮，老行为）。
+        #: 超过阈值时把旧对话压成摘要，摘要会注进 prompt 补上丢掉的记忆。
+        self.compactor = compactor
         # 一轮成功产出后的钩子（自动整理记忆用）。它在 done 事件之前执行，
         # 所以**必须很快**——慢一步老人就多等一步（模型抽取那部分由 main.py 另行后台跑）
         self.after_turn = after_turn
@@ -258,6 +276,7 @@ class ChatService:
         elder_id: str | None = None,
         client_msg_id: str = "",
         account_id: str = "",
+        persona_mode: str = MODE_AUTO,
     ) -> AsyncIterator[tuple[str, dict]]:
         """产出一轮对话的事件序列：meta → (token | sticker)* → done / error。
 
@@ -318,6 +337,14 @@ class ChatService:
             Message(id=new_id("m"), role=ROLE_ELDER, type=TYPE_TEXT, text=text),
         )
         assistant_id = new_id("a")
+
+        # ── 按这一轮说的话 + 端侧模式选人设（需求：日常 / 医疗双人设）──
+        # 必须在发 meta **之前**决定：meta 里的 persona 会下发给端侧，
+        # 先发默认再切换的话，端侧看到的人设和实际回答的人设会对不上。
+        # `persona_mode` 是端侧的开关（auto/chat/medical），auto 时按内容自动切。
+        persona = choose_persona(text, self.personas, persona_id, persona_mode)
+        medical_turn = persona.kind == KIND_MEDICAL
+
         yield events.EVENT_META, {
             "conversationId": conversation_id,
             "assistantMsgId": assistant_id,
@@ -442,6 +469,33 @@ class ChatService:
                     parts.append({"type": TYPE_CARD, "card": card})
                     yield events.EVENT_CARD, {"card": card}
 
+            # ── 医疗话题的强制免责（需求：没认真询问时也必须带"仅供参考…"）──
+            # 放在**落库之前、流式结束之后**处理：
+            #   · 流式过程中插一句会打乱输出顺序，而免责本就该在回答末尾；
+            #   · 必须在落库前补，否则刷新页面后历史里就没有这句（合规要求，不能丢）。
+            # 是否补由代码判断（见 ensure_medical_notice），不指望模型每次都记得。
+            medical_reply = "".join(
+                part.get("text", "") for part in parts if part["type"] == TYPE_TEXT
+            )
+            # 先纠正称呼漂移（模型会把人设里的「您」说成「妈」），再判断免责：
+            # 两步顺序不能反——称呼纠正会改动文本，必须在它之后做最终拼接。
+            guarded = guard_address(medical_reply, persona.address)
+            if guarded != medical_reply and parts and parts[-1]["type"] == TYPE_TEXT:
+                parts[-1]["text"] = guarded
+                # 称呼是在流式过程中逐字发出去过的，这里无法撤回；
+                # 下一轮会带上正确称呼，所以只记日志不重发（避免老人看到"改口"的怪异感）
+                logger.info("纠正称呼漂移（会话 %s）：%s", conversation_id, persona.address)
+            final_text = ensure_medical_notice(
+                guarded, medical_turn, text, persona.address
+            )
+            if final_text != guarded:
+                extra = final_text[len(guarded):]
+                if extra and parts and parts[-1]["type"] == TYPE_TEXT:
+                    # 直接并进最后一个文本片段：这样只落库一次，不会多出一条消息
+                    parts[-1]["text"] = final_text
+                    yield events.EVENT_TOKEN, {"t": extra}
+                    logger.info("本轮命中医疗话题，已补免责声明（会话 %s）", conversation_id)
+
             self._persist(conversation_id, parts)
             has_visible = any(
                 (part["type"] == TYPE_TEXT and part.get("text", "").strip())
@@ -471,6 +525,20 @@ class ChatService:
                     await self.after_turn(elder_id, text)
                 except Exception:  # noqa: BLE001 —— 记忆整理失败不能影响这一轮对话
                     logger.warning("本轮记忆整理失败，已忽略", exc_info=True)
+
+            # ── wiki 学习：从对话里学"他是什么样的人" ──
+            # **不每轮都学**：攒够 N 轮（默认 5）才调一次模型。
+            # 理由：每轮学一次要额外一次模型调用（成本翻倍），而单轮增量信息很少，
+            #      效果差别不大、钱差一倍；一次给模型 5 轮上下文，质量反而更好。
+            # collect_turn 只是入缓冲，立刻返回，不拖慢回复。
+            if getattr(self, "wiki", None) is not None and elder_id and has_visible and (text or "").strip():
+                self.wiki.collect_turn(elder_id, text, reply_text, provider)
+
+            # ── 对话历史压缩：超过阈值就把旧的那段压成摘要 ──
+            # 异步：压缩要调模型，挂在请求里会让老人觉得这轮回得慢。
+            # 晚一轮生效完全可以接受（这一轮本来也带最近几轮原文）。
+            if getattr(self, "compactor", None) is not None:
+                self.compactor.maybe_compress(conversation_id, provider)
 
             # 口型关键帧：放在 done 之前发一次（端侧按 assistantMsgId 与这条回复关联）。
             # 只在**有正文**时发：纯表情/卡片不需要口型，发了反而让数字人"对空气张嘴"。
@@ -524,6 +592,7 @@ class ChatService:
         elder_id: str | None = None,
         client_msg_id: str = "",
         account_id: str = "",
+        persona_mode: str = MODE_AUTO,
     ) -> AsyncIterator[str]:
         """把事件序列编码成 SSE 帧，并在等模型时插入心跳注释。
 
@@ -541,7 +610,8 @@ class ChatService:
         async def produce() -> None:
             try:
                 async for item in self.generate(
-                    conversation_id, text, persona_id, elder_id, client_msg_id, account_id
+                    conversation_id, text, persona_id, elder_id,
+                    client_msg_id, account_id, persona_mode,
                 ):
                     await queue.put(item)
             finally:
@@ -648,6 +718,7 @@ class ChatService:
         elder_id: str | None = None,
         client_msg_id: str = "",
         account_id: str = "",
+        persona_mode: str = MODE_AUTO,
     ) -> dict:
         """非流式路径（/v1/chat/send）。契约里 text/sticker/card 各最多一个。"""
         body = ""
@@ -658,7 +729,7 @@ class ChatService:
         error: dict | None = None
 
         async for name, payload in self.generate(
-            conversation_id, text, persona_id, elder_id, client_msg_id, account_id
+            conversation_id, text, persona_id, elder_id, client_msg_id, account_id, persona_mode
         ):
             if name == events.EVENT_META:
                 assistant_id = payload["assistantMsgId"]
@@ -696,6 +767,19 @@ class ChatService:
 
     # ---------------------------------------------------------------- 内部
 
+        # ──── 以下为 ChatService 的内部辅助 ────
+
+    def _summary_of(self, conversation_id: str) -> str:
+        """取这个会话的历史摘要（没有就空串）。"""
+        compactor = getattr(self, "compactor", None)
+        if compactor is None:
+            return ""
+        try:
+            return compactor.summary_of(conversation_id)
+        except Exception:  # noqa: BLE001 —— 摘要取不到就当没有
+            logger.exception("读历史摘要失败")
+            return ""
+
     def _build_messages(
         self,
         conversation_id: str,
@@ -728,10 +812,29 @@ class ChatService:
             except Exception:  # noqa: BLE001
                 logger.exception("病例病史取不到，本轮不注入")
                 cases = []
+        # ── wiki：长期积累的对这个人的认识（替代原来的关键词记忆检索）──
+        # 按这一轮的话题挑相关小节，不整篇塞（整篇会淹掉上下文）
+        wiki_elder: list[str] = []
+        wiki_persona: list[str] = []
+        wiki = getattr(self, "wiki", None)
+        if wiki is not None and elder_id:
+            try:
+                shot = wiki.inject(elder_id, query_text)
+                wiki_elder = shot.elder_lines
+                wiki_persona = shot.persona_lines
+            except Exception:  # noqa: BLE001 —— wiki 是增强，失败当没有
+                logger.exception("wiki 注入失败，本轮不带 wiki")
         messages: list[dict] = [
             {
                 "role": "system",
-                "content": build_system_prompt(persona, elder, memories, health, cases),
+                "content": build_system_prompt(
+                    persona, elder, memories, health, cases,
+                    wiki_elder=wiki_elder,
+                    wiki_persona=wiki_persona,
+                    # 更早对话的摘要（历史压缩产物）。
+                    # 只喂最近 N 轮原文时，更早的会全丢；摘要补上这一段。
+                    history_summary=self._summary_of(conversation_id),
+                ),
             }
         ]
         limit = max(2, self.settings.history_turns * 2 + 2)

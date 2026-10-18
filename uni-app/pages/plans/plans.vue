@@ -92,7 +92,8 @@ const ENTRIES = [
     key: 'special',
     title: '特殊计划',
     icon: 'heart',
-    path: '' // [待定] 目标页未做，先给提示
+    // 特殊计划页：添加（比日常计划多一个日期选择）/ 开关 / 删除
+    path: '/pages/special/special'
   }
 ]
 

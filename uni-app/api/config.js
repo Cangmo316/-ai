@@ -69,6 +69,10 @@ export const ENDPOINTS = {
   chatHistory: '/v1/chat/history',
   // 智能体设置：模型选择（我的 → 智能体设置）
   chatModel: '/v1/chat/model',
+  // AI 了解我的（wiki）
+  wiki: '/v1/wiki',
+  wikiItem: '/v1/wiki/item',
+  wikiSection: '/v1/wiki/section',
   // 康养计划（P1）：生成 → 家属确认 → 今日计划 → 打卡
   planDraft: '/v1/plans/draft',
   planPending: '/v1/plans/pending',

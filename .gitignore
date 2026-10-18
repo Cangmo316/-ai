@@ -91,3 +91,17 @@ server/case_files/
 
 # 试听样本（换音色时临时产物，不入库）
 server/_voice_samples/
+
+# ===== 临时与工具产物（2026-10-08）=====
+# 截图与诊断用的临时文件。_shots 里已有的 44 个图是历史记录，继续跟踪；
+# 今后新产生的截图/临时产物不入库（否则一次调试就多几百个文件）。
+_shots/
+# TTS 试听样本、图标备份、旧目录
+_tts_probe/
+_backup-*/
+bilinAI/
+
+# uniCloud 云函数依赖：由 HBuilderX 自动拉取（uni-config-center / uni-id-common）。
+# 我们的后端是自建 FastAPI（server/），不用 uniCloud，所以不入库。
+uni-app/uniCloud-aliyun/
+uni-app/uni_modules/

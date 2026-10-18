@@ -35,7 +35,7 @@
       </view>
     </view>
 
-    <text class="bl-calp__tip">{{ todayStarted ? '今天这一轮已经开始了，只能关往后的日子' : '点日期选择要关闭的这一天（可多选）' }}</text>
+    <text class="bl-calp__tip">{{ tipText }}</text>
   </view>
 </template>
 
@@ -62,18 +62,65 @@ const props = defineProps({
   /** 已选中的日期数组 ['YYYY-MM-DD'] */
   picked: { type: Array, default: () => [] },
   /** 该计划的开始时间 { fromH, fromM }，用于判断「今天本轮是否已开始」 */
-  window: { type: Object, default: () => ({ fromH: 0, fromM: 0 }) }
+  window: { type: Object, default: () => ({ fromH: 0, fromM: 0 }) },
+  /**
+   * 选择模式：
+   *   · `multiple`（默认）—— 选"要关闭的哪几天"，可多选。日常/每周计划的关闭用。
+   *   · `single`           —— 选"某一个具体日期"。特殊计划用（它只落一天）。
+   *
+   * 两种模式的差别不只是"能不能多选"：
+   * 单选的语义是**指定日期**，不是"关闭某天"，所以不受
+   * 「今天这一轮已经开始了」的限制（那天本来就没提醒过，谈不上关闭）。
+   */
+  mode: { type: String, default: 'multiple' },
+  /**
+   * 是否禁用今天（仅在 multiple 下有用）。
+   *
+   * 默认 true：保持"关闭日期"的原有行为（本轮已开始就关不了）。
+   * 传 false 表示今天也能选。
+   */
+  blockTodayWhenStarted: { type: Boolean, default: true }
 })
 const emit = defineEmits(['update:picked'])
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
 const now = new Date()
-const year = ref(now.getFullYear())
-const month = ref(now.getMonth())
+const isSingle = computed(() => props.mode === 'single')
+
+/**
+ * 初始显示的月份。
+ *
+ * 单选模式：如果已经有选中日期，就直接翻到那个月——否则用户选了下个月的
+ * 日期，一打开看不到自己选了什么，会以为没选上。
+ */
+function initialMonth() {
+  if (props.mode === 'single' && props.picked.length) {
+    const parts = String(props.picked[0] || '').split('-').map(Number)
+    if (parts.length === 3 && parts.every((n) => isFinite(n))) {
+      return { y: parts[0], m: parts[1] - 1 }
+    }
+  }
+  return { y: now.getFullYear(), m: now.getMonth() }
+}
+const start = initialMonth()
+const year = ref(start.y)
+const month = ref(start.m)
 const todayKey = dayKey(now)
 
 /** 今天这一轮是否已开始（只有今天受影响） */
 const todayStarted = computed(() => windowStartedToday(props.window || {}, new Date()))
+
+/** 底部提示：说明当前这一点该怎么操作 */
+const tipText = computed(() => {
+  if (isSingle.value) {
+    return props.picked.length
+      ? '已选 ' + props.picked[0] + '，点别的日期可以改'
+      : '点日期选择这条计划在哪一天'
+  }
+  return todayStarted.value
+    ? '今天这一轮已经开始了，只能关往后的日子'
+    : '点日期选择要关闭的这一天（可多选）'
+})
 
 /** 6 行 × 7 列固定网格：月份切换时高度不跳 */
 const cells = computed(() => {
@@ -95,7 +142,9 @@ const cells = computed(() => {
       label: String(dayNum),
       key,
       isToday,
-      blocked: isToday && todayStarted.value
+      // 只有"关闭日期"这个用法才禁今天：提醒都发过了，再关没意义。
+      // 单选（指定日期）不禁——那天本来就没提醒过。
+      blocked: isToday && todayStarted.value && !isSingle.value && props.blockTodayWhenStarted
     })
   }
   return list
@@ -111,6 +160,12 @@ function pick(cell) {
   if (!cell.day) return // 非本月日期不可点
   if (cell.blocked) {
     uni.showToast({ title: '今天这一轮已经开始了', icon: 'none' })
+    return
+  }
+  // 单选：点新的就替换旧的（不累积），再点已选中的则取消
+  if (isSingle.value) {
+    const only = props.picked[0] === cell.key
+    emit('update:picked', only ? [] : [cell.key])
     return
   }
   const set = props.picked.slice()

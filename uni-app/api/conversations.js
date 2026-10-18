@@ -183,3 +183,46 @@ export function respondBindFamily(token, number, accept) {
     data: { number: number || '', accept: !!accept }
   })
 }
+/* ══════════════════════════════════════════════════════════════════
+   AI 了解我的（wiki）：看 / 删 AI 从对话里学到的东西
+   ══════════════════════════════════════════════════════════════════ */
+
+/** 读两份 wiki（老人画像 + 子女说话风格）+ 最近一段对话摘要 */
+export function getWiki(token, elderId) {
+  const query = elderId ? '?elderId=' + encodeURIComponent(elderId) : ''
+  return request({
+    url: resolveURL(ENDPOINTS.wiki) + query,
+    method: 'GET',
+    header: authHeader(token)
+  })
+}
+
+/** 删掉一条记忆 */
+export function deleteWikiItem(token, params = {}) {
+  return request({
+    url: resolveURL(ENDPOINTS.wikiItem),
+    method: 'DELETE',
+    header: authHeader(token),
+    data: {
+      elderId: params.elderId || '',
+      kind: params.kind || 'elder',
+      section: params.section || '',
+      text: params.text || ''
+    }
+  })
+}
+
+/** 整节替换（人工改写） */
+export function saveWikiSection(token, params = {}) {
+  return request({
+    url: resolveURL(ENDPOINTS.wikiSection),
+    method: 'PUT',
+    header: authHeader(token),
+    data: {
+      elderId: params.elderId || '',
+      kind: params.kind || 'elder',
+      section: params.section || '',
+      items: params.items || []
+    }
+  })
+}

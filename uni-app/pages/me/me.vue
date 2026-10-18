@@ -57,6 +57,29 @@
           <bl-icon name="chev" color="#B9B3A4" :size="34" />
         </view>
 
+        <!-- 说话方式：智能切换 / 只用陪伴助手 / 只用健康顾问。
+             默认「智能切换」，老人不用管；想让 AI 别老提病的人可以在这里改。
+             右侧显示当前选择，一眼知道现在是哪种。 -->
+        <view class="bl-row" @click="toPersonaMode">
+          <view class="bl-row__icon">
+            <bl-icon name="chat" color="#2F5D4E" :size="44" />
+          </view>
+          <text class="bl-row__label">说话方式</text>
+          <text class="bl-row__value">{{ personaModeLabel }}</text>
+          <bl-icon name="chev" color="#B9B3A4" :size="34" />
+        </view>
+
+        <!-- AI 了解我的：看 AI 从对话里学到了什么，能删。
+             wiki 是自动学的，一定会记错；看得到、删得掉，老人才放心。
+             图标用 role（人物）：这一页讲的是"它对你的了解"，不是文档。 -->
+        <view class="bl-row" @click="toWiki">
+          <view class="bl-row__icon">
+            <bl-icon name="role" color="#2F5D4E" :size="44" />
+          </view>
+          <text class="bl-row__label">AI 了解我的</text>
+          <bl-icon name="chev" color="#B9B3A4" :size="34" />
+        </view>
+
         <view class="bl-row" @click="toFace">
           <view class="bl-row__icon">
             <bl-icon name="face" color="#2F5D4E" :size="44" />
@@ -148,7 +171,7 @@
  *  模板里引用模块绑定可能变成 undefined）。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { settings, setLargeFont } from '@/common/store.js'
+import { PERSONA_MODES, setLargeFont, settings } from '@/common/store.js'
 import {
   EVENT_ACCOUNT_CHANGED,
   changeAvatar,
@@ -164,6 +187,13 @@ import { loadModelSetting, modelLabel, modelSetting } from '@/stores/agent.js'
 
 /** 已绑定的家人数：显示在「家人绑定」行右侧 */
 const familyCount = ref(0)
+
+/** 「说话方式」行右侧显示当前档位名（默认「智能切换」） */
+const personaModeLabel = computed(() => {
+  const value = String(settings.personaMode || 'auto')
+  const hit = PERSONA_MODES.find((m) => m.value === value)
+  return hit ? hit.label : '智能切换'
+})
 
 /**
  * 「智能体设置」行右侧的小字 = 当前选的模型。
@@ -379,6 +409,12 @@ function toFamily() {
 }
 function toAgentSettings() {
   uni.navigateTo({ url: '/pages/agent-settings/agent-settings' })
+}
+function toPersonaMode() {
+  uni.navigateTo({ url: '/pages/persona-mode/persona-mode' })
+}
+function toWiki() {
+  uni.navigateTo({ url: '/pages/wiki/wiki' })
 }
 </script>
 

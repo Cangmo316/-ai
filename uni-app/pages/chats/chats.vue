@@ -141,18 +141,26 @@ function colorOf(item) {
  *    结果内置「比邻AI」在家人会话上直接穿过去、回落成写死的「家人」——
  *    用户把关系改成「棋友」却看不到变化，就是这个原因。
  *
+ * ⚠️ **第二次踩到的是另一处**（2026-10）：更关键的问题是
+ *    **没有任何路径能真正选中自定义角色** ——
+ *    角色页的 pick() 为了满足"点卡片都进人物设置"被删了，
+ *    而承担"选中"职责的 startChat() 当时只跳转、没调 setRole()。
+ *    于是 settings.role 恒为内置「比邻AI」，
+ *    用户新建的「棋友」这类角色根本没机会生效。
+ *    修法：startChat() 里补上 setRole（见 roles.vue）。
+ *
  * 【为什么不区分会话类型】
  * 角色是"老人自己的智能体设定"，跟对面是谁无关；同一个角色对每条会话
  * 显示同一个关系标签才自洽。服务端会话只有 `ai:` 与 `family:` 两类，
  * **没有角色维度的会话**，所以也只能这么做。
  */
-function tagOf() {
+function tagOf(item) {
   // 1. 当前选中的角色（按名字找，settings.role 存的是角色名）
   const all = listRoles()
   const current = all.find((r) => r.name === settings.role)
   if (current && current.relation) return current.relation
 
-  // 2. 退回内置「比邻AI」
+  // 2. 退回内置「比邻AI」的覆盖值
   const builtin = findRole('p_bilin')
   if (builtin && builtin.relation) return builtin.relation
 
