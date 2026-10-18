@@ -105,3 +105,5 @@ bilinAI/
 # 我们的后端是自建 FastAPI（server/），不用 uniCloud，所以不入库。
 uni-app/uniCloud-aliyun/
 uni-app/uni_modules/
+# 真模型评测报告（每次跑覆盖，含大量模型输出，不入库）
+server/eval-report.json

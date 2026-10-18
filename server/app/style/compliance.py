@@ -21,8 +21,31 @@ from __future__ import annotations
 
 import re
 
+#: 这些是**允许的依从性提醒**（见模块注释的边界清单），扫描前先剥掉。
+#:
+#: 为什么需要它：`(换|改)(成|个|一种)?(别的)?药` 这条会命中
+#: 「别自己换药」—— 而这句话正是模块注释里明确允许的说法。
+#: 实测真模型回复「咳嗽这事得跟医生说 别自己换药」被判成"疑似药量增减口吻"，
+#: 日志里天天报假警，真正的问题就会被淹没。
+#: 光靠 lookbehind 不行："别自己换药"里"换"前面隔着"自己"两个字。
+ALLOWED_PHRASES = (
+    "别自己换药", "不要自己换药", "不能自己换药", "不可以自己换药",
+    "别自己改药", "不要自己改药", "别自己停药", "不要自己停药",
+    "别随便换药", "别随便停药", "别自己加减药", "别自己减药", "别自己加药",
+    "别自己补", "别补着吃", "别吃重",
+)
+
+
+def _strip_allowed(text: str) -> str:
+    """去掉允许的依从性提醒，避免它们被当成越界。"""
+    body = text
+    for phrase in ALLOWED_PHRASES:
+        body = body.replace(phrase, "")
+    return body
+
+
 # 药量增减口吻。注意各组都要求"判断词 + 停药/换药/加减"紧邻，
-# 因此不会误伤「别自己停药」这类依从性提醒。
+# 因此不会误伤「别自己停药」这类依从性提醒（依赖 ALLOWED_PHRASES 剥离）。
 DOSE_PATTERNS = (
     # (?<!能) 放过疑问句「能不能停」——那是老人在问，不是数字人在下判断
     re.compile(r"(?<!能)(不能|不可以|不要|别|可以|建议|应该|干脆|就)\s*(停|停药|停用)(药|了)?"),
@@ -32,6 +55,10 @@ DOSE_PATTERNS = (
     re.compile(r"(加|减)(一|半|两)?(片|粒|颗|次|半)"),
     re.compile(r"剂量\s*(调|加|减|改)"),
     re.compile(r"(该不该|要不要|是不是该)\s*(停|换|加|减|吃)"),
+    # 「把药停了」「药停掉」这类直接下指令的说法，上面几条都漏
+    # （要求"判断词"紧邻"停"，而这里是"把/药"在中间）
+    re.compile(r"(把|将)\s*(那个|这个)?\s*(药|降压药|降糖药)\s*(停|停掉|停了)"),
+    re.compile(r"(药|降压药|降糖药)\s*(停掉|停了|停了吧)"),
 )
 
 # 确诊口吻
@@ -53,6 +80,8 @@ def scan(text: str) -> list[str]:
     """返回命中的提示列表（空列表=干净）。提示会写进日志，不直接给老人看。"""
     if not text:
         return []
+    # 先剥掉允许的依从性提醒（「别自己换药」这类），再扫越界话术
+    body = _strip_allowed(text)
     hints: list[str] = []
     for label, patterns in (
         ("疑似药量增减口吻", DOSE_PATTERNS),
@@ -60,7 +89,7 @@ def scan(text: str) -> list[str]:
         ("疑似客服用语", SERVICE_TONE_PATTERNS),
     ):
         for pattern in patterns:
-            if pattern.search(text):
+            if pattern.search(body):
                 hints.append(label + "：" + pattern.pattern)
     return hints
 
