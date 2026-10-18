@@ -218,6 +218,7 @@ class ChatService:
         provider_resolver=None,
         wiki=None,
         compactor=None,
+        care=None,
     ) -> None:
         self.provider = provider
         #: 按账号解析 LLM（智能体设置里可以给某个账号换模型）。
@@ -248,6 +249,9 @@ class ChatService:
         #: 对话历史压缩器。为空时不压缩（只喂最近 N 轮，老行为）。
         #: 超过阈值时把旧对话压成摘要，摘要会注进 prompt 补上丢掉的记忆。
         self.compactor = compactor
+        #: 主动关心（好奇心提问 + 到期回访）。为空时不主动发消息。
+        #: 它同时负责"他说的话算不算回答了上次的提问""有没有约定将来的事"。
+        self.care = care
         # 一轮成功产出后的钩子（自动整理记忆用）。它在 done 事件之前执行，
         # 所以**必须很快**——慢一步老人就多等一步（模型抽取那部分由 main.py 另行后台跑）
         self.after_turn = after_turn
@@ -538,7 +542,22 @@ class ChatService:
             # 异步：压缩要调模型，挂在请求里会让老人觉得这轮回得慢。
             # 晚一轮生效完全可以接受（这一轮本来也带最近几轮原文）。
             if getattr(self, "compactor", None) is not None:
-                self.compactor.maybe_compress(conversation_id, provider)
+                self.compactor.maybe_compress(conversation_id, elder_id, provider)
+
+            # ── 主动关心：记账（不发消息，只更新状态）──
+            # 三件事：
+            #   ① 他说话了 → 算作上次主动提问的回答
+            #   ② 这句话里提到将来的事 → 记一条回访（"下周二去复查"）
+            #   ③ 记下"刚聊过"，后台就不会马上插一句"吃了吗"
+            care = getattr(self, "care", None)
+            if care is not None and elder_id:
+                try:
+                    care.note_conversation(elder_id, conversation_id)
+                    care.note_chat(elder_id)
+                    care.record_answer(elder_id, text)
+                    care.add_followup_if_any(elder_id, text)
+                except Exception:  # noqa: BLE001 —— 记账失败不能影响对话
+                    logger.exception("主动关心记账失败（不影响本轮回复）")
 
             # 口型关键帧：放在 done 之前发一次（端侧按 assistantMsgId 与这条回复关联）。
             # 只在**有正文**时发：纯表情/卡片不需要口型，发了反而让数字人"对空气张嘴"。
@@ -769,16 +788,32 @@ class ChatService:
 
         # ──── 以下为 ChatService 的内部辅助 ────
 
-    def _summary_of(self, conversation_id: str) -> str:
-        """取这个会话的历史摘要（没有就空串）。"""
+    def _summary_of(self, elder_id: str) -> str:
+        """取这个老人的历史摘要（没有就空串）。
+
+        按**老人**取而不是按会话：记忆应当跟着人走。
+        跟 AI 聊过的和跟家人聊过的共享同一份摘要，否则
+        "家人会话里说过的复查日期"在 AI 会话里就不存在了。
+        """
         compactor = getattr(self, "compactor", None)
         if compactor is None:
             return ""
         try:
-            return compactor.summary_of(conversation_id)
+            return compactor.summary_of(elder_id)
         except Exception:  # noqa: BLE001 —— 摘要取不到就当没有
             logger.exception("读历史摘要失败")
             return ""
+
+    def _followup_lines(self, elder_id: str) -> list[str]:
+        """今天该提的回访（他说过的事到期了）。"""
+        care = getattr(self, "care", None)
+        if care is None or not elder_id:
+            return []
+        try:
+            return care.followup_lines(elder_id)
+        except Exception:  # noqa: BLE001 —— 回访取不到就当没有
+            logger.exception("读回访失败")
+            return []
 
     def _build_messages(
         self,
@@ -833,7 +868,11 @@ class ChatService:
                     wiki_persona=wiki_persona,
                     # 更早对话的摘要（历史压缩产物）。
                     # 只喂最近 N 轮原文时，更早的会全丢；摘要补上这一段。
-                    history_summary=self._summary_of(conversation_id),
+                    # 摘要按**老人**存（不按会话）：记忆跟着人走，
+                    # 跟 AI 聊的和跟家人聊的应该共享同一份上下文。
+                    history_summary=self._summary_of(elder_id),
+                    # 到期的回访（他说过"下周二去复查"，今天正是那天）
+                    care_followups=self._followup_lines(elder_id),
                 ),
             }
         ]

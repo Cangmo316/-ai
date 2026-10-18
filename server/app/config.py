@@ -133,6 +133,14 @@ class Settings:
     #: 压缩后仍保留多少条最近原文（不压）。
     history_keep_recent: int = 16
 
+    # ── 主动关心（好奇心）────────────────────────────────
+    # 需求：智能体要有人的好奇心，每天主动问 1-2 次（吃了什么、有没有特别的事、
+    # 有没有想做的事），并把这些记下来，在后续的标记日期里再次提出来。
+    care_enabled: bool = True
+    #: 后台检查间隔（秒）。关心是"想起来问一句"，不需要秒级精确，
+    #: 10 分钟一次足够，也避免"到点必发"的闹钟感。
+    care_tick_seconds: float = 600.0
+
     # ── 提醒调度（P1）─────────────────────────────────────
     # 调度器开关：关掉后不再自动投递提醒（测试里常关掉，手动 tick）
     scheduler_enabled: bool = True
@@ -203,6 +211,8 @@ class Settings:
             history_compress_enabled=_env_bool("HISTORY_COMPRESS_ENABLED", True),
             history_compress_threshold=_env_int("HISTORY_COMPRESS_THRESHOLD", 48),
             history_keep_recent=_env_int("HISTORY_KEEP_RECENT", 16),
+            care_enabled=_env_bool("CARE_ENABLED", True),
+            care_tick_seconds=_env_float("CARE_TICK_SECONDS", 600.0),
             scheduler_enabled=_env_bool("SCHEDULER_ENABLED", True),
             scheduler_tick_seconds=_env_float("SCHEDULER_TICK_SECONDS", 30.0),
             scheduler_manual_tick=_env_bool("SCHEDULER_MANUAL_TICK", True),

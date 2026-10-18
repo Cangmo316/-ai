@@ -72,19 +72,25 @@ class WikiService:
         provider,
         *,
         learn_persona: bool = False,
+        family: bool = False,
     ) -> int:
         """从**若干轮**对话里学东西，返回新增条数。
 
         `turns` 是多轮 [(老人说的, 对方回的), ...] ——
         为什么不是单轮：学习改成每 N 轮一次后，只拿最后一轮学会把前面的丢掉。
 
-        ⚠️ `learn_persona` 默认 **False**，这是刻意的：
-          AI 对话里"对方回的话"是**模型自己生成的**，
-          从它身上学「子女怎么说话」是循环的（学到的是 prompt 里已经写的东西）。
-          只有在**真人发消息**时才该传 True —— 见 `learn_from_peer_message`。
+        两个开关的区别（容易混）：
 
-        调用方应当用 `collect_turn()` / `schedule_*` 而不是直接 await 它 ——
-        直接 await 会让老人等这一次额外的模型调用。
+        · `family`      —— 这是"老人和家人"的聊天（两边都是真人）。
+          用家人专用提示词，让模型分清楚谁说的、把内容归到正确的一侧。
+          需求原话：「老人跟子女聊就同时记录老人和子女的表达习惯」。
+
+        · `learn_persona` —— 是否把抽到的 "子女说话风格" 真正写进 persona.md。
+          ⚠️ 默认 **False**：智能体会话里"对方回的话"是模型自己生成的，
+          从它身上学「子女怎么说话」是循环的（学到的是 prompt 里已经写的东西）。
+
+        所以：智能体会话 → family=False, learn_persona=False
+              家人会话   → family=True,  learn_persona=True
         """
         # 太短的话没有可学的（"嗯""好""知道了"）
         pairs = [
@@ -102,6 +108,7 @@ class WikiService:
                 turns=[(a[:300], b[:300]) for a, b in pairs],
                 elder_page=elder_page,
                 persona_page=persona_page,
+                family=family,
             )
             chunks: list[str] = []
             async for delta in provider.stream(messages):
@@ -248,9 +255,10 @@ class WikiService:
             return 0
         return await self.learn(
             elder_id,
-            turns=[("", text)],     # 不是老人说的，不抽老人事实
+            turns=[("", text)],     # 单条真人消息，没有成对的老人发言
             provider=provider,
             learn_persona=True,
+            family=True,            # 用家人提示词：他可能是子女，也可能是老人
         )
 
     def schedule_peer_style_learn(self, elder_id: str, peer_text: str, provider) -> None:

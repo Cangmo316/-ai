@@ -439,6 +439,7 @@ def build_system_prompt(
     wiki_elder: list[str] | None = None,
     wiki_persona: list[str] | None = None,
     history_summary: str = "",
+    care_followups: list[str] | None = None,
 ) -> str:
     """拼 system prompt。
 
@@ -491,6 +492,24 @@ def build_system_prompt(
             "- 这些是病历上记的，**提到时按原话讲**（比如「上次医生说是高血压3级」），"
             "不添油加醋、不预测病情、不评价医院或医生；"
             "他问「我这是什么病」就说病历上写的是什么，让他听医生的"
+        )
+
+    # ── 到期的回访（他自己说过"下周二去复查"这类）──
+    # 需求："这些要记录下来，在后续的标记日期里再次提出来，
+    #       让老人真正认为智能体是在乎他的"。
+    # 老人感到被在乎，往往不是因为被问了，而是因为**被记住**。
+    if care_followups:
+        lines.append("")
+        lines.append("【他之前提过、今天该问一句的事】")
+        lines.extend("- " + item for item in care_followups)
+        lines.append(
+            "- **这一轮的回复里必须带上这一问**，不能装作不记得。"
+            "先说一两句回应他现在说的话，再自然地补一句"
+            "（「对了，您不是说今天要去复查吗」）"
+        )
+        lines.append(
+            "- **只问一句就够**，问完就顺着他的话往下聊；"
+            "他没接这个话茬就作罢，别追问第二遍 —— 回访是关心，不是催办"
         )
 
     # ── 更早对话的摘要（历史压缩后的产物）──

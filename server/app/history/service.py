@@ -57,11 +57,11 @@ class HistoryCompactor:
         self._tasks: set[asyncio.Task] = set()
 
     # ---------------------------------------------------------------- 摘要
-    def summary_of(self, conversation_id: str) -> str:
-        return self._summaries.get(str(conversation_id or ""), "")
+    def summary_of(self, elder_id: str) -> str:
+        return self._summaries.get(str(elder_id or ""), "")
 
-    def set_summary(self, conversation_id: str, text: str) -> None:
-        key = str(conversation_id or "")
+    def set_summary(self, elder_id: str, text: str) -> None:
+        key = str(elder_id or "")
         if not key:
             return
         body = str(text or "").strip()
@@ -71,7 +71,7 @@ class HistoryCompactor:
             self._summaries.pop(key, None)
 
     # ---------------------------------------------------------------- 触发
-    def maybe_compress(self, conversation_id: str, provider) -> None:
+    def maybe_compress(self, conversation_id: str, elder_id: str, provider) -> None:
         """如果这个会话的历史超过阈值，就把旧的那段压掉（后台跑）。"""
         key = str(conversation_id or "")
         if not key or provider is None:
@@ -93,7 +93,7 @@ class HistoryCompactor:
 
         self._busy.add(key)
         try:
-            task = asyncio.create_task(self._compress(key, old, provider))
+            task = asyncio.create_task(self._compress(key, str(elder_id or key), old, provider))
         except RuntimeError:
             self._busy.discard(key)
             logger.debug("没有事件循环，跳过压缩")
@@ -106,12 +106,14 @@ class HistoryCompactor:
 
         task.add_done_callback(_done)
 
-    async def _compress(self, conversation_id: str, old_messages: list, provider) -> None:
+    async def _compress(
+        self, conversation_id: str, elder_id: str, old_messages: list, provider
+    ) -> None:
         """真正压缩：旧消息 → 摘要。失败只记日志，下一轮还会再试。"""
         turns = build_turns(old_messages)
         if not turns:
             return
-        previous = self.summary_of(conversation_id)
+        previous = self.summary_of(elder_id)
         try:
             chunks: list[str] = []
             async for delta in provider.stream(build_compress_messages(turns, previous)):
@@ -127,7 +129,7 @@ class HistoryCompactor:
         if not summary:
             logger.info("压缩产出为空，保持原摘要（会话 %s）", conversation_id)
             return
-        self.set_summary(conversation_id, summary)
+        self.set_summary(elder_id, summary)
         logger.info(
             "已压缩对话历史：%d 条 → %d 字摘要（会话 %s）",
             len(old_messages), len(summary), conversation_id,

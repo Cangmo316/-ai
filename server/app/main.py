@@ -37,6 +37,7 @@ from .api.plans import router as plans_router
 from .api.push import router as push_router
 from .api.reminders import router as reminders_router
 from .api.wiki import router as wiki_router
+from .api.care import router as care_router
 from .auth import MODE_REQUIRED, auth_required, check_request, parse_tokens, warn_if_open
 from .config import Settings, get_settings
 from .errors import api_error
@@ -64,6 +65,8 @@ from .accounts import AccountStore, SqlAccountStore, ensure_dev_account
 from .messaging import MessagingStore, SqlMessagingStore
 from .health import HealthStore, SqlHealthStore
 from .docs import CaseStore, SqlCaseStore
+from .care import CareService, CareStore
+from .care.loop import CareLoop
 from .history import HistoryCompactor
 from .wiki import WikiService, WikiStore
 from .vision import build_vision_provider
@@ -263,6 +266,9 @@ def create_app(
         else None
     )
 
+    # 主动关心 + 到期回访（app/care/）：好奇心提问与'他说过的事到期再提'
+    care = CareService(CareStore()) if config.care_enabled else None
+
     service = ChatService(
         llm,
         conversations,
@@ -288,6 +294,7 @@ def create_app(
         wiki=wiki,
         # 对话历史压缩：超阈值把旧对话压成摘要（摘要会注进 prompt）
         compactor=compactor,
+        care=care,
     )
 
     @asynccontextmanager
@@ -324,7 +331,32 @@ def create_app(
             )
         else:
             logger.warning("提醒调度未启用（SCHEDULER_ENABLED=false）—— 不会自动投递提醒")
+
+        # 主动关心循环：每天 1-2 次主动问老人日程（吃了什么 / 特别的事 / 想做的事）。
+        # 单独一个循环而不是挂进调度器：关心不是提醒，它有自己的节奏
+        # （清醒时段、两次间隔、刚聊过就不插嘴），混在一起两边都会变复杂。
+        care_loop = None
+        if care is not None and config.care_enabled:
+            care_loop = CareLoop(
+                care,
+                conversations,
+                elder_ids=[DEFAULT_ELDER_ID],
+                interval=config.care_tick_seconds,
+            )
+            care_loop.start()
+            # 手动触发接口（/v1/care/ask）要用同一个循环实例，
+            # 否则两边各建一个，投递状态与频率控制会对不上
+            app.state.care_loop = care_loop
+            logger.info(
+                "主动关心已启用 | 每 %ss 检查 | 每天最多 %s 次",
+                config.care_tick_seconds, 2,
+            )
+        else:
+            logger.info("主动关心未启用（CARE_ENABLED=false 或未装配）")
+
         yield
+        if care_loop is not None:
+            await care_loop.stop()
         await scheduler.stop()
         # 关连接前 SQLite 会自己 checkpoint（WAL 模式下不关会留 -wal 文件）
         database.close()
@@ -357,6 +389,7 @@ def create_app(
     #: LLM wiki（老人画像 + 子女说话风格）。/v1/wiki 接口读它，编排层写它。
     app.state.wiki = wiki
     app.state.compactor = compactor
+    app.state.care = care
     app.state.accounts = accounts
     app.state.messaging = messaging
     app.state.health = health
@@ -384,6 +417,7 @@ def create_app(
     app.include_router(accounts_router)
     app.include_router(conversations_router)
     app.include_router(wiki_router)
+    app.include_router(care_router)
     app.include_router(family_router)
     app.include_router(health_router)
     app.include_router(cases_router)
