@@ -107,3 +107,13 @@ uni-app/uniCloud-aliyun/
 uni-app/uni_modules/
 # 真模型评测报告（每次跑覆盖，含大量模型输出，不入库）
 server/eval-report.json
+# ===== 微调工作区（2026-10-19）=====
+# 只忽略**大件与产物**，脚本与文档要进仓库。
+# 实测体积：.venv 4.8GB + models 2.9GB + wheels 2.4GB ≈ 10GB，
+# 绝不能进 git（推上去会把仓库撑爆，而且这些都能重新下载/生成）。
+ml/.venv/
+ml/wheels/
+ml/models/
+ml/.cache/
+ml/out/
+ml/data/
