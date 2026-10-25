@@ -47,23 +47,29 @@
     <!-- 真 3D 数字人（交付件：vis_* / expr_* 口型表情 + `wave` 招手动画）。
          App 端由 renderjs 模块 visionGl 接管；H5 端由本文件 onMounted 接管。
          两条路径都调用 common/face-gl/face-three.js 的同一个渲染器。 -->
-    <view
-      class="bl-vision__stage"
-      id="blVisionStage"
-      :gender="gender"
-      :boot="bootTick"
-      :change:gender="visionGl.onGender"
-      :change:boot="visionGl.onBoot"
-    >
-      <!-- 降级态：WebGL 不可用或资产加载失败时兜住"白屏"（原来的 CSS 假人留作兜底） -->
-      <view v-if="stage.fallback" class="bl-vision__person">
-        <view class="bl-vision__head" />
-        <view class="bl-vision__torso" />
+    <!-- 舞台 + 字幕共用一个定位容器：字幕**绝对定位浮在画面底部**，不参与布局。
+         原来字幕是普通流里的兄弟节点，播报时从 1 行涨到 5 行，会把
+         `flex: 1 1 auto` 的舞台挤矮（实测 443.9 → 316px）—— 3D 框被压缩，
+         人物比例跟旋转时完全不一样。字幕浮上去之后，舞台尺寸只由页面决定。 -->
+    <view class="bl-vision__stagewrap">
+      <view
+        class="bl-vision__stage"
+        id="blVisionStage"
+        :gender="gender"
+        :boot="bootTick"
+        :change:gender="visionGl.onGender"
+        :change:boot="visionGl.onBoot"
+      >
+        <!-- 降级态：WebGL 不可用或资产加载失败时兜住"白屏"（原来的 CSS 假人留作兜底） -->
+        <view v-if="stage.fallback" class="bl-vision__person">
+          <view class="bl-vision__head" />
+          <view class="bl-vision__torso" />
+        </view>
       </view>
-    </view>
 
-    <view class="bl-vision__caption">
-      <text class="bl-vision__caption-text">{{ caption }}</text>
+      <view class="bl-vision__caption">
+        <text class="bl-vision__caption-text">{{ caption }}</text>
+      </view>
     </view>
 
     <!-- 招手已改为**进场自动一次**（见 waveOnEntry）：真人视频通话里对方也只是接通时打个招呼，
@@ -148,6 +154,8 @@ const bootTick = ref(0)
 // 进场招手是否已经播过（只播一次）
 let wavedOnEntry = false
 let stageRef = null
+/** 舞台宿主容器（卸载时按容器拆，避免误拆别的页面的舞台） */
+let stageHost = null
 /** 对话流订阅的取消函数（卸载时必须取消，否则页面销毁后回调仍会跑） */
 let unsubscribeLive = null
 /** 这一轮是"音频+口型"还是"只有口型"（诊断用；后端没配 TTS 时会是后者） */
@@ -608,6 +616,7 @@ onMounted(() => {
     document.addEventListener('keydown', unlock)
   }
   const el = document.getElementById('blVisionStage')
+  stageHost = el
   if (el) {
     try {
       stageRef = mountFaceStage(el, {
@@ -708,8 +717,9 @@ onUnmounted(() => {
   lipsync.stop()
   stopAudio()
   // #ifdef H5
-  unmountFaceStage()
+  unmountFaceStage(stageHost)
   stageRef = null
+  stageHost = null
   // #endif
 })
 
@@ -1252,7 +1262,7 @@ export default {
    宿主没有定位上下文时画布会相对更外层定位、盖住整屏 UI。
    `min-height` 刻意取小：通话页是"100vh 竖向 flex + 底部按钮"，
    舞台的最小高加上 topbar/caption/按钮会超过一屏、把按钮顶出视口（实测总高 816 > 485）。 */
-.bl-vision__stage {
+.bl-vision__stagewrap {
   position: relative;
   flex: 1 1 auto;
   min-height: 300rpx;
@@ -1260,6 +1270,15 @@ export default {
   overflow: hidden;
 }
 
+.bl-vision__stage {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+  overflow: hidden;
+}
 /* 降级态（WebGL 不可用或资产加载失败）才用的 CSS 假人 */
 .bl-vision__person {
   position: absolute;
@@ -1287,11 +1306,18 @@ export default {
 }
 
 .bl-vision__caption {
-  position: relative;
-  margin: 0 32rpx;
+  /* 浮在画面底部：不占布局，3D 框永远保持原尺寸 */
+  position: absolute;
+  left: 32rpx;
+  right: 32rpx;
+  bottom: 24rpx;
+  /* 最多占画面下半部分，再长就在框内裁掉，不挤舞台 */
+  max-height: 52%;
+  overflow: hidden;
   background-color: rgba(0, 0, 0, .55);
   border-radius: var(--bl-radius-bubble);
   padding: 24rpx 32rpx;
+  box-sizing: border-box;
 }
 .bl-vision__caption-text {
   font-size: var(--bl-font-body);

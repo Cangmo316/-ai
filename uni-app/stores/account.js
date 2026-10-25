@@ -17,6 +17,7 @@
 
 import { reactive } from 'vue'
 import { fetchMe, loginAccount, registerAccount, updateAvatar } from '@/api/index.js'
+import { getBaseURL } from '@/api/config.js'
 
 const TOKEN_KEY = 'bl_account_token'
 const ACCOUNT_KEY = 'bl_account_profile'
@@ -252,11 +253,29 @@ export function changeAvatar(avatar) {
  * `api/request.js` 已经把服务端的 `{error:{code,message}}` 归一成扁平的
  * `{code, statusCode, message}`，且 `message` 就是中文文案（错误码表是唯一事实来源）。
  * 所以这里直接用 `error.message`，只对网络层那两种兜个更口语的说法。
+ *
+ * ⚠️ 网络错误一定要把**目标地址**带出来。
+ * 之前只显示「连不上服务器，让家里人看一下」，家里人也无从下手：
+ * 不知道 App 到底在连哪个地址、是地址错了还是服务没起。
+ * 实测踩过：APK 里烧死的是打包时开发机的局域网 IP，换网络后必然连不上，
+ * 但界面上完全看不出来。
  */
 function friendly(error) {
   if (!error) return '出了点问题，再试一次'
   const code = error.code || ''
-  if (code === 'network') return '连不上服务器，让家里人看一下'
+  const target = (() => {
+    try {
+      return getBaseURL()
+    } catch (e) {
+      return ''
+    }
+  })()
+  if (code === 'network') {
+    // 带上地址：老人看不懂，但家里人可以照着排查
+    return target
+      ? `连不上服务器（${target}），请家里人看一下`
+      : '连不上服务器，让家里人看一下'
+  }
   if (error.message) {
     if (/timeout|超时/i.test(error.message)) return '网络有点慢，再试一次'
     return error.message

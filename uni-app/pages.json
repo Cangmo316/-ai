@@ -23,7 +23,8 @@
     { "path": "pages/wiki/wiki",             "style": { "navigationStyle": "custom" } },
     { "path": "pages/face/face",               "style": { "navigationStyle": "custom" } },
     { "path": "pages/health/health",           "style": { "navigationStyle": "custom" } },
-    { "path": "pages/tokens/tokens",           "style": { "navigationStyle": "custom" } }
+    { "path": "pages/tokens/tokens",           "style": { "navigationStyle": "custom" } },
+    { "path": "pages/server/server",           "style": { "navigationStyle": "custom" } }
   ],
   "easycom": {
     "autoscan": true,

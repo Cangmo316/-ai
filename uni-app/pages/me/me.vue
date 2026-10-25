@@ -138,6 +138,14 @@
           <bl-icon name="chev" color="#B9B3A4" :size="34" />
         </view>
 
+        <view class="bl-row" @click="toServer">
+          <view class="bl-row__icon">
+            <bl-icon name="settings" color="#2F5D4E" :size="44" />
+          </view>
+          <text class="bl-row__label">服务器地址</text>
+          <bl-icon name="chev" color="#B9B3A4" :size="34" />
+        </view>
+
         <view class="bl-row" @click="toTokens">
           <view class="bl-row__icon">
             <bl-icon name="palette" color="#2F5D4E" :size="44" />
@@ -394,6 +402,9 @@ function toFace() {
   // 所以这里恢复为正常跳转 —— 之前"点进来只弹提示"的做法已作废
   // （那时捏脸整体下线、页面打不开，用户就没有切换男女的入口了）。
   uni.navigateTo({ url: '/pages/face/face' })
+}
+function toServer() {
+  uni.navigateTo({ url: '/pages/server/server' })
 }
 function toTokens() {
   uni.navigateTo({ url: '/pages/tokens/tokens' })

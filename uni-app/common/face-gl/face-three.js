@@ -883,14 +883,24 @@ export function createFaceStage(opt) {
 
   function resize() {
     const { w, h } = measure()
+    const prevW = canvasSize.w
     const changed = (w !== canvasSize.w || h !== canvasSize.h)
+    // 宽度变没变，决定要不要重新取景（理由见下）
+    const widthChanged = (w !== prevW)
     canvasSize = { w, h }
     const dpr = Math.min((typeof devicePixelRatio === 'number' ? devicePixelRatio : 1) || 1, MAX_DPR)
     renderer.setPixelRatio(dpr)
     renderer.setSize(w, h, false)
     camera.aspect = w / h
     camera.updateProjectionMatrix()
-    if (changed) applyFraming()
+    // 只在**宽度**变化时重新取景（= 横竖屏切换）。
+    //
+    // 为什么高度变化不能重算：通话页播报时字幕会从一行涨到五六行，把 3D 区挤矮
+    // （实测 443.9 → 316px）。applyFraming 里 distH = (spanH/2)/(tan*aspect)，
+    // 画布变矮 → aspect 变大 → distH 变小 → dist 取 max 后反而变小 → **相机往前凑**，
+    // 人物在"开口说话"的瞬间突然放大、黑板被裁掉两头。
+    // 高度变化只更新投影（人物保持原来的成像大小，依旧全身可见），距离不动。
+    if (changed && widthChanged) applyFraming()
     schedule()
   }
 
@@ -994,6 +1004,8 @@ export function createFaceStage(opt) {
       canvas.removeEventListener('touchcancel', onUp)
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('wheel', onWheel)
+      // 断开尺寸观察者：舞台拆掉后它的回调还会去碰已释放的 renderer
+      if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null }
       if (typeof window !== 'undefined') {
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
@@ -1722,6 +1734,35 @@ function applyArmRestPose(root, clips) {
     }
   }
   if (typeof window !== 'undefined') canvas.addEventListener('wheel', onWheel, { passive: false })
+
+  /**
+   * 容器尺寸变化必须重新 resize。
+   *
+   * 为什么：通话页播报时字幕从一行涨到五六行，会把 3D 区挤矮
+   * （实测 CSS 443.9 → 367.2）。原来只在初始化时 resize 一次，
+   * 于是**缓冲区还是 800×888，CSS 框已经变成 400×367** ——
+   * 浏览器会把画面非等比拉伸塞进框里，纵向压掉约 17%，
+   * 人物看起来又扁又宽，和旋转时"比例完全不一样"。
+   *
+   * resize() 内部只在**宽度**变化时才重算取景距离，
+   * 所以这里放心调用：缓冲与 aspect 会跟着更新，人物成像大小不变。
+   */
+  let resizeObserver = null
+  if (typeof ResizeObserver !== 'undefined') {
+    let pending = false
+    resizeObserver = new ResizeObserver(() => {
+      if (pending) return
+      pending = true
+      const raf = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (fn) => setTimeout(fn, 16)
+      raf(() => {
+        pending = false
+        resize()
+      })
+    })
+    resizeObserver.observe(canvas)
+  }
 
   resize()
 
@@ -2676,25 +2717,52 @@ function applyArmRestPose(root, clips) {
 
 let STAGE = null
 
-/** 挂载舞台（幂等）。返回 null 表示已有实例在跑，本次调用不新建。 */
+/**
+ * 宿主容器 → 舞台实例。
+ *
+ * 为什么不是全局单例：H5 的页面栈会保留上一页，通话页的舞台不会被拆掉；
+ * 若这里用「有实例就直接返回」，形象页拿到的会是通话页的舞台，
+ * 而它的 canvas 在通话页容器里 —— 形象页自己容器里永远没有 canvas，
+ * 界面就一直停在「正在准备 3D 预览…」。
+ * 实测：先看 3D 通话页、再看「数字人形象」，必现。
+ */
+const STAGES = new WeakMap()
+
+/** 挂载舞台（同一容器幂等）。不同容器各自一个实例。 */
 export function mountFaceStage(el, opt) {
-  if (STAGE) return STAGE
-  STAGE = createFaceStage(Object.assign({}, opt, { el }))
+  if (el && STAGES.has(el)) return STAGES.get(el)
+  const stage = createFaceStage(Object.assign({}, opt, { el }))
+  if (el) STAGES.set(el, stage)
+  STAGE = stage
   // 自动化验收句柄：无头浏览器（CDP）里 import 本模块拿到的可能是**另一个模块实例**
   // （页面用 @ 别名、脚本用路径，Vite 会解析成不同 URL），因此把舞台挂到 window 上，
   // 让"拖了滑杆到底动没动模型"能被逐像素验证，而不是靠猜。
-  if (typeof window !== 'undefined') window.__blFaceStage = STAGE
-  return STAGE
+  if (typeof window !== 'undefined') window.__blFaceStage = stage
+  return stage
 }
 
 export function getFaceStage() {
   return STAGE
 }
 
-export function unmountFaceStage() {
-  if (!STAGE) return
-  STAGE.dispose()
-  STAGE = null
+/**
+ * 卸载舞台。
+ * 传容器 → 只拆这个容器的（推荐，多页面同时存在时不会误拆别人的）。
+ * 不传 → 拆最近挂载的那个（兼容旧调用）。
+ */
+export function unmountFaceStage(el) {
+  if (!el) {
+    if (!STAGE) return
+    const stage = STAGE
+    STAGE = null
+    try { stage.dispose() } catch (e) { void e }
+    return
+  }
+  const stage = STAGES.get(el)
+  if (!stage) return
+  STAGES.delete(el)
+  if (STAGE === stage) STAGE = null
+  try { stage.dispose() } catch (e) { void e }
 }
 
 export default {

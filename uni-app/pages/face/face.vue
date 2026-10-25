@@ -309,6 +309,8 @@ const torsoStyle = computed(() => ({
 
 /** H5 端的舞台句柄；App 端恒为 null（renderjs 在视图层持有）。 */
 let stageRef = null
+/** 舞台宿主容器（卸载时按容器拆） */
+let stageHost = null
 
 /** renderjs（视图层）回调进来的入口，必须 defineExpose 才允许 ownerInstance.callMethod 命中。 */
 function onStageReady() {
@@ -331,6 +333,7 @@ onMounted(() => {
   bootTick.value = 1
   const el = document.getElementById('blFaceStage')
   if (!el) return
+  stageHost = el
   try {
     stageRef = mountFaceStage(el, {
       onReady: onStageReady,
@@ -345,8 +348,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  unmountFaceStage()
+  unmountFaceStage(stageHost)
   stageRef = null
+  stageHost = null
 })
 
 // 滑杆 → 30Hz 节流下发「整包四通道指令」（morph / bone / material / asset，规格书 §7.3）
@@ -472,7 +476,8 @@ export default {
   },
   beforeDestroy() {
     // #ifdef APP-PLUS
-    unmountFaceStage()
+    unmountFaceStage(this.__hostEl || undefined)
+    this.__hostEl = null
     this.gl = null
     // #endif
   },
@@ -488,6 +493,7 @@ export default {
         if (typeof console !== 'undefined') console.error('[face] 找不到可用的舞台容器')
         return
       }
+      this.__hostEl = el
       if (!this.gl) {
         this.gl = mountFaceStage(el, {
           onReady: () => ownerInstance.callMethod('onStageReady'),
