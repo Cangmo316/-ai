@@ -111,14 +111,21 @@ migrate_dir case_files
 migrate_dir _voice_samples
 
 # ── 5. 虚拟环境 ──────────────────────────────────────────────────
+# 国内直连 pypi.org 常常几十 KB/s 甚至超时；允许用 PIP_INDEX_URL 覆盖。
+# 默认走阿里云镜像（与 ECS 同区域，最快）。
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
+PIP_INDEX_ARGS="-i ${PIP_INDEX_URL}"
+if [[ "${PIP_TRUSTED_HOST:-}" != "" ]]; then
+  PIP_INDEX_ARGS="${PIP_INDEX_ARGS} --trusted-host ${PIP_TRUSTED_HOST}"
+fi
 if [[ ! -x "${DATA_DIR}/.venv/bin/python" ]]; then
   log "创建虚拟环境并安装依赖"
   python3 -m venv "${DATA_DIR}/.venv"
-  "${DATA_DIR}/.venv/bin/pip" install --upgrade pip -q
-  "${DATA_DIR}/.venv/bin/pip" install -r "${DATA_DIR}/requirements.txt" -q
+  "${DATA_DIR}/.venv/bin/pip" install --upgrade pip -q ${PIP_INDEX_ARGS}
+  "${DATA_DIR}/.venv/bin/pip" install -r "${DATA_DIR}/requirements.txt" -q ${PIP_INDEX_ARGS}
 else
   log "虚拟环境已存在，更新依赖"
-  "${DATA_DIR}/.venv/bin/pip" install -r "${DATA_DIR}/requirements.txt" -q
+  "${DATA_DIR}/.venv/bin/pip" install -r "${DATA_DIR}/requirements.txt" -q ${PIP_INDEX_ARGS}
 fi
 log "依赖安装完成"
 
@@ -135,6 +142,7 @@ else
   if [[ -f "${SRC_SERVER}/.env" ]]; then
     sed -e 's/^HOST=.*/HOST=127.0.0.1/' \
         -e 's/^LOG_LEVEL=.*/LOG_LEVEL=info/' \
+        -e 's/^CORS_ORIGINS=.*/CORS_ORIGINS=/' \
         "${SRC_SERVER}/.env" > "${ENV_FILE}"
   else
     # 仓库里没有 .env（.gitignore 忽略它）时，生成一份最小可用的
@@ -154,6 +162,22 @@ EOF
   chmod 600 "${ENV_FILE}"
   warn "请立刻编辑 ${ENV_FILE} 填好 LLM_API_KEY / DASHSCOPE_API_KEY，并收紧 CORS_ORIGINS"
 fi
+
+# ── 6.5 强制开启接口鉴权 ─────────────────────────────────────────
+# 为什么不让它默认 open：接口里有老人的健康档案、病例、聊天记录，
+# 属于《个人信息保护法》的敏感个人信息。公网裸奔一次就是事故。
+# 这里在 env 里补 AUTH_MODE=required + 随机 API_TOKENS（已有的不覆盖）。
+if ! grep -q '^AUTH_MODE=' "${ENV_FILE}" 2>/dev/null; then
+  echo "AUTH_MODE=required" >> "${ENV_FILE}"
+  log "已写入 AUTH_MODE=required"
+fi
+if ! grep -q '^API_TOKENS=..*' "${ENV_FILE}" 2>/dev/null; then
+  NEW_TOKEN=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+  echo "API_TOKENS=${NEW_TOKEN}" >> "${ENV_FILE}"
+  warn "已生成 API_TOKENS（App 端要带上它）："
+  echo "    ${NEW_TOKEN}"
+fi
+chmod 600 "${ENV_FILE}"
 
 # 权限：代码归 root（进程只读），数据目录归 bilin（可写）
 chown -R root:root "${APP_DIR}"
