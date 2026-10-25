@@ -117,3 +117,9 @@ ml/models/
 ml/.cache/
 ml/out/
 ml/data/
+# ===== 端侧本地密钥（2026-10-19 上云）=====
+# .env.local 由 Vite 自动加载且优先级最高，用来放**不进仓库**的值：
+#   VITE_API_TOKEN  接口级 token（服务端 AUTH_MODE=required 时必须带）
+# 仓库是公开的，token 一旦提交就等于作废，必须忽略。
+uni-app/.env.local
+uni-app/.env.*.local

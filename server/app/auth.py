@@ -66,11 +66,26 @@ def auth_required(settings) -> bool:
 
 
 def extract_token(request: Request) -> str:
-    """支持 `Authorization: Bearer xxx`，也支持 `X-API-Token: xxx`（调试方便）"""
+    """取**静态门**用的 token：`X-API-Token` 优先，其次 `Authorization: Bearer`。
+
+    ⚠️ 为什么 X-API-Token 要优先：
+    端侧同时有两个凭据——账号登录拿到的会话 token（放 `Authorization`），
+    和部署时配置的一机一 token（放 `X-API-Token`）。
+    如果这里先读 `Authorization`，静态门就会拿**会话 token** 去和 `API_TOKENS` 比，
+    永远不相等；而账号接口（`accounts.from_request`）又只认 `Authorization`，
+    于是「门」和「账号」抢同一个头，两种鉴权无法共存。
+    先读 X-API-Token 后，两个凭据各走各的：
+      · X-API-Token → 过静态门
+      · Authorization → 认账号身份
+    只传 Authorization 不带 X-API-Token 的老客户端行为不变（仍走 Bearer 比较）。
+    """
+    api_token = (request.headers.get("x-api-token") or "").strip()
+    if api_token:
+        return api_token
     header = request.headers.get("authorization") or ""
     if header.lower().startswith("bearer "):
         return header[7:].strip()
-    return (request.headers.get("x-api-token") or "").strip()
+    return ""
 
 
 def token_valid(settings, provided: str) -> bool:

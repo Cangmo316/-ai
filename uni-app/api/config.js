@@ -177,10 +177,16 @@ export function resolveURL(path) {
  *
  * 设置方式，优先级从高到低：
  *   1. 运行期：`setApiToken('...')`（写本地缓存，下次启动仍生效）
- *   2. 源码：改下面的 `DEFAULT_API_TOKEN`（本机联调图省事用，**真 token 不要提交进仓库**）
- *   3. 都不设：服务端没开鉴权时不带这个头
+ *   2. 构建期：环境变量 `VITE_API_TOKEN`（打生产包时注入，见 `.env.production`）
+ *   3. 源码：改下面的常量（本机联调图省事用，**真 token 不要提交进仓库**）
+ *   4. 都不设：服务端没开鉴权时不带这个头
+ *
+ * ⚠️ 这是**接口级 token**，和账号登录拿到的会话 token 是两个东西：
+ *   · 接口级 token → 放 `X-API-Token`，过服务端的静态门
+ *   · 会话 token   → 放 `Authorization`，用来认「你是谁」
+ * 两个都要带，否则开了 `AUTH_MODE=required` 后账号接口会被门挡掉。
  */
-export const DEFAULT_API_TOKEN = ''
+export const DEFAULT_API_TOKEN = String(import.meta.env.VITE_API_TOKEN || '').trim()
 
 export function getApiToken() {
   let token = ''
@@ -209,9 +215,20 @@ export function setApiToken(token) {
  */
 export function authHeaders(headers) {
   const merged = Object.assign({}, headers || {})
-  const token = getApiToken()
-  if (token && !merged.Authorization && !merged.authorization) {
-    merged.Authorization = 'Bearer ' + token
+
+  // ① 静态门：**永远**带 `X-API-Token`。
+  //    为什么不用 Authorization：账号接口的 Authorization 已经被会话 token 占了，
+  //    一个头装不下两个凭据。分开之后「过门」和「认人」互不干扰。
+  const apiToken = getApiToken()
+  if (apiToken && !merged['X-API-Token'] && !merged['x-api-token']) {
+    merged['X-API-Token'] = apiToken
   }
+
+  // ② 兼容老服务端：它只认 Authorization。没显式给账号 token 时补上静态 token，
+  //    这样「只传账号 token」的调用方和「只配静态 token」的部署都能用。
+  if (apiToken && !merged.Authorization && !merged.authorization) {
+    merged.Authorization = 'Bearer ' + apiToken
+  }
+
   return merged
 }
