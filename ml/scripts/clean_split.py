@@ -37,6 +37,8 @@ sys.path.insert(0, str(SERVER))
 SEED = ROOT / "data" / "seed" / "seed.jsonl"
 SYNTH = ROOT / "data" / "synth" / "synth.jsonl"
 HIGHRISK = ROOT / "data" / "synth" / "highrisk.jsonl"
+# 反向样本：日常闲聊、明确不许提医生/不加免责（治"日常误加免责"）
+DAILY = ROOT / "data" / "synth" / "daily_nowarn.jsonl"
 OUT = ROOT / "data" / "final"
 
 SCRUB = [
@@ -85,9 +87,11 @@ def main() -> None:
     seed = load(SEED)
     synth = load(SYNTH)
     highrisk = load(HIGHRISK)
+    daily = load(DAILY)
     held = holdout_texts()
 
-    print("  种子 %d 条 | 普通合成 %d 条 | 高危定向 %d 条" % (len(seed), len(synth), len(highrisk)))
+    print("  种子 %d 条 | 普通合成 %d 条 | 高危定向 %d 条 | 日常反向 %d 条"
+          % (len(seed), len(synth), len(highrisk), len(daily)))
     print("  留出集（生产场景，绝不进训练）: %d 条" % len(held))
 
     merged: list[dict] = []
@@ -95,7 +99,7 @@ def main() -> None:
     seen: set[str] = set()
     dropped_dup = 0
 
-    for row in seed + synth + highrisk:
+    for row in seed + synth + highrisk + daily:
         messages = row.get("messages") or []
         if len(messages) < 3:
             continue
@@ -157,6 +161,7 @@ def main() -> None:
         "seed": len(seed),
         "synth": len(synth),
         "highrisk": len(highrisk),
+        "daily_nowarn": len(daily),
         "holdout": len(holdout),
         "merged": len(merged),
         "dropped_dup": dropped_dup,
