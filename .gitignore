@@ -122,5 +122,9 @@ ml/data/
 #   VITE_API_TOKEN  接口级 token（服务端 AUTH_MODE=required 时必须带）
 # 仓库是公开的，token 一旦提交就等于作废，必须忽略。
 uni-app/.env.local
-uni-app/.env.*.localml/**/__pycache__/
+uni-app/.env.*.local
+ml/**/__pycache__/
 *.pyc
+
+# 本机开发启动脚本（路径写死，不进仓库）
+server/run-dev.cmd
