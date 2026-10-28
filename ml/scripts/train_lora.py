@@ -31,6 +31,10 @@ import os
 import random
 from pathlib import Path
 
+# 显存碎片优化：上一轮峰值 7.9GB / 8.19GB 已经贴顶，
+# 不处理碎片的话，同样的配置偶尔就会 OOM（本轮就撞上了）。
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 from datasets import Dataset
 from peft import LoraConfig, TaskType, get_peft_model
@@ -98,7 +102,9 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--grad-accum", type=int, default=8)
-    parser.add_argument("--max-len", type=int, default=1280)
+    # 实测 token 分布：合计最大 1271、p90 1193。
+    # 1216 能覆盖约 97% 且留出显存余量（1280 时峰值爆过）。
+    parser.add_argument("--max-len", type=int, default=1216)
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--seed", type=int, default=20261018)

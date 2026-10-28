@@ -1,18 +1,24 @@
-"""合并数据并切分训练 / 评测集。
+"""合并数据并切分：训练 / 评测 / 严格留出。
 
-## 清洗三件事
+## 这一轮修的一个方法论错误（重要）
 
-1. **去重**：用户侧语句归一化后重复的直接丢（同义重复会让模型过拟合到那几句）
-2. **脱敏复检**：合成数据里也可能混进手机号/编号，入口再抹一遍
-3. **切分**：按 9:1 切，且**评测集按场景分类分层抽样**，
-   避免评测集全落在某一类（那样看不出模型在别的类别上退化）
+上一轮把 `seed.jsonl`（63 条生产场景 + 优质回复）**同时**当成：
+  · 训练数据（90% 进了 train.jsonl）
+  · 评测集（eval_lora.py 跑的就是这 63 条）
+
+等于**用训练集测自己**，93.7% 是虚高的。
+
+现在改成：**63 条生产场景全部留出，一条都不进训练**，
+写进 `holdout.jsonl` 只用于最终评测。
+
+## 三个输出
+
+  train.jsonl    只含合成数据（普通 + 高危定向），用于训练
+  eval.jsonl     从合成数据里分层抽 10%，用于监控过拟合
+  holdout.jsonl  63 条生产场景，**评测专用，绝不进训练**
 
 用法：
     python scripts/clean_split.py
-输出：
-    data/final/train.jsonl
-    data/final/eval.jsonl
-    data/final/stats.json
 """
 
 from __future__ import annotations
@@ -20,12 +26,17 @@ from __future__ import annotations
 import json
 import random
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SERVER = Path(r"E:\比邻AI\server")
+sys.path.insert(0, str(SERVER))
+
 SEED = ROOT / "data" / "seed" / "seed.jsonl"
 SYNTH = ROOT / "data" / "synth" / "synth.jsonl"
+HIGHRISK = ROOT / "data" / "synth" / "highrisk.jsonl"
 OUT = ROOT / "data" / "final"
 
 SCRUB = [
@@ -36,8 +47,15 @@ SCRUB = [
 
 
 def norm(text: str) -> str:
-    """归一化用于判重：去空白与标点。"""
+    """归一化用于判重与留出匹配：去空白与标点。"""
     return re.sub(r"[^\u4e00-\u9fffa-zA-Z0-9]", "", text or "").lower()
+
+
+def holdout_texts() -> set[str]:
+    """63 条生产场景，必须从训练集里剔除。"""
+    from tests.scenarios import SCENARIOS
+
+    return {norm(case["text"]) for case in SCENARIOS}
 
 
 def scrub(text: str) -> str:
@@ -53,11 +71,12 @@ def load(path: Path) -> list[dict]:
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if line:
-            try:
-                rows.append(json.loads(line))
-            except Exception:
-                continue
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
     return rows
 
 
@@ -65,12 +84,18 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     seed = load(SEED)
     synth = load(SYNTH)
-    print("  种子 %d 条，合成 %d 条" % (len(seed), len(synth)))
+    highrisk = load(HIGHRISK)
+    held = holdout_texts()
+
+    print("  种子 %d 条 | 普通合成 %d 条 | 高危定向 %d 条" % (len(seed), len(synth), len(highrisk)))
+    print("  留出集（生产场景，绝不进训练）: %d 条" % len(held))
 
     merged: list[dict] = []
+    holdout: list[dict] = []
     seen: set[str] = set()
     dropped_dup = 0
-    for row in seed + synth:
+
+    for row in seed + synth + highrisk:
         messages = row.get("messages") or []
         if len(messages) < 3:
             continue
@@ -78,6 +103,12 @@ def main() -> None:
         assistant = scrub(messages[2].get("content", ""))
         if len(user) < 2 or len(assistant) < 10:
             continue
+
+        # 留出：生产场景不进训练（否则评测就是自测）
+        if norm(user) in held:
+            holdout.append(row)
+            continue
+
         key = norm(user)[:24]
         if key in seen:
             dropped_dup += 1
@@ -87,19 +118,19 @@ def main() -> None:
         messages[2]["content"] = assistant
         merged.append(row)
 
-    print("  去重丢弃 %d 条，保留 %d 条" % (dropped_dup, len(merged)))
+    print("  去重丢弃 %d 条，可训练 %d 条，留出 %d 条" % (dropped_dup, len(merged), len(holdout)))
 
-    # 分层抽样：按 meta.group / meta.persona 分组，保证每类都有评测样本
+    # 分层抽样：保证每类都有评测样本
     buckets: dict[str, list[dict]] = defaultdict(list)
     for row in merged:
         meta = row.get("meta") or {}
-        key = meta.get("group") or meta.get("persona") or "default"
+        key = meta.get("risk") or meta.get("group") or meta.get("persona") or "default"
         buckets[key].append(row)
 
-    random.seed(20261018)
+    random.seed(20261021)
     train: list[dict] = []
     evaluate: list[dict] = []
-    for key, items in buckets.items():
+    for _key, items in buckets.items():
         random.shuffle(items)
         cut = max(1, round(len(items) * 0.1)) if len(items) >= 5 else 0
         evaluate.extend(items[:cut])
@@ -115,6 +146,7 @@ def main() -> None:
 
     dump(OUT / "train.jsonl", train)
     dump(OUT / "eval.jsonl", evaluate)
+    dump(OUT / "holdout.jsonl", holdout)
 
     def chars(rows: list[dict]) -> int:
         return sum(
@@ -124,22 +156,26 @@ def main() -> None:
     stats = {
         "seed": len(seed),
         "synth": len(synth),
+        "highrisk": len(highrisk),
+        "holdout": len(holdout),
         "merged": len(merged),
         "dropped_dup": dropped_dup,
         "train": len(train),
         "eval": len(evaluate),
         "train_chars": chars(train),
         "eval_chars": chars(evaluate),
+        "holdout_chars": chars(holdout),
         "buckets": {k: len(v) for k, v in buckets.items()},
     }
     (OUT / "stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=1), encoding="utf-8")
 
     print("\n=== 最终数据集 ===")
-    print("  训练集 : %3d 条 / %5d 字" % (len(train), stats["train_chars"]))
-    print("  评测集 : %3d 条 / %5d 字" % (len(evaluate), stats["eval_chars"]))
+    print("  训练集 : %4d 条 / %6d 字" % (len(train), stats["train_chars"]))
+    print("  评测集 : %4d 条 / %6d 字" % (len(evaluate), stats["eval_chars"]))
+    print("  留出集 : %4d 条 / %6d 字（评测专用）" % (len(holdout), stats["holdout_chars"]))
     print("  分类分布:")
-    for key, count in sorted(stats["buckets"].items(), key=lambda x: -x[1]):
-        print("    %-12s %d" % (key, count))
+    for key, count in sorted(stats["buckets"].items(), key=lambda x: -x[1])[:12]:
+        print("    %-14s %d" % (key, count))
     print("  输出   : %s" % OUT)
 
 
