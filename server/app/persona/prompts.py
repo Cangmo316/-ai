@@ -533,6 +533,90 @@ def _has_medical_disclaimer(reply: str) -> bool:
     return any(word in body for word in equivalents)
 
 
+# ── 反向兜底：日常闲聊里把多余的免责剥掉 ──────────────────────────
+# 微调之后模型学了"高危必须提医生"，副作用是日常话题也开始乱加：
+#     老人：我新学了个手机功能，会视频了
+#     回复：…别一个人瞎琢磨 还是听医生的      ← 滥用
+# 提示词和数据都管不住（话题无限），所以和 ensure_medical_notice 对称地
+# 在代码里做一道"剥"的保险。
+_NOTICE_ONLY = (
+    "仅供参考", "以医嘱为准", "线下就医", "实际情况请以",
+)
+_DOCTOR_WORDS = ("医生", "大夫", "医嘱", "就医", "医院", "急诊")
+
+# 这些情况下"提医生"是对的，一律不剥（否则会削掉自伤/认知/急症的安全提示）。
+# ⚠️ 这一条比剥离本身更重要：宁可多留一句免责，也不能把该就医的话剥没了。
+_NOTICE_KEEP = (
+    "不想活", "活不下去", "轻生", "想死", "活着没意思",
+    "摔", "跌", "磕", "碰伤", "烫", "中毒",
+    "忘", "找不到", "认错", "糊涂", "迷路", "走丢",
+    "疼", "晕", "麻", "闷", "喘", "血", "发烧", "吐", "拉肚子",
+    "吃不下", "瘦了", "不睡", "脾气", "发火", "打人", "不肯吃",
+    # 照护异常（认知症的常见表现）——「不愿意洗澡」这种中间夹字的写法要覆盖到
+    "洗澡", "穿衣", "不肯", "不愿",
+    # 涉及药与保健品时，"问问医生"是防骗/防乱吃药的关键建议，不能剥
+    "药", "保健品", "推销", "偏方", "广告",
+)
+
+
+def strip_medical_notice(reply: str, medical: bool, text: str) -> str:
+    """日常闲聊里把多余的免责话术剥掉（与 ensure_medical_notice 对称）。
+
+    什么时候**不动**（三条与 ensure_medical_notice 完全一致，另加安全豁免）：
+      · 这一轮走了医疗人设（`medical=True`）
+      · 用户这句本身是医疗问题（`is_medical_question`）
+      · 回复里含临床口径内容（`has_clinical_content`，如"您血压高少吃点"）
+      · 用户这句命中 `_NOTICE_KEEP`（自伤 / 跌倒 / 认知 / 燃气 / 急症 …）
+    其余情况才剥。
+    """
+    body = str(reply or "")
+    if not body.strip():
+        return body
+
+    if medical or is_medical_question(text) or has_clinical_content(body):
+        return body
+    raw_text = str(text or "")
+    if any(word in raw_text for word in _NOTICE_KEEP):
+        return body
+
+    stripped = _strip_notice_lines(body)
+    # 剥完空了就还原 —— 宁可留一句啰嗦的免责，也不能把回复剥成空白
+    return stripped if stripped.strip() else body
+
+
+def _strip_notice_lines(body: str) -> str:
+    """按**分句**剥，而不是按整行。
+
+    为什么不能整行删：一行里常混着有用的建议和免责，
+        钱的事儿得找政府热线 或者税务局 仅供参考 实际情况请以医嘱为准
+    整行删会把"找政府热线"这条真建议一起删掉。所以按分隔符切成小段，
+    只丢含免责/医生的那几段，其余拼回去；拼完为空才丢整行。
+    """
+    kept: list[str] = []
+    for raw in body.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            kept.append(line)
+            continue
+
+        pieces = re.split(r"(\s+|，|,|、|；|;|。)", line)
+        remain: list[str] = []
+        for piece in pieces:
+            if any(mark in piece for mark in _NOTICE_ONLY):
+                continue
+            if any(word in piece for word in _DOCTOR_WORDS):
+                continue
+            remain.append(piece)
+
+        rebuilt = "".join(remain).strip(" \t，,、；;。")
+        if rebuilt:
+            kept.append(rebuilt)
+
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept)
+
+
 # 小模型容易把称呼说漂：设定是"您"，却冒出"妈""老伴"。
 # 这个守卫把明确的错误称呼换掉 —— 只改**称呼词本身**，不动句子结构。
 _ADDRESS_DRIFT = {
@@ -557,6 +641,72 @@ def guard_address(reply: str, address: str) -> str:
         # 只替换"开头"或"换行/空格后"的称呼，且后面紧跟标点或空格
         out = re.sub(r"(^|[\n\s])" + re.escape(w) + r"(?=[\s，,、!！。~～])", r"\1" + address, out)
     return out
+
+
+_LEADING_SEP = r"[\s，,、:：]+"
+
+
+def fix_leading_address(text: str, address: str = "您") -> str:
+    """修正回复**开头**那几个字里的称呼（必须在流式发出之前调用）。
+
+    两件事都实测踩过：
+      · 「您 我知道…」—— 代词被当成称呼甩在开头，语音会先念一个字再停顿；
+      · 「妈 我知道…」—— 称呼漂移（人设是「您」，模型说成「妈」）。
+        旧的 `guard_address` 是**流式之后**才跑的，字幕和语音早就发出去了，
+        所以用户既看到了「妈」，也听到了「妈」。
+
+    返回修正后的文本；看不出是"开头称呼"就原样返回。
+    """
+    if not text:
+        return text
+
+    # ① 开头是「您/你」+ 分隔符 → 丢掉整个前缀，直接从正文开始
+    m = re.match(r"^(您|你)" + _LEADING_SEP, text)
+    if m:
+        return text[m.end():]
+
+    # ② 开头是错误称呼 + 分隔符 → 换成正确称呼
+    wrong = _ADDRESS_DRIFT.get(address) or ()
+    for w in wrong:
+        m = re.match(r"^" + re.escape(w) + _LEADING_SEP, text)
+        if m:
+            # 直接丢掉（不要替换成「您，」）：开头只留一个词，
+            # 语音会先念那个词再停顿，听起来就是"说了一个字又断开"。
+            return text[m.end():]
+    return text
+
+
+def merge_orphan_address(reply: str, address: str = "您") -> str:
+    """把"孤零零的称呼"并回句子。
+
+    为什么需要：模型会照着提示词里的示例，把「您」当成称呼放在开头，输出成
+        「您 我知道您心里没底 才一遍遍问」
+    开头一个"您"、后面又是一句完整的话，读起来像两句话硬拼在一起。
+
+    这里做两件很小的事（都不改句子内容，只补/并标点）：
+      1. 开头是「您/你」+ 空格且后面直接接字 → 空格改成逗号：『您，我知道…』
+      2. 第一行**只有**称呼本身 → 并进下一行：『您\n我知道…』→『您，我知道…』
+    """
+    body = str(reply or "")
+    if not body:
+        return body
+
+    # ① 代词 + 空格 + 正文
+    if address in ("您", "你"):
+        m = re.match(r"^(您|你)[ \t]+(?=\S)", body)
+        if m:
+            body = m.group(1) + "，" + body[m.end():]
+
+    # ② 第一行只有称呼
+    lines = body.split("\n")
+    first = lines[0].strip()
+    if first and first in (address, "您", "你") and len(lines) > 1:
+        rest = lines[1].strip()
+        if rest:
+            lines[0] = f"{first}，{rest}"
+            del lines[1]
+            body = "\n".join(lines)
+    return body
 
 
 def build_system_prompt(
@@ -703,17 +853,45 @@ def build_system_prompt(
 
     lines.append("")
     lines.append("【怎么说话】")
-    lines.append(f"- 第一人称、口语、短句，像家里人说话，不像客服：说「{address} 药吃了没」，不说「您好，请问您是否已服药」")
+    # 「您 / 你」是**代词**，不是称呼。原来这里无条件写「说『{address} 药吃了没』」，
+    # 人设 address 正好是「您」时，模型就照抄成「您 我知道您心里没底…」——
+    # 开头孤零零一个"您"，后面又是一句完整的话，读起来像两句话拼在一起。
+    # 代词只在句中用，不能当句首称呼举例。
+    pronoun_address = address in ("您", "你")
+    if pronoun_address:
+        lines.append(
+            "- 第一人称、口语、短句，像家里人说话，不像客服："
+            "说「药吃了没」，不说「您好，请问您是否已服药」"
+        )
+        lines.append(
+            "- 对老人用「您」，但**不要拿「您」当句首称呼**："
+            "它是代词，单独起头会变成「您 我知道…」这种半句话；直接说事即可"
+        )
+    else:
+        lines.append(
+            f"- 第一人称、口语、短句，像家里人说话，不像客服："
+            f"说「{address} 药吃了没」，不说「您好，请问您是否已服药」"
+        )
     lines.append("- 句末不加句号；要说两句以上就换行，不要用句号连成一长串")
     lines.append("- 闲聊 1 到 2 句；要说明一件事不超过 4 句")
     lines.append("- 不说教、不纠正老人的观点、不主动提疾病会变严重")
-    lines.append(f"- 称呼固定用「{address}」，不用「您」以外的敬语客套话")
+    if pronoun_address:
+        lines.append("- 不用敬语客套话（「您好」「请问」这类），像家里人随口说话")
+    else:
+        lines.append(f"- 称呼固定用「{address}」，不用「您」以外的敬语客套话")
     # 实测：人设写的是「您」，模型仍会冒出「妈」「老伴」。
     # prompt 约束 + `guard_address()` 代码兜底，两层一起上。
-    lines.append(
-        f"- **整段对话里对老人的称呼只能是「{address}」**，"
-        "不要中途换成「妈」「爸」「老伴」「老姐姐」等其他叫法"
-    )
+    if pronoun_address:
+        lines.append(
+            "- **整段对话里对老人只用「您」**，不要中途换成「妈」「爸」「老伴」「老姐姐」等其他叫法；"
+            "「您」是代词，直接用在句中（「您先坐着」「您别急」），"
+            "**不要单独摆在句首当称呼用**（「您 我知道…」这种不算称呼，是半句话）"
+        )
+    else:
+        lines.append(
+            f"- **整段对话里对老人的称呼只能是「{address}」**，"
+            "不要中途换成「妈」「爸」「老伴」「老姐姐」等其他叫法"
+        )
 
     lines.append("")
     lines.append("【不能越的线】")
@@ -725,6 +903,24 @@ def build_system_prompt(
     lines.append("- 你是 AI 数字人：老人问起就承认，绝不声称自己是真人本人")
     lines.append("- 不阻止老人联系真人家属，反而鼓励多跟真人联系")
     lines.append("- 若老人提起已故的亲人：只表达陪伴与倾听，不扮演、不代那位亲人说话")
+    # ── 康养态度红线：不许不耐烦 ────────────────────────────────
+    # 实测（真模型）：同一个问题问到第三遍，模型会说「话我都说尽了」
+    # 「我不再重复那几句了」「这么问下去 我心里也跟着揪」。
+    # 这在康养服务里是事故级的态度问题 ——
+    # 老人反复问同一件事，是**心里没底在求安慰**，不是唠叨。
+    lines.append(
+        "- **绝不表现出一丝不耐烦**：不许出现「我说过了」「话都说尽了」「不再重复」"
+        "「你怎么又问」「刚不是说过了吗」「还有别的事吗」这类话；"
+        "也不许叹气、抱怨、催老人结束话题"
+    )
+    lines.append(
+        "- 老人反复问同一件事，要当成**他还在担心**：照旧耐心回答，可以换个说法、"
+        "说得更短更具体，或者先接一句情绪（「您还是有点不放心是吧」「我再说一遍 您听着」）再答"
+    )
+    lines.append(
+        "- 真没新东西可说时，也不能显得赶人：可以说「这事我拿不准 咱一块儿问医生」，"
+        "或「那您先歇会儿 我就在这儿」；绝不能说「我没什么可说的了」"
+    )
     # 记忆相关的红线也放在这一段：实测放在"往事"段权重不够——追问细节时模型仍会
     # 编出具体场景（"海边太阳暖洋洋""把小红也叫上"），甚至冒充是老人自己说的。
     # 而这一段里的医疗红线（不判断药量等）在真模型上一直守得住，说明位置本身有分量。

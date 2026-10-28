@@ -211,7 +211,11 @@ function normalize(rawEvent) {
       return {
         type: CHAT_EVENT.done,
         finishReason: payload.finishReason || payload.reason || 'stop',
-        assistantMsgId: payload.assistantMsgId || ''
+        assistantMsgId: payload.assistantMsgId || '',
+        // 服务端定稿文本：日常轮会剥掉模型多嘴加的免责，
+        // 而流式已经发出去的字收回不来，所以这里用它整段替换气泡内容。
+        // 老服务端不带这个字段时为空串，端侧保持原样（向后兼容）。
+        text: typeof payload.text === 'string' ? payload.text : ''
       }
     case 'error':
       return {

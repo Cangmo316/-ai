@@ -55,6 +55,9 @@ from ..persona.prompts import (
     ensure_medical_notice,
     guard_address,
     normalize_mode,
+    merge_orphan_address,
+    fix_leading_address,
+    strip_medical_notice,
 )
 from ..persona.stickers import is_allowed_sticker
 from ..style.compliance import scan
@@ -390,11 +393,41 @@ class ChatService:
                     finish_reason = reason
 
                 streamed = ""
+
+                # 开头闸门：模型常把「您」当称呼甩在开头（「您 我知道…」）。
+                # 之前只在**落库/合成前**合并，字幕看着好了，可语音念的是合并前的原文，
+                # 所以听起来还是"先说一个字'您'，停一下，再接着说"。
+                # 这里在**发出之前**就把这个孤零零的前缀丢掉，字幕与语音才是同一份。
+                gate_open = False
+                gate_buf = ""
+
+                def gate(chunk: str) -> str:
+                    """放行/修正回复开头那几个字（孤立的「您」、漂移的「妈」）。"""
+                    nonlocal gate_open, gate_buf
+                    if gate_open or not chunk:
+                        return chunk
+                    gate_buf += chunk
+                    fixed = fix_leading_address(gate_buf, persona.address)
+                    if fixed != gate_buf:
+                        # 判定成功：丢掉/替换掉开头那个称呼
+                        gate_open = True
+                        out = fixed
+                        gate_buf = ""
+                        return out
+                    # 还看不出来（可能只有第一个字）：先压着，等下一片
+                    if len(gate_buf) < 4:
+                        return ""
+                    # 不是"开头称呼"（比如「您先坐着」「药吃了没」）→ 原样放行
+                    gate_open = True
+                    out = gate_buf
+                    gate_buf = ""
+                    return out
+
                 async for delta in _stream_with_finish(provider, reply_messages, _note_finish):
                     streamed += delta
                     plain, sticker_tokens = extractor.feed(delta)
                     if plain:
-                        chunk = streamer.feed(plain)
+                        chunk = gate(streamer.feed(plain))
                         if chunk:
                             current_text_part()["text"] += chunk
                             yield events.EVENT_TOKEN, {"t": chunk}
@@ -444,10 +477,16 @@ class ChatService:
             # 收尾：把最后一段没有标点的文字吐出去
             tail_text, tail_stickers = extractor.flush()
             if tail_text:
-                chunk = streamer.feed(tail_text)
+                chunk = gate(streamer.feed(tail_text))
                 if chunk:
                     current_text_part()["text"] += chunk
                     yield events.EVENT_TOKEN, {"t": chunk}
+            # 闸门里还压着东西（整篇回复只有"您"这种极端情况）→ 放出来，别吞字
+            if not gate_open and gate_buf:
+                current_text_part()["text"] += gate_buf
+                yield events.EVENT_TOKEN, {"t": gate_buf}
+                gate_open = True
+                gate_buf = ""
             streamer.flush()
             for token in tail_stickers:
                 if is_allowed_sticker(token):
@@ -484,6 +523,10 @@ class ChatService:
             # 先纠正称呼漂移（模型会把人设里的「您」说成「妈」），再判断免责：
             # 两步顺序不能反——称呼纠正会改动文本，必须在它之后做最终拼接。
             guarded = guard_address(medical_reply, persona.address)
+            # 再把"孤零零的称呼"并回句子（模型会输出「您 我知道…」这种半句话）
+            merged = merge_orphan_address(guarded, persona.address)
+            if merged != guarded:
+                guarded = merged
             if guarded != medical_reply and parts and parts[-1]["type"] == TYPE_TEXT:
                 parts[-1]["text"] = guarded
                 # 称呼是在流式过程中逐字发出去过的，这里无法撤回；
@@ -499,6 +542,18 @@ class ChatService:
                     parts[-1]["text"] = final_text
                     yield events.EVENT_TOKEN, {"t": extra}
                     logger.info("本轮命中医疗话题，已补免责声明（会话 %s）", conversation_id)
+
+            # ── 反向兜底：日常闲聊里把多余的免责剥掉 ────────────────
+            # 微调后模型学会了"高危必须提医生"，副作用是日常话题也乱加
+            # （"我新学了个手机功能" → "…还是听医生的"）。
+            # ⚠️ 流式已经把字发出去了，撤不回；所以剥完要把最终文本放进
+            #    done 事件，由端侧用整段替换覆盖掉已经显示的那一版。
+            stripped = strip_medical_notice(final_text, medical_turn, text)
+            if stripped != final_text:
+                final_text = stripped
+                if parts and parts[-1]["type"] == TYPE_TEXT:
+                    parts[-1]["text"] = final_text
+                logger.info("日常轮剥掉多余免责（会话 %s）", conversation_id)
 
             self._persist(conversation_id, parts)
             has_visible = any(
@@ -567,7 +622,10 @@ class ChatService:
             #      → `from_alignment`，source: "tts-aligned"
             #   ② 没配 TTS 或没拿到时间戳 → `build_lipsync_payload`，source: "estimated"
             # 语音是**增强项**：任何失败都只记日志，绝不中断对话。
-            if (reply_text or "").strip():
+            # ⚠️ 必须用**定稿文本**（final_text）：reply_text 是流式途中拼的，
+            #    既没有称呼纠正、也没有免责补全 —— 用它合成语音，就会出现
+            #    "字幕是改好的、念的还是原文"（用户听到的多一个"您"就是这个原因）。
+            if (final_text or "").strip():
                 try:
                     # **音频先发、口型后发**：端侧要先把音频下载并起播，
                     # 才能用"音频播放时刻"驱动口型（否则音画会漂移）。
@@ -575,14 +633,20 @@ class ChatService:
                     # **内部**合成 TTS 时顺手写进 `self._last_audio_payload` 的。
                     # 第一版写成"先取 payload 再合成"，取到的永远是 None —— 于是配了百炼 TTS
                     # 也一个 audio 事件都不发，端侧表现就是"数字人没声音"。
-                    audio_payload, payload = await self._audio_then_lipsync(reply_text, assistant_id)
+                    audio_payload, payload = await self._audio_then_lipsync(final_text, assistant_id)
                     if audio_payload:
                         yield events.EVENT_AUDIO, audio_payload
                     yield events.EVENT_LIPSYNC, payload
                 except Exception:  # noqa: BLE001 —— 口型是增强项，绝不能因为它失败而中断对话
                     logger.warning("口型关键帧生成失败，已忽略", exc_info=True)
 
-            yield events.EVENT_DONE, {"assistantMsgId": assistant_id, "finishReason": "stop"}
+            # 带上明文终稿：日常轮剥掉免责后，已流式发出的字收回不来，
+            # 端侧收到 done 时用 `text` 整段替换气泡内容（字段可选，老客户端忽略即可）。
+            yield events.EVENT_DONE, {
+                "assistantMsgId": assistant_id,
+                "finishReason": "stop",
+                "text": final_text,
+            }
 
         except LLMError as exc:
             logger.warning("模型调用失败: code=%s status=%s", exc.code, exc.status_code)

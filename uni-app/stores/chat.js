@@ -261,6 +261,12 @@ function handleEvent(event) {
       break
 
     case CHAT_EVENT.done:
+      // 服务端定稿文本：日常轮会把模型多嘴加的免责剥掉（"…还是听医生的"）。
+      // 流式已经逐字显示过那一版，收回不来，所以这里用终稿**整段替换**。
+      // `event.text` 为空（老服务端）时保持原样，向后兼容。
+      if (event.text && turn.textMsg && event.text !== turn.textMsg.text) {
+        turn.textMsg.text = event.text
+      }
       // 先广播"这一轮说完"的完整数据（文字 + 音频 + 口型），再收尾。
       // 顺序重要：通话页要靠 audio 先起播、再用音频时钟驱动口型，
       // 所以这里必须把两者**一起**给出去，让调用方自己决定怎么起播。
