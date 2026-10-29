@@ -442,7 +442,15 @@ class ChatService:
                     if gate_open or not chunk:
                         return chunk
                     gate_buf += chunk
-                    fixed = fix_leading_address(gate_buf, persona.address)
+                    # ⚠️ 只在"开头就是**本**人设的称呼"时才剥（例如人设是「您」，
+                    #    模型却输出「您 我知道…」）。如果开头是**别的**称呼
+                    #    （人设是「您」却说「妈 药吃了没」），那不是冗余前缀，
+                    #    而是称呼漂移 —— 交给 guard_address 统一处理，
+                    #    这里剥掉会直接删掉正文的第一个词。
+                    prefix = str(persona.address or "")
+                    looks_orphan = bool(prefix) and gate_buf.startswith(prefix) \
+                        and (len(gate_buf) == len(prefix) or gate_buf[len(prefix)] in " \u3000,，、。!！")
+                    fixed = fix_leading_address(gate_buf, persona.address) if looks_orphan else gate_buf
                     if fixed != gate_buf:
                         # 判定成功：丢掉/替换掉开头那个称呼
                         gate_open = True
