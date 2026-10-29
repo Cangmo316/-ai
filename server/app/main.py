@@ -74,6 +74,7 @@ from .models.elder import DEFAULT_ELDER_ID, ElderStore
 from .models.message import ConversationStore
 from .models.push_client import PushClientRegistry
 from .models.sql_store import SqlConversationStore
+from .tools import ToolContext
 from .orchestration.idempotency import IdempotencyStore
 from .orchestration.service import ChatService
 from .persona.prompts import PersonaRegistry
@@ -387,6 +388,20 @@ def create_app(
         version=__version__,
         lifespan=lifespan,
     )
+
+    # ── 智能体工具循环：把档案件柄交给服务层（服务层不直接持有这些 store）──
+    # 开关：环境变量 AGENT_TOOLS=off 可关闭，用于回归对比
+    if os.getenv("AGENT_TOOLS", "on").lower() not in ("off", "0", "false"):
+        service.enable_tools(
+            lambda elder_id: ToolContext(
+                elder_id=elder_id,
+                elders=elders,
+                health=health,
+                plan_engine=engine,
+                plan_store=plan_store,
+                wiki=wiki,
+            )
+        )
 
     app.state.settings = config
     app.state.provider = llm

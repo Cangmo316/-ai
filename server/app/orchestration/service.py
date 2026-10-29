@@ -245,6 +245,13 @@ class ChatService:
         # 病例病史回调：elder_id → 最近几份病历的标题级信息（诊断/就诊日期）。
         # 与 health_provider 同一个理由：编排层只依赖接口
         self.case_provider = case_provider
+
+        # ── 智能体（工具循环）────────────────────────────────────
+        # 默认关闭，由 main.py 调 enable_tools() 打开。
+        # 做成"注入"而不是构造参数，是为了不动 __init__ 签名 ——
+        # 现有 691 项测试里有大量直接构造 ChatService 的地方。
+        self._tools_enabled = False
+        self._tool_context = None
         #: LLM wiki（老人画像 + 子女说话风格）。
         #: 为空时完全不启用 —— 老行为照常，测试里也不注入。
         #: 作用有两头：注入（同步，影响这轮 prompt）与学习（异步，不拖慢回复）。
@@ -275,6 +282,16 @@ class ChatService:
 
     # ------------------------------------------------------------ 事件流
 
+    def enable_tools(self, context_factory) -> None:
+        """打开智能体工具循环。
+
+        `context_factory(elder_id) -> ToolContext` 由 main.py 提供档案件柄，
+        服务层不直接持有这些 store，避免循环依赖。
+        """
+        self._tools_enabled = True
+        self._tool_context = context_factory
+        logger.info("智能体工具循环已启用")
+
     async def generate(
         self,
         conversation_id: str,
@@ -295,7 +312,6 @@ class ChatService:
         # 表现是"智能体突然不记得我是谁了"，且极难排查
         elder_id = elder_id or DEFAULT_ELDER_ID
 
-        # 按账号挑模型：没配 resolver（或没配自定义）就是内置那个
         provider = self.provider
         if self.provider_resolver is not None:
             try:
@@ -303,6 +319,18 @@ class ChatService:
             except Exception:  # noqa: BLE001 —— 解析失败退回内置，绝不能让对话打不开
                 logger.exception("解析账号模型配置失败，本轮改用内置模型")
                 provider = self.provider
+        # ── 智能体包装：模型自己决定查什么、写什么 ──────────────
+        # 放在"按账号选完模型"之后：包装的是**真正要用的那个** provider
+        agent = None
+        if self._tools_enabled and self._tool_context is not None:
+            try:
+                from .agent import AgentProvider
+
+                agent = AgentProvider(provider, self._tool_context(elder_id))
+                provider = agent
+            except Exception:  # noqa: BLE001 —— 包装失败退回单轮，绝不能让对话打不开
+                logger.exception("智能体包装失败，本轮退回单轮对话")
+                agent = None
 
         # ── 幂等闸门放在最前面 ──
         # 端侧网络抖动重试时会复用同一个 clientMsgId：命中缓存就直接回放，
@@ -359,6 +387,13 @@ class ChatService:
         }
 
         messages = self._build_messages(conversation_id, persona, elder_id, text)
+
+        # 智能体生效时，告诉模型"可以查、什么时候查、什么时候别查"。
+        # 只把 tools 放进请求不够 —— 实测模型会凭上下文猜，不主动调。
+        if agent is not None:
+            from .agent import TOOL_GUIDE
+
+            messages[0]["content"] = str(messages[0].get("content", "")) + TOOL_GUIDE
         streamer = StyleStreamer()
         extractor = StickerExtractor()
         # 本轮产出的片段，按顺序落库：正文 / 表情（顺序与端上看到的完全一致）
@@ -492,6 +527,11 @@ class ChatService:
                 if is_allowed_sticker(token):
                     parts.append({"type": TYPE_STICKER, "sticker": token})
                     yield events.EVENT_STICKER, {"token": token}
+
+            # 智能体用过哪些工具：告诉端侧，也留痕（便于复盘"它为什么这么答"）
+            if agent is not None and getattr(agent, "trail", None):
+                for record in agent.trail:
+                    yield events.EVENT_TOOL, record
 
             # 越界话术持续监控：不拦回复（拦了老人会觉得莫名其妙），只留痕，
             # 让"模型偶尔说错话"这件事有人知道，而不是等出事才发现

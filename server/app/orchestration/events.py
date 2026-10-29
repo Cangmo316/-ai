@@ -21,6 +21,8 @@ EVENT_META = "meta"
 EVENT_TOKEN = "token"
 EVENT_STICKER = "sticker"
 EVENT_CARD = "card"
+#: 智能体用了一次工具（端侧可据此显示"正在查今天的安排…"）
+EVENT_TOOL = "tool"
 # 口型关键帧：**在 done 之前发一次**。端侧据此驱动 3D 数字人的 viseme 形态键。
 # 老端侧对未知事件是静默忽略的（uni-app/api/chat.js 的 normalize 有 default 分支），
 # 所以新增这个事件对旧端向后兼容。
