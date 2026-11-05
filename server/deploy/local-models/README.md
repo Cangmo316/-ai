@@ -223,3 +223,41 @@ curl -s http://127.0.0.1:8000/v1/voice/capabilities
 
 **建议用混合**：平时云端（质量高），检测到外网不通时切本地（不断服）。
 两种 provider 都在，切换只需改 `.env` 并重启。
+---
+
+## 附：GGUF 导出为什么没做（别重复踩）
+
+2026-11-05 在开发机上把能试的都试了一遍，全部失败：
+
+| 途径 | 结果 |
+|---|---|
+| Ollama 安装包 `ollama.com/download` | ❌ 连不上 |
+| GitHub release 资产（llama.cpp Windows 二进制 23MB） | ❌ 域名被拦（API 通、资产下载不通） |
+| `raw.githubusercontent.com` 取 `convert_hf_to_gguf.py` | ❌ 连不上 |
+| `git clone` llama.cpp 源码 | ❌ 仓库太大，传输中途 `early EOF` |
+| 镜像（ghfast.top / mirror.ghproxy.com） | ❌ 不通 |
+| 本机编译量化工具 | ❌ 无 cmake / cl / g++ / clang++ |
+| PyPI 装 `gguf` 库 | ✅ 装上了（但缺转换脚本，库本身不能把 HF 权重转 GGUF） |
+
+**为什么不用手写 GGUF 兜底**：llama.cpp 对 Qwen2 要求 Q/K 权重做 RoPE 置换，
+手写一个"能生成文件"的 GGUF 很容易，但**生成了也验证不了**（本机没有 llama.cpp 可加载）。
+一个无法验证的模型文件比没有更危险 —— 它可能悄悄产出错乱的回复。
+
+**所以最终选择**：用 `serve_local_model.py`（transformers 直接推理 + OpenAI 兼容接口）。
+它不需要任何额外下载，而且已经实测跑通产品全链路（见文末实测数据）。
+
+**如果你在有网的环境里，GGUF 的正确做法是这样**（三步，十分钟）：
+
+```bash
+# 1. 拿工具
+git clone --depth 1 https://github.com/ggml-org/llama.cpp /opt/llama.cpp
+cd /opt/llama.cpp && cmake -B build && cmake --build build -j
+
+# 2. 转 f16 GGUF，再量化到 Q4_K_M（约 1GB，比 bf16 快 3–4 倍、内存减半）
+python3 convert_hf_to_gguf.py /opt/models/merged-bilin --outfile /opt/models/bilin-f16.gguf --outtype f16
+./build/bin/llama-quantize /opt/models/bilin-f16.gguf /opt/models/bilin-q4.gguf Q4_K_M
+
+# 3. 导入 Ollama（Modelfile 的 FROM 指向 gguf）
+sed -i 's|^FROM .*|FROM /opt/models/bilin-q4.gguf|' server/deploy/local-models/Modelfile
+ollama create bilin-qwen -f server/deploy/local-models/Modelfile
+```
