@@ -1,6 +1,27 @@
 # 比邻AI 后端部署
 
-## 一句话
+## 先选一条路
+
+| 你要的场景 | 走哪份文档 | 需要什么 |
+|---|---|---|
+| **本地/同一网络先跑通** | 本文件（下面） | 一台电脑，不需要域名 |
+| **私有化：不买云、不开公网** | [`zerotier/README.md`](zerotier/README.md) | 一台常开机器 + ZeroTier 网络 |
+| **部署到学院/单位机房** | [`docker.md`](docker.md) | Docker，机房给一个端口 |
+| **完全离线（模型语音都本地）** | [`local-models/README.md`](local-models/README.md) | 8G 内存起的机器 |
+| **公网 + 域名 + HTTPS** | 本文件（下半部分） | 公网服务器 + 已备案域名 |
+
+### 一键包
+
+不想一步步来，用打包器生成自包含的部署包（含 `.env`、数据快照、全部脚本、两套 env 模板）：
+
+```bash
+python server/deploy/build-bundle.py --server /path/to/server --out dist
+# 产出 dist/bilin-upload.tar.gz → 传到服务器 → sudo bash install.sh
+```
+
+---
+
+## 一句话（公网 + 域名路线）
 
 服务器上执行 **一条命令**装好后端，再 **一条命令**配 HTTPS，然后把域名填进 App 重新打包。
 
@@ -220,3 +241,30 @@ server/deploy/
 ├── nginx-bilin.conf       Nginx 配置（含 SSE 特殊处理）
 └── Caddyfile              Caddy 配置（含 SSE 特殊处理）
 ```
+
+---
+
+## 备份（四种部署都要做）
+
+私有化部署没有异地容灾，机器坏了数据就没了。**SQLite 必须用 backup API，不能直接 copy**
+（服务在跑 + WAL 模式，直接拷会拿到旧库甚至半个事务）。
+
+`ash
+# Linux
+sudo bash server/deploy/backup.sh                 # 先手动跑一次确认可用
+# 挂 crontab（每天 3:05）
+5 3 * * * bash /opt/bilin/src/server/deploy/backup.sh
+`
+
+`powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File server\deploy\backup.ps1
+# 挂计划任务
+schtasks /create /tn BilinBackup /tr "powershell -ExecutionPolicy Bypass -File C:\bilin-src\server\deploy\backup.ps1" /sc daily /st 03:05 /f
+`
+
+两个脚本都会：用 sqlite3.backup() 做一致性快照 → PRAGMA integrity_check 自检
+→ 带上 case_files/wiki/care → 打 zip/tar → 按份数轮转。
+**都刻意不备份 .env**（含 API 密钥，请单独保管）。
+
+⚠️ 备份放在同一块盘上等于没备份 —— 务必再同步到另一块盘 / NAS / 网盘。
