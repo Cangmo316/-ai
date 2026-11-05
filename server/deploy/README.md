@@ -9,6 +9,7 @@
 | **部署到学院/单位机房** | [`docker.md`](docker.md) | Docker，机房给一个端口 |
 | **完全离线（模型语音都本地）** | [`local-models/README.md`](local-models/README.md) | 8G 内存起的机器 |
 | **公网 + 域名 + HTTPS** | 本文件（下半部分） | 公网服务器 + 已备案域名 |
+| **部署之后怎么运维**（升级/回滚/排障） | [OPERATIONS.md](OPERATIONS.md) | — |
 
 ### 一键包
 
