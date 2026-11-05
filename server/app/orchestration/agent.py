@@ -159,28 +159,33 @@ class AgentProvider(LLMProvider):
         on_finish: Callable[[str], None] | None,
     ) -> AsyncIterator[str]:
         """调一次底层 provider。带 tools 时必须同时支持 tool_sink。"""
-        if tools and sink is not None and self._supports_tools(provider):
+        if tools and sink is not None and self._accepts(provider, "tools"):
             async for chunk in provider.stream(convo, on_finish=on_finish, tools=tools, tool_sink=sink):
                 yield chunk
             return
 
-        # 没传工具 / provider 不支持工具：退回原来的纯文本流（内置 fake 走这里）
-        if on_finish is None:
-            async for chunk in provider.stream(convo):
+        # 没传工具 / provider 不支持工具：退回纯文本流。
+        # ⚠️ on_finish 也要按签名判断 —— 测试里的 FakeProvider 只收 messages，
+        #    无条件传会抛 TypeError（真实踩过，一次挂了 13 个测试）。
+        if on_finish is not None and self._accepts(provider, "on_finish"):
+            async for chunk in provider.stream(convo, on_finish=on_finish):
                 yield chunk
         else:
-            async for chunk in provider.stream(convo, on_finish=on_finish):
+            async for chunk in provider.stream(convo):
                 yield chunk
 
     @staticmethod
-    def _supports_tools(provider: LLMProvider) -> bool:
+    def _accepts(provider: LLMProvider, name: str) -> bool:
+        """provider.stream 是否支持某个关键字参数（按签名判断，不靠类型）。"""
         import inspect
 
         try:
             params = inspect.signature(provider.stream).parameters
         except (TypeError, ValueError):
             return False
-        return "tools" in params or any(p.kind is p.VAR_KEYWORD for p in params.values())
+        if name in params:
+            return True
+        return any(p.kind is p.VAR_KEYWORD for p in params.values())
 
 
 def _unused(*_args: Any) -> None:
