@@ -1,0 +1,44 @@
+# 比邻AI 后端 · 单机编排（给学院服务器 / 私有化机器用）
+#
+# 用法：
+#   1. 把 server/.env 准备好（密钥、HOST、PORT、AUTH_MODE、API_TOKENS）
+#   2. docker compose up -d --build
+#   3. curl http://127.0.0.1:8000/healthz
+#
+# 为什么用 host 网络模式：
+#   产品里 /v1/audio 会返回**相对路径签名 URL**，客户端再拼 baseURL 去取。
+#   桥接网络下容器内的 127.0.0.1 与宿主机不同，容易出现"能对话但听不到声音"。
+#   host 模式让容器直接用宿主机网络栈，和裸机部署行为一致，少一类坑。
+services:
+  bilin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bilin-api:latest
+    container_name: bilin-api
+    restart: unless-stopped
+    network_mode: host          # 见上方说明：避免音频签名 URL 的地址错位
+    env_file:
+      - .env                    # 密钥与配置（不进仓库）
+    environment:
+      # 容器内必须绑 0.0.0.0，否则宿主机访问不到。
+      # 对外是否可达由**宿主机防火墙 / ZeroTier 网段**控制，不靠这个值。
+      HOST: 0.0.0.0
+      PORT: "8000"
+      TZ: Asia/Shanghai
+    volumes:
+      # 运行数据必须挂出来：容器删了数据还要在
+      - ./data:/app/data
+      - ./case_files:/app/case_files
+      - ./_voice_samples:/app/_voice_samples
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"       # 不限制会把磁盘写满（日志里含每请求一行）
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
