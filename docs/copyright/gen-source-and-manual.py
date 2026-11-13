@@ -272,7 +272,7 @@ def make_source_doc(font_size: int, line_pt: float) -> tuple[Path, int]:
 # ── 生成说明书 ────────────────────────────────────────────────────
 def make_manual_doc() -> Path:
     doc = Document()
-    setup_document(doc, 10, 12)
+    setup_document(doc, 10, 11)
 
     def heading(text: str, size: int = 13) -> None:
         p = doc.add_paragraph()
@@ -299,44 +299,126 @@ def make_manual_doc() -> Path:
     def body(text: str) -> None:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(3)
-        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        p.paragraph_format.line_spacing = Pt(11)
         p.paragraph_format.first_line_indent = Pt(21)
         run = p.add_run(text)
-        run.font.size = Pt(10.5)
+        run.font.size = Pt(10)
         run.font.name = "宋体"
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
 
     def step(text: str) -> None:
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(2)
-        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        p.paragraph_format.space_after = Pt(1)
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+        p.paragraph_format.line_spacing = Pt(11)
         p.paragraph_format.left_indent = Pt(21)
         run = p.add_run(text)
-        run.font.size = Pt(10.5)
+        run.font.size = Pt(10)
         run.font.name = "宋体"
         run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
 
     def picture(name: str, caption: str, width_cm: float = 3.6) -> None:
+        """插入浮动图：靠右，文字绕左。
+
+        嵌入型图片独占整行高度。一页约 47 行，3.3cm 宽的截图高 7.5cm
+        约合 19 行，带图的页只剩 28 行文字，达不到"每页 30 行"。
+        改成 wp:anchor + wrapSquare 后，图锚在段落上靠右，后续段落文字
+        从它左边流过去，页面文字行数基本不受影响，图也能放大到看得清。
+        """
+        from docx.oxml import OxmlElement
+        import copy as _copy
+
         path = IMAGES / name
         if not path.exists():
             print("  ⚠️ 截图缺失：%s" % name)
             return
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_before = Pt(3)
-        p.paragraph_format.space_after = Pt(0)
-        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-        p.add_run().add_picture(str(path), width=Cm(width_cm))
+
+        # 锚到"上一段正文"而不是新建段落：新建段落会把图单独顶到下一页，
+        # 前一页留下大片空白（实测第 2 页只剩 16 行）。挂到正文段尾后，
+        # 图片浮动在这段的右侧，文字继续在左边流，段落不会被整段推走。
+        target = None
+        for para in reversed(doc.paragraphs):
+            if para.text.strip():
+                target = para
+                break
+        if target is None:
+            target = doc.add_paragraph()
+        run = target.add_run()
+        run.add_picture(str(path), width=Cm(width_cm))
+        # 承载图片的段落不能用固定行距，否则嵌入型图会被裁成一行高。
+        # 转成浮动图后再恢复固定行距也无妨，这里统一放宽为单倍行距。
+        target.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+
+        # wp:inline 在 w:drawing 里面，是 w:r 的孙子节点。
+        # 用 find(qn("wp:inline")) 只能查直接子节点，会返回 None，
+        # 导致转换静默失效——图片仍是嵌入型，被固定行距裁成一条。
+        inline = run._r.find(".//" + qn("wp:inline"))
+        if inline is None:
+            print("  ⚠️ 未能转为浮动图：%s" % name)
+            return
+
+        anchor = OxmlElement("wp:anchor")
+        for key, value in (
+            ("distT", "0"), ("distB", "0"), ("distL", "114300"), ("distR", "0"),
+            ("simplePos", "0"), ("relativeHeight", "251658240"),
+            ("behindDoc", "0"), ("locked", "0"), ("layoutInCell", "1"),
+            ("allowOverlap", "1"),
+        ):
+            anchor.set(key, value)
+
+        simple = OxmlElement("wp:simplePos")
+        simple.set("x", "0")
+        simple.set("y", "0")
+        anchor.append(simple)
+
+        pos_h = OxmlElement("wp:positionH")
+        pos_h.set("relativeFrom", "margin")
+        align_h = OxmlElement("wp:align")
+        align_h.text = "right"
+        pos_h.append(align_h)
+        anchor.append(pos_h)
+
+        pos_v = OxmlElement("wp:positionV")
+        pos_v.set("relativeFrom", "paragraph")
+        offset_v = OxmlElement("wp:posOffset")
+        offset_v.text = "0"
+        pos_v.append(offset_v)
+        anchor.append(pos_v)
+
+        for tag in ("wp:extent", "wp:effectExtent"):
+            el = inline.find(qn(tag))
+            if el is not None:
+                anchor.append(_copy.deepcopy(el))
+
+        # wrapText=left：文字排在图的左侧
+        wrap = OxmlElement("wp:wrapSquare")
+        wrap.set("wrapText", "left")
+        anchor.append(wrap)
+
+        doc_pr = inline.find(qn("wp:docPr"))
+        if doc_pr is not None:
+            anchor.append(_copy.deepcopy(doc_pr))
+
+        graphic = inline.find(qn("a:graphic"))
+        if graphic is not None:
+            anchor.append(_copy.deepcopy(graphic))
+
+        # wp:inline 的父节点是 w:drawing，不是 w:r；替换要在 drawing 上做，
+        # 否则 lxml 报 Element is not a child of this node。
+        inline.getparent().replace(inline, anchor)
+
         cap = doc.add_paragraph()
-        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        cap.paragraph_format.space_after = Pt(4)
+        cap.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        cap.paragraph_format.space_before = Pt(0)
+        cap.paragraph_format.space_after = Pt(2)
         cap.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-        run = cap.add_run(caption)
-        run.font.size = Pt(9)
-        run.font.name = "宋体"
-        run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        run_cap = cap.add_run(caption)
+        run_cap.font.size = Pt(8.5)
+        run_cap.font.name = "宋体"
+        run_cap._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -407,6 +489,8 @@ def make_manual_doc() -> Path:
     step("（4）执行 run.py 启动，默认监听 8000。")
     step("（5）访问 /healthz，返回 ok 就是起来了。")
     step("（6）要开机自启，Linux 注册成 systemd 服务，Windows 注册成计划任务。")
+    step("（7）systemd 服务文件里写清工作目录和 .env 路径，不写会读不到配置。")
+    step("（8）日志默认输出到 stdout，用 journalctl 或重定向到文件都行。")
     sub("手机端")
     step("（1）打开软件，进底部“我的”。")
     step("（2）点“服务器地址”，填服务端地址。")
@@ -419,18 +503,22 @@ def make_manual_doc() -> Path:
     step("（3）注册成功后系统给一个 8 位数字编号，这是账号的唯一标识。")
     step("（4）注册完就是登录状态，不用再输一次密码。")
     step("（5）这个编号可以给家属，用来绑定。")
+    picture("18-登录.png", "图 3-1 登录与注册入口")
 
     # ── 四
     heading("四、对话列表与消息")
     body("登录后进对话列表。默认有一个和助手的会话，固定在最上面。"
          "和家属的会话在绑定之后才出现。")
     body("每条显示对方名字、关系、最后一句话和时间。有新消息时右边有红点。")
+    body("列表按最近消息时间排序，助手会话固定在顶部不参与排序。"
+         "红点只表示有未读，进会话就清，不按条数累计。")
     step("（1）点会话进详情页。")
     step("（2）底部输入框打字，点发送。")
     step("（3）发送失败的消息右边有红色感叹号，点一下重发。")
     step("（4）长按消息可以复制。")
     body("回复按行分开，一行一句，不写成一大段。老人看起来轻松，"
          "语音播报时也好和口型对上。")
+    picture("02-聊天详情.png", "图 4-2 对话详情：短句分行、口语化表达")
 
     # ── 五
     heading("五、智能对话与双人设")
@@ -443,6 +531,9 @@ def make_manual_doc() -> Path:
          "命中就换成健康顾问。手动是在“人设模式”里选，选完不再自动切。")
     body("提醒做三道。第一道判断问题类型，第二道检查回答里有没有停药、剂量、"
          "诊断这类说法，第三道在回答生成完再扫一遍。三道都在代码里。")
+    body("举三个例子。「血压有点高」命中医疗词，换健康顾问，回答末尾加提醒。"
+         "「药吃了没」属常规吃药询问，不算医疗问题，不加提醒。"
+         "「心里堵得慌」没有医疗词，但情绪词命中，语气会自动放缓。")
     body("把模式锁成“只聊家常”之后，只要回答涉及医疗内容，提醒照样加。"
          "这一项不开放关闭。")
 
@@ -456,6 +547,7 @@ def make_manual_doc() -> Path:
     step("（5）麦克风权限没给，页面提示去系统设置打开，打字不受影响。")
     body("数字人形象在“我的”里配置，资源随安装包给，不用联网下载。"
          "手机带不动的，可以在设置里关掉三维换静态头像，聊天和语音照常。")
+    picture("10-数字人通话.png", "图 6-1 与三维数字人进行语音通话")
 
     # ── 七
     heading("七、AI 了解我的（长期记忆）")
@@ -470,6 +562,8 @@ def make_manual_doc() -> Path:
     step("（3）点某条能改能删。删掉之后后面聊天不再用这条。")
     step("（4）分节可以整段编辑，保存后生效。")
     body("口头禅和称呼习惯单独放，清理的时候不会一起删。")
+    body("记忆条数不设硬上限，但参与对话的只取最近更新的若干条，"
+         "太老的条目留着可查，不进上下文，避免把提示词撑长。")
 
     # ── 八
     heading("八、健康档案")
@@ -482,18 +576,22 @@ def make_manual_doc() -> Path:
     step("（5）超范围的数值标红。")
     body("标红只是提示，不给结论。单次测量受测量方式、时间、情绪影响，"
          "凭一个数字下判断既不准确，也容易让人紧张。")
+    picture("15-健康档案.png", "图 8-1 健康档案：三项指标与趋势")
 
     # ── 九
     heading("九、病例与病史")
     body("病历、检查单、出院记录都能传，图片和 PDF 都行。"
          "传上去之后把里面的就诊时间、医院、诊断、用药提出来做成一条记录，"
          "按时间排在轴上。")
+    body("时间轴按就诊日期倒序排，同一天的按上传先后排。没有就诊日期的手动填。")
     body("老人后来说身体不舒服时，助手能调出这些记录参考，回答比通用建议贴合。")
     step("（1）进“健康档案”，点“病例”。")
     step("（2）点“上传”，拍照或从相册选，能多选。")
     step("（3）上传后自动解析，结果显示成可改的表单。")
     step("（4）核对、补字段，保存后进时间轴。")
     step("（5）点某条能看原件大图和字段。")
+    body("提取的字段有六项：就诊日期、就诊机构、科室、诊断结论、处方用药、医嘱。"
+         "提取不到的字段留空，不猜。空着的由用户自己补。")
     body("部署环境没接视觉识别的话，这一步自动改成手动填。填完一样能归档，"
          "一样能在对话里用。")
 
@@ -511,6 +609,7 @@ def make_manual_doc() -> Path:
     step("（6）到点提醒走系统通知和应用内消息两条路，没做的在当天列表留标记。")
     step("（7）做完的点一下打卡，状态变成已完成。点错了能取消。")
     step("（8）打卡数据回流成完成率，家属端按完成率看当天情况。")
+    picture("05-康养计划.png", "图 10-1 康养计划入口：日常、每周、特别三类")
 
     # ── 十一
     heading("十一、主动关心与回访")
@@ -523,6 +622,7 @@ def make_manual_doc() -> Path:
          "平常打电话会聊的内容定的。")
     body("老人提到以后要做的事，软件记下来。到那天在聊天里再提一次。")
     body("过期的条目按实际过了几天调措辞，不会出现“今天正是这日子”但日期对不上。")
+    body("同一天只提一次。老人说还没做，隔天再问一次；说做完了就不再问。")
 
     # ── 十二
     heading("十二、家属绑定与关怀查看")
@@ -532,8 +632,9 @@ def make_manual_doc() -> Path:
     step("（1）老人端“我的”，点“家人管理”，生成邀请码。")
     step("（2）家属在“家人管理”里点“绑定老人”，填码。")
     step("（3）绑定成功后两边列表里互相出现对方会话。")
-    step("（4）家属端能看今日安排、健康数据、吃药情况三块。")
-    step("（5）可以解绑，解绑后两边列表里的会话一起消失。")
+    step("（4）家属端首页三块：今日安排完成了几项、最近一次的身体数据、"
+         "今天的药吃没吃。")
+    step("（5）留言可以发文字，也可以发语音，双方都能看到历史。")
     body("家属会话和助手会话是两回事，消息不混在一起，"
          "免得家里私下说的话跑到助手那边去。")
 
@@ -546,6 +647,7 @@ def make_manual_doc() -> Path:
     step("（3）设称呼方式，填“您”还是“妈”，这一项会进长期记忆。")
     step("（4）保存后出现在对话列表，长按设默认或删除。")
     body("删掉角色之后对话还在，只是不再走这个角色的设定。")
+    picture("12-智能体角色.png", "图 13-1 智能体角色列表")
     body("智能体设置里换对话模型。云端模型聪明些，要联网；本地模型不用出网，"
          "适合对数据外传有要求的地方。换完立刻生效，历史消息不受影响。")
 
@@ -555,10 +657,13 @@ def make_manual_doc() -> Path:
          "AI 了解我的、数字人形象、家人管理、智能体设置。下面一组是健康与设置："
          "健康档案、大字体、服务器地址。分组按常改和少改来，减少误点。")
     body("界面字号大、对比度高、按钮点击区大。大字体模式能把正文再放大一档。")
+    step("（0）点“数字人形象”，能换装、换场景，换完回对话页生效。")
     step("（1）点“大字体模式”右边的开关，正文变大一档。")
     step("（2）点“服务器地址”，看当前地址、来源、凭据状态。")
     step("（3）填新地址，点“测试连接”，结果显示耗时和返回内容。")
     step("（4）保存后软件重新进入，不用重装。")
+    body("连接失败时页面给四条排查方向：地址是否带端口、手机与服务端是否在"
+         "同一网络、服务端进程是否在跑、防火墙是否放行。")
     body("服务器地址页的提示里带着正在用的地址。这里吃过亏，早先只提示"
          "“连不上服务器”，老人只能找家人，家人也不知道软件在连哪个地址，"
          "只能来回猜。")
@@ -569,10 +674,17 @@ def make_manual_doc() -> Path:
          "不上传第三方。")
     body("接口默认要令牌。聊天类接口除了令牌还要账号会话凭据，"
          "两个东西放两个请求头，一个管能不能进来，一个管你是谁。")
+    body("令牌不对直接拒，不返回业务数据。会话凭据过期后客户端重新登录，"
+         "已缓存的本地消息还能看，不会白屏。")
     body("删除立即生效。删掉的记忆条目不再参与后面的对话，"
          "删掉的会话不再出现在列表里。")
     body("备份用数据库自己的一致性快照，不用直接复制文件。"
          "服务在跑的时候复制，可能拿到还没落盘的旧数据。")
+    step("（1）备份脚本放在 deploy 目录，执行后生成带时间戳的压缩包。")
+    step("（2）压缩包里有数据库、病例图片目录和一份清单，清单记着文件数与校验值。")
+    step("（3）恢复时先停服务，解包覆盖数据目录，再启动。")
+    step("（4）建议每天定时跑一次，并把压缩包同步到另一块磁盘。")
+    body("日志按大小轮转，避免长期运行把磁盘写满。这些操作都不用停服务，恢复时才停。")
 
     # ── 十六
     heading("十六、技术特点")
@@ -584,11 +696,17 @@ def make_manual_doc() -> Path:
          "口头禅这类长期项不随清理丢。")
     body("历史对话超过阈值就压成摘要，用短语出现的次数衡量哪些是冗余，"
          "留高频内容和关键事实。")
+    body("压缩是分批做的，不是每次都重算。摘要本身也会被再压缩，"
+         "避免长会话把上下文撑爆。原文不删，摘要只影响喂给模型的部分。")
     body("主动提问受每日次数、最小间隔、静默时段三重限制。"
          "没回答的问题转成待回访，到日子再提。")
+    body("三重限制写在配置里，改配置不用改代码。次数上限防打扰，"
+         "最小间隔防连问，静默时段防夜里响。三个条件同时满足才发。")
     body("对话模型、语音识别、语音合成都是可替换的，改配置就能在云端和本地之间切。")
     body("同一套服务端能跑在局域网、虚拟专网和公网三种环境，"
          "带令牌鉴权和自动备份。")
+    body("界面按老人的实际操作改过几轮。按钮做大、去掉手势、删除二次确认，"
+         "这些都是试用时发现问题后改的，不是照着规范抄的。")
 
     # ── 十七
     heading("十七、常见问题")
@@ -609,6 +727,15 @@ def make_manual_doc() -> Path:
     step("答：能。每个账号单独注册，数据按账号隔离，服务端地址填同一个。")
     step("问：数据能不能导出。")
     step("答：数据库是一个 SQLite 文件，可以用通用工具直接打开、导出。")
+    step("问：换手机之后要重新注册吗。")
+    step("答：不用。用原账号密码登录，填同一个服务端地址，数据都在服务端。")
+    step("问：备份怎么恢复。")
+    step("答：停服务，解包覆盖数据目录，再启动。恢复前建议先备份当前数据。")
+    step("问：说话识别总是不准。")
+    step("答：先说环境。安静的地方、离麦克风近一点，识别率差很多。"
+         "老年口音重时可以把一句话说完整再松手，太短的片段识别容易出错。")
+    step("问：能不能换成自己的模型。")
+    step("答：能。智能体设置里改模型名和接入地址就行，本地模型也支持。")
 
     # ── 十八
     heading("十八、界面与交互约定")
@@ -633,6 +760,13 @@ def make_manual_doc() -> Path:
     body("待回访事项：老人提到的以后要做的事，记下来，到日子再提。")
     body("对话摘要：历史太长时压出的概括，代替早期原文进上下文。")
     body("降级：某项能力不可用时改用简单实现或关掉该功能，主流程不中断。")
+    body("静默时段：主动提问不发的时段，默认晚上和深夜，避免打扰。")
+    body("摘要阈值：历史对话长到多少条时触发压缩，由配置决定。")
+    body("人设锁定：手动选定一种说话方式后不再自动切换的状态。")
+    body("合规扫描：回答生成后对全文做的最后一次风险词检查。")
+    body("称呼纠正：把助手回答里对老人的称呼改成用户自己设定的叫法。")
+    body("完成率：某段时间内已打卡计划占全部计划的比例，家属端看这个数。")
+    body("时间戳驱动：按语音合成的字级时间戳让数字人口型逐步变化，不是整段动画。")
 
     # ── 二十
     heading("二十、版本说明")
