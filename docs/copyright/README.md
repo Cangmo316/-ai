@@ -121,3 +121,22 @@ for field, value, _full in env_rows:
 python docs/copyright/regen-copyright.py               # 四份全出
 python docs/copyright/regen-copyright.py --only form    # 只出申请表
 ```
+## 合作开发协议（四人版）
+
+`gen-agreement.py` 生成可直接打印签署的《合作开发协议》。
+
+为什么留手写空位而不是程序填：
+姓名、身份证号、联系方式必须与身份证一致，程序填反而容易错；
+所以固定内容（软件全称、版本号、条款）由程序排好，保证与申请表逐字一致，
+个人信息与分工留横线，打印后手填手签。
+
+版式上处理过的三个细节：
+- 每人两行（姓名+身份证 / 电话+地址），下划线宽度按 16cm 可用宽度配过，
+  否则「联系电话」会被挤到下一行；
+- 身份证号留 18 个下划线（18 位数字手写约需 4.5cm）；
+- 签署页独立成页——两列四格的表格若跨页拆开，会出现「丙方丁方单独漂到下一页」
+  的难看局面，也可能让人误以为漏签。
+
+```bash
+python docs/copyright/gen-agreement.py --out E:\ppt\比邻AI.ppt\软著材料-终版
+```
