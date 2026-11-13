@@ -149,7 +149,7 @@ def make_form() -> Path:
         ("是否已发表", "否（如后续已在应用商店或公众号发布，需改为“已发表”并填写日期）"),
     ])
     note(doc, "软件全称中不宜出现“中国”“国家”“国际”等字样；名称与版本号须与源程序页眉、"
-              "说明书页眉**逐字一致**，否则会被要求补正。")
+              "说明书页眉必须逐字一致，否则会被要求补正。")
 
     heading(doc, "二、著作权人信息")
     table(doc, [
@@ -167,30 +167,62 @@ def make_form() -> Path:
               "并加盖公章。若为多人/多单位合作开发，须另附合作开发协议。")
 
     heading(doc, "三、开发与运行环境")
-    table(doc, [
-        ("开发的硬件环境",
-         "CPU：Intel Core i9-14900HX；内存：16GB；硬盘：512GB SSD；"
-         "显示：集成显卡；网络：千兆以太网/Wi-Fi"),
-        ("运行的硬件环境",
-         "服务端：1 核 CPU / 1GB 内存 / 40GB 硬盘（建议 2 核 2GB）；"
-         "移动端：Android 8.0 及以上智能手机，内存 2GB 及以上（三维数字人建议 4GB）"),
-        ("开发该软件的操作系统",
-         "Windows 11 64 位"),
-        ("软件开发环境 / 开发工具",
+    # 线上表单这几个输入框限 50 **字节**（UTF-8 下约 16 个汉字），
+    # 所以这里给的是压缩后的值；字节数直接标出来，填表时照着核。
+    env_rows = [
+        ("开发的硬件环境", "i9-14900HX/16GB/512GB",
+         "CPU i9-14900HX、内存 16GB、固态硬盘 512GB"),
+        ("运行的硬件环境", "2核2G服务器；Android 8.0手机",
+         "服务端 2 核 CPU / 2GB 内存 / 40GB 磁盘；移动端 Android 8.0 及以上手机，"
+         "内存 2GB 以上（三维数字人建议 4GB）"),
+        ("开发该软件的操作系统", "Windows 11 64位", "Windows 11 64 位"),
+        ("软件开发环境 / 开发工具", "HBuilderX;VS Code;Node.js;Git",
          "HBuilderX 5.26、Visual Studio Code、Node.js 18、Vite 5、Git、Python 3.13"),
-        ("该软件的运行平台 / 操作系统",
-         "服务端：Linux（Ubuntu 22.04 及以上 / Debian 12 及以上）或 Windows 10 及以上；"
+        ("该软件的运行平台 / 操作系统", "Ubuntu 22.04;Windows 10;Android 8.0",
+         "服务端：Ubuntu 22.04 及以上 / Debian 12 及以上 / Windows 10 及以上；"
          "移动端：Android 8.0 及以上；浏览器端：支持 HTML5 的现代浏览器"),
-        ("软件运行支撑环境 / 支持软件",
+        ("软件运行支撑环境 / 支持软件", "Python 3.11;FastAPI;SQLite 3",
          "Python 3.11 及以上；FastAPI 0.141、Uvicorn 0.54、httpx 0.28、PyYAML 6.0、"
          "python-multipart 0.0.32；SQLite 3"),
-        ("编程语言",
-         "Python、JavaScript、Vue（HTML/CSS）"),
-        ("源程序量",
-         f"{CODE_LINES} 行（{CODE_FILES} 个代码文件，不含第三方开源库）"),
-    ])
-    note(doc, "源程序量应与实际提交的源程序一致。本项目的统计已排除 "
-              "three.js、Draco 等第三方开源库与测试代码，避免被认定“含他人代码”。")
+        ("编程语言", "Python;JavaScript;Vue", "Python、JavaScript、Vue（HTML/CSS）"),
+        ("源程序量", f"{CODE_LINES}行", f"{CODE_LINES} 行（{CODE_FILES} 个代码文件，不含第三方开源库）"),
+    ]
+
+    # 断言：任一字段超过 50 字节就报错，避免改文案后又超限
+    for field, value, _full in env_rows:
+        size = len(value.encode("utf-8"))
+        if size > 50:
+            raise SystemExit(
+                "字段「%s」占 %d 字节，超过表单 50 字节限制：%s" % (field, size, value)
+            )
+
+    tbl = doc.add_table(rows=0, cols=3)
+    tbl.style = "Table Grid"
+    tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for field, value, _full in env_rows:
+        cells = tbl.add_row().cells
+        for idx, width in enumerate((3.6, 6.2, 2.0)):
+            cells[idx].width = Cm(width)
+        size = len(value.encode("utf-8"))
+        for idx, text in enumerate((field, value, "%d 字节" % size)):
+            cell = cells[idx]
+            cell.text = ""
+            para = cell.paragraphs[0]
+            para.paragraph_format.space_after = Pt(2)
+            run = para.add_run(text)
+            run.font.size = Pt(9.5)
+            run.font.name = "宋体"
+            run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+            if idx == 0:
+                run.bold = True
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
+
+    note(doc, "线上表单这几项限 50 字节（UTF-8 下一个汉字 3 字节，约 16 个汉字）。"
+              "上表右列的填写值均已压缩到 50 字节以内，可直接照抄；"
+              "中列的完整描述仅供写说明书或口头说明使用，不要往表单里填。")
+    note(doc, "若表单实际按“字数”而非“字节”限制（不同批次系统提示语不同），"
+              "上表的压缩值同样可用，且留有扩充余地：字段内还可再补少量信息。")
+    note(doc, "源程序量按纯数字填（如 48672），不要带千分位逗号，避免系统校验不通过。")
 
     heading(doc, "四、开发目的、面向领域与主要功能")
     body(doc, "【开发目的】")
@@ -303,7 +335,7 @@ def make_checklist() -> Path:
 
     heading(doc, "三、源程序的 60 页规则（本次如何处理）")
     body(doc, f"本软件自有代码 {CODE_LINES} 行（{CODE_FILES} 个文件），按每页 50 行"
-              "折合约 974 页，超过 60 页上限。按登记要求提交**前 30 页与后 30 页**，"
+              "折合约 974 页，超过 60 页上限。按登记要求提交前 30 页与后 30 页，"
               "共 60 页 3000 行；中间部分不提交。")
     body(doc, "需要特别注意：不要在文档里插入“此处省略若干页”之类的说明行。"
               "一行说明会把总行数顶成 3001 行、页数变 61 页，反而不符合“各 30 页”的要求。"
@@ -323,6 +355,16 @@ def make_checklist() -> Path:
     ])
     note(doc, "官方收费标准与办理时限以官网当期公示为准，本文件不写具体天数与金额，"
               "避免与最新政策不一致。查阅入口：中国版权保护中心 → 软件登记指南 → 办理时限。")
+
+    heading(doc, "四之一、线上表单的字节限制（实操坑）")
+    body(doc, "开发与运行环境相关的几个输入框在线上表单里限 50 字节。"
+              "注意是字节不是字：按 UTF-8 编码，一个汉字占 3 字节，"
+              "50 字节只够放约 16 个汉字。若按习惯写满一行中文，提交时会被截断或报错。")
+    body(doc, "本目录 01 文件的「三、开发与运行环境」已把每个字段压到 50 字节以内，"
+              "并在表格右列标出实际字节数，照抄即可。压缩后仍保留关键信息，"
+              "例如“运行的硬件环境：2核2G服务器；Android 8.0手机”为 35 字节。")
+    body(doc, "另有两处容易忽略：源程序量按纯数字填（如 48672），不要加千分位逗号；"
+              "软件名称不得含“中国”“国家”“国际”等字样。")
 
     heading(doc, "五、办理前必须确认的三件事")
     for item in [
