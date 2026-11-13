@@ -428,7 +428,7 @@ def make_checklist() -> Path:
         "软件名称是否可用：不得含“中国”“国家”“国际”等字样；"
         "与已有商标冲突不影响登记，但商用需另做商标检索。",
     ]:
-        step(doc, "· " + item)
+        step(doc, "" + item)
 
     heading(doc, "六、本目录文件说明")
     table(doc, [
