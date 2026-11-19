@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
 from docx import Document
@@ -128,23 +129,77 @@ def para(doc, text: str, indent: bool = True) -> None:
     font(p.add_run(text), BODY_PT)
 
 
-def figure(doc, name: str, label: str, caption: str, width_cm: float = 4.2) -> None:
-    """插入浮动图：靠右，文字绕左，图注在下方右对齐。
+def _png_size(path: Path):
+    """读 PNG 头取宽高，避免为这张图引入 Pillow 依赖。"""
+    try:
+        with path.open("rb") as f:
+            head = f.read(26)
+        if head[:8] != b"\x89PNG\r\n\x1a\n":
+            return None
+        w, h = struct.unpack(">II", head[16:24])
+        return w, h
+    except OSError:
+        return None
 
-    参考件是把图居中嵌入的。但嵌入图独占整行高度：一页约 50 行，
-    手机截图 4.2cm 宽即 9.1cm 高约合 21 行，带图的页面只剩 29 行文字，
-    达不到"文档每页不少于 30 行"。改成浮动后图不占行，行数稳定在 45 以上，
-    图也能放大到看得清。章节、图号、表号、页眉页脚仍按参考件格式。
+
+def caption(doc, text: str, align=WD_ALIGN_PARAGRAPH.CENTER, space_after: float = 6,
+            space_before: float = 2) -> None:
+    """图注/表注统一走 Word 的「题注」样式。"""
+    p = doc.add_paragraph()
+    p.alignment = align
+    p.paragraph_format.space_before = Pt(space_before)
+    p.paragraph_format.space_after = Pt(space_after)
+    p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    try:
+        p.style = doc.styles["Caption"]
+    except KeyError:
+        pass
+    run = p.add_run(text)
+    font(run, 9)
+    # Word 内置「题注」样式带蓝色（或灰色）字色与斜体，正式说明书里不合适，
+    # 这里强制黑色、不用斜体。
+    from docx.shared import RGBColor
+    run.font.color.rgb = RGBColor(0, 0, 0)
+    run.font.italic = False
+
+
+def figure(doc, name: str, label: str, caption_text: str, width_cm: float = None) -> None:
+    """按图片方向决定插入方式。
+
+    横屏（宽/高 ≥ 1）：居中嵌入，上下留白，图注居中在下方。
+    竖屏：右侧浮动环绕，文字绕左，图注右下。
     """
-    from docx.oxml import OxmlElement
-    import copy as _copy
-
     path = IMAGES / name
     if not path.exists():
         print("  ⚠️ 缺图：%s" % name)
         return
 
-    # 挂到上一段正文的段尾，避免图独占一个空段落把整段推到下一页
+    size = _png_size(path)
+    landscape = bool(size) and size[0] / size[1] >= 1.0
+
+    if landscape:
+        # ── 居中嵌入 ──
+        if width_cm is None:
+            width_cm = 12.5
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(6)
+        p.paragraph_format.space_after = Pt(0)
+        # 嵌入图片所在的段落必须用单倍行距，固定行距会把图裁成一行高
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        p.add_run().add_picture(str(path), width=Cm(width_cm))
+        caption(doc, f"{label}  {caption_text}",
+                align=WD_ALIGN_PARAGRAPH.CENTER, space_after=7, space_before=3)
+        return
+
+    # ── 竖屏：浮动环绕 ──
+    from docx.oxml import OxmlElement
+    import copy as _copy
+
+    if width_cm is None:
+        width_cm = 4.2
+
+    # 锚到上一段正文段尾，避免图独占空段落被整段推到下一页
     target = None
     for para_obj in reversed(doc.paragraphs):
         if para_obj.text.strip():
@@ -204,23 +259,15 @@ def figure(doc, name: str, label: str, caption: str, width_cm: float = 4.2) -> N
         if el is not None:
             anchor.append(_copy.deepcopy(el))
 
+    # wp:inline 的父节点是 w:drawing，替换要在父节点上做
     inline.getparent().replace(inline, anchor)
 
-    cap = doc.add_paragraph()
-    cap.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    cap.paragraph_format.space_before = Pt(0)
-    cap.paragraph_format.space_after = Pt(5)
-    cap.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-    font(cap.add_run(f"{label}  {caption}"), 9)
+    caption(doc, f"{label}  {caption_text}",
+            align=WD_ALIGN_PARAGRAPH.RIGHT, space_after=5, space_before=0)
 
 
-def table(doc, label: str, caption: str, header, rows, widths) -> None:
-    cap = doc.add_paragraph()
-    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap.paragraph_format.space_before = Pt(6)
-    cap.paragraph_format.space_after = Pt(2)
-    cap.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-    font(cap.add_run(f"{label}  {caption}"), 9)
+def table(doc, label: str, caption_text: str, header, rows, widths) -> None:
+    caption(doc, f"{label}  {caption_text}", space_before=6, space_after=2)
 
     t = doc.add_table(rows=1, cols=len(header))
     t.style = "Table Grid"
