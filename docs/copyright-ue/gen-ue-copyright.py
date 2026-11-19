@@ -339,62 +339,68 @@ def make_manual_doc() -> Path:
         p.add_run().add_picture(str(path), width=Cm(width_cm))
         caption(cap)
 
-    def figure(name, cap, width_cm=8.2):
+    def figure(name, cap, width_cm=12.5):
+        """独占一行的插图，题注紧随其下。
+
+        之前用浮动环绕（wp:anchor + wrapSquare）来省纵向空间，
+        但两张图锚在同侧时 allowOverlap 会让它们叠在一起，
+        而且题注在文字流里、离图很远。改成嵌入独占一段：
+        重合不可能发生，题注也在正下方。
+        代价是每张图约占 20 多行版面，用页面容量换正确性。
+        """
         path = IMAGES / name
         if not path.exists():
             print("  ⚠️ 缺图：%s" % name)
             return
-        target = None
-        for para in reversed(doc.paragraphs):
-            if para.text.strip():
-                target = para
-                break
-        if target is None:
-            target = doc.add_paragraph()
-        run = target.add_run()
-        run.add_picture(str(path), width=Cm(width_cm))
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after = Pt(0)
+        # 承载嵌入图必须单倍行距，固定行距会把图裁成一行高
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        p.add_run().add_picture(str(path), width=Cm(width_cm))
 
-        inline = run._r.find(".//" + qn("wp:inline"))
-        if inline is None:
-            return
-        import copy as _copy
-        anchor = OxmlElement("wp:anchor")
-        for k, v in (("distT", "0"), ("distB", "0"), ("distL", "114300"), ("distR", "0"),
-                     ("simplePos", "0"), ("relativeHeight", "251658240"),
-                     ("behindDoc", "0"), ("locked", "0"), ("layoutInCell", "1"),
-                     ("allowOverlap", "1")):
-            anchor.set(k, v)
-        sp = OxmlElement("wp:simplePos")
-        sp.set("x", "0")
-        sp.set("y", "0")
-        anchor.append(sp)
-        ph = OxmlElement("wp:positionH")
-        ph.set("relativeFrom", "margin")
-        al = OxmlElement("wp:align")
-        al.text = "right"
-        ph.append(al)
-        anchor.append(ph)
-        pv = OxmlElement("wp:positionV")
-        pv.set("relativeFrom", "paragraph")
-        off = OxmlElement("wp:posOffset")
-        off.text = "0"
-        pv.append(off)
-        anchor.append(pv)
-        for tag in ("wp:extent", "wp:effectExtent"):
-            el = inline.find(qn(tag))
-            if el is not None:
-                anchor.append(_copy.deepcopy(el))
-        wrap = OxmlElement("wp:wrapSquare")
-        wrap.set("wrapText", "left")
-        anchor.append(wrap)
-        dp = inline.find(qn("wp:docPr"))
-        if dp is not None:
-            anchor.append(_copy.deepcopy(dp))
-        g = inline.find(qn("a:graphic"))
-        if g is not None:
-            anchor.append(_copy.deepcopy(g))
-        inline.getparent().replace(inline, anchor)
-        caption(cap)
+        c = doc.add_paragraph()
+        c.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        c.paragraph_format.space_before = Pt(1)
+        c.paragraph_format.space_after = Pt(6)
+        c.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        set_font(c.add_run(cap), 9)
+
+    def figure_pair(name1, cap1, name2, cap2, width_cm=7.2):
+        """两张图并排，各自在下方带题注。
+
+        原来两张视野图上下叠放，占掉近 32 行版面，把整页挤到 20 行；
+        并排后只占一行的行高（约 18 行），页面行数就能回到 30 以上。
+        单元格段落必须单倍行距，否则固定行距会把图裁成一条。
+        """
+        imgs = []
+        for nm in (name1, name2):
+            path = IMAGES / nm
+            if not path.exists():
+                print("  ⚠️ 缺图：%s" % nm)
+                return
+            imgs.append(path)
+
+        tbl = doc.add_table(rows=1, cols=2)
+        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+        tbl.autofit = True
+        for idx, (path, cap) in enumerate(zip(imgs, (cap1, cap2))):
+            cell = tbl.rows[0].cells[idx]
+            cell.text = ""
+            p1 = cell.paragraphs[0]
+            p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p1.paragraph_format.space_before = Pt(2)
+            p1.paragraph_format.space_after = Pt(0)
+            p1.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+            p1.add_run().add_picture(str(path), width=Cm(width_cm))
+            p2 = cell.add_paragraph()
+            p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p2.paragraph_format.space_before = Pt(1)
+            p2.paragraph_format.space_after = Pt(4)
+            p2.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+            set_font(p2.add_run(cap), 9)
+        doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -427,7 +433,7 @@ def make_manual_doc() -> Path:
          "与中英双语界面，形成“照着做—边做边学—独立考核”的完整学习流程（如图1-1）。"
          "本软件面向医学院校病原生物学与微生物学实验课的学生与教师，"
          "也可用于职业院校医学检验技术专业的实训环节，以及实验前的预习与实验后的复盘。")
-    figure_block("fig-00-系统架构.png", "图1-1　系统架构图", 14.0)
+    figure("fig-00-系统架构.png", "图1-1　系统架构图", 13.0)
 
     h2("1.2　核心功能概述")
     body("本软件包含以下九个核心功能模块（见表1-1）：")
@@ -522,7 +528,7 @@ def make_manual_doc() -> Path:
          "右侧为 AI 助手“染染”的对话面板，底部为实验概览，"
          "显示规范操作步骤 21 项、染色试剂 4 瓶与油镜倍数 100×。"
          "界面右上角提供中文与 English 两个语言按钮。")
-    figure("shot-01-主菜单.png", "图3-1　主菜单界面", 10.5)
+    figure("shot-01-主菜单.png", "图3-1　主菜单界面", 9.5)
     body("三种模式的分工如下：系统学习模式下每一步给出操作提示与原理说明，"
          "适合第一次接触该实验的学生；趣味剧情模式由林医生带着完成一例急诊标本，"
          "中途穿插随堂问答；考核模式只给目标、不给做法，全程独立完成，"
@@ -535,17 +541,23 @@ def make_manual_doc() -> Path:
          "显示可在全屏与窗口之间切换；染色计时分为标准与演示两档；"
          "色觉友好标记用于色觉异常用户；背景音乐、音效与林医生配音三路音量独立可调。"
          "设置写入本地存档，下次启动沿用。")
-    figure("shot-02-设置.png", "图3-2　设置面板", 10.5)
+    figure("shot-02-设置.png", "图3-2　设置面板", 9.5)
+    body("画质四档的差别在渲染细节上：高档开启实时阴影与环境光遮蔽，"
+         "中档保留阴影但降低阴影分辨率，低档关闭阴影并下调渲染像素比，"
+         "自动档在启动时按显卡型号与显存选择，运行中不再切换。"
+         "机房机器普遍偏旧，默认走自动档，避免一律开高档导致掉帧。")
     body("色觉友好标记开启后，判定用的紫红两色改为对色觉异常更易分辨的配色，"
          "并在结果页同时给出文字标注，不依赖颜色单独传达结论。"
          "这一项针对的是红绿色弱学生，因为革兰氏染色的判读本身依赖紫色与红色的区分。")
+    body("改完点面板底部的完成即可返回主菜单，设置立即生效，不用重启软件。")
+
 
     h2("3.3　计时方式选择")
     body("选定学习模式后，界面先弹出计时方式选择（如图3-3），这一步决定染色静置时间。"
          "演示模式把每一步的静置时间压缩为 10 秒，适合课堂演示与预习；"
          "标准模式按真实操作计时，每步静置 1 分钟，接近真实实验节奏。"
          "两种模式的操作步骤与评分规则一致，只是时间尺度不同。")
-    figure("shot-03-计时方式.png", "图3-3　计时方式选择", 9.5)
+    figure("shot-03-计时方式.png", "图3-3　计时方式选择", 8.5)
 
     h2("3.4　制片阶段")
     body("制片阶段（如图3-4）是把细菌从培养基转移到载玻片并固定的过程，"
@@ -554,7 +566,7 @@ def make_manual_doc() -> Path:
          "右上为原理说明面板，随步骤切换解释该步为什么这样做；"
          "中部为三维台面，器材可拾取、旋转与拖拽；右下为助手形象与"
          "“自动近景”“近景”“提示”三个辅助按钮。")
-    figure("shot-04-制片阶段.png", "图3-4　制片阶段界面", 10.5)
+    figure("shot-04-制片阶段.png", "图3-4　制片阶段界面", 9.5)
     body("制片阶段的要点有四项：接种环使用前后都要在外焰灼烧至环丝发红，"
          "灼烧后稍冷却再取菌；试管口要旋转过火，防止空气中的杂菌落入管内；"
          "取菌量以在菌落边缘轻刮为准，取多了涂片过厚、细胞重叠，后续脱色也更难掌握；"
@@ -567,6 +579,10 @@ def make_manual_doc() -> Path:
          "复染液（稀释复红）四瓶试剂，中间为废液缸。每步开始时界面中央弹出倒计时"
          "提示，显示当前处于四步中的第几步、试剂名称与剩余时间；"
          "学生按提示倒持滴瓶，滴加 1 至 2 滴覆盖涂面。")
+    body("四步之间都要水洗，水洗不彻底会把上一步的试剂带进下一步："
+         "初染后没冲净，残留的结晶紫会让阴性菌也带紫色；媒染后没冲净，"
+         "多余的碘会拖慢脱色；复染后没冲净，背景发红影响判读。"
+         "软件在每次水洗后按残液量给一个清洁度判定，脏了会在下一步提示。")
     body("洗瓶可挤压出水，水流应自载玻片上端流经涂面；直接冲在菌膜上会把细菌冲掉，"
          "系统会记录这一失误。脱色是决定结果的关键步骤：革兰阳性菌肽聚糖层厚、"
          "脂类少，乙醇使其脱水、孔隙缩小，结晶紫与碘的复合物留在胞内仍为紫色；"
@@ -580,19 +596,31 @@ def make_manual_doc() -> Path:
          "以及“滴加香柏油”“观察目镜”两个动作按钮。正确顺序是先用低倍镜加粗准焦"
          "找到标本，换 40× 物镜用细准焦调清结构，滴一滴香柏油后转到 100× 油镜，"
          "并且只用细准焦调焦。油镜工作距离很短，用粗准焦容易撞到玻片。")
+    body("面板左侧的检查清单列出五个目标，做完一项勾一项：放片、低倍找视野、"
+         "调焦、滴油切油镜、判定结果。清单的目的不是限制操作顺序，"
+         "而是让学生对照自己还差哪一步；顺序错了，前面的项目不会被自动勾上。")
+    body("判读标准按染色结果与菌体形态两条一起看。革兰阳性菌染成蓝紫色，"
+         "常见形态为球菌成葡萄串状或链状排列、芽孢杆菌呈竹节状；"
+         "革兰阴性菌染成红色，常见形态为短杆菌、双球菌。只看颜色不够，"
+         "脱色不均时同一视野里会同时出现紫色与红色，这时应判为涂片质量问题，"
+         "需要重做而不是勉强下结论。")
+    body("判读完成后建议回看一次低倍视野，确认取的是涂片上的目标区域而不是边缘的"
+         "堆积处；边缘往往涂得过厚，颜色偏深，容易把阴性菌误判为阳性。"
+         "这一步在真实实验里同样重要，软件把它做成了可选操作，不做不扣分，"
+         "但结果页会给出一句提醒。")
     body("未滴油直接切到 100×，画面会明显发虚，因为缺少折射率匹配的介质，"
          "光线在玻片与镜头之间散射。两个倍率下的视野效果见图3-5 与图3-6："
          "40× 下菌体聚集成片，只能判断大致分布；100× 油镜下可分辨单个菌体的形态"
          "与染色结果，紫色为革兰阳性菌，红色为革兰阴性菌。")
-    figure("shot-06-40倍视野.png", "图3-5　40 倍视野：菌体成片，形态不清", 7.0)
-    figure("shot-07-100倍视野.png", "图3-6　100 倍油镜视野：可分辨单个菌体与染色", 7.6)
+    figure_pair("shot-06-40倍视野.png", "图3-5　40 倍视野：菌体成片",
+                "shot-07-100倍视野.png", "图3-6　100 倍油镜视野：可分辨单个菌体")
 
     h2("3.7　AI 助手“染染”")
     body("AI 助手“染染”的对话面板（如图3-7）位于主菜单右侧与实验界面右下角。"
          "面板顶部显示助手名称与当前场景，中部为对话区，下方为四个预设问题，"
          "分别是本实验的内容、三种模式的区别、开始一次随堂小测、以及注意事项，"
          "学生不知道问什么时可直接点击；底部为输入框与发送按钮。")
-    figure("shot-05-AI对话.png", "图3-7　AI 助手对话面板", 9.0)
+    figure("shot-05-AI对话.png", "图3-7　AI 助手对话面板", 8.5)
     body("回答生成后可展开思考过程面板查看推理步骤；实验完成后可让助手分析本次操作"
          "的失误出现在哪一步，也可在报告未写时先出一份草稿。接口地址、模型名称与密钥"
          "均在数据资产 DA_JJConfig 中配置，更换服务商不需要修改蓝图；断网或密钥失效时"
