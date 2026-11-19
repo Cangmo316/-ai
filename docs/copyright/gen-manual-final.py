@@ -215,7 +215,13 @@ def _vml_caption(doc, text: str, width_cm: float, offset_pt: float, shape_id: st
 
 
 def figure(doc, name: str, label: str, caption_text: str, width_cm: float = None) -> None:
-    """横屏居中嵌入；竖屏右侧环绕 + VML 题注。"""
+    """图居中嵌入，题注紧随其下居中。
+
+    不用浮动原因：浮动图的题注要靠 VML 文本框绝对偏移，实测会飘——
+    同一页有两张图时，第一张的题注会落进第二张图的范围（y 坐标重叠），
+    图靠近页底时还会偏移 4-5 行。嵌入型由排版流决定位置，图多高、题注就在其下，
+    不会错位。
+    """
     path = IMAGES / name
     if not path.exists():
         print("  ⚠️ 缺图：%s" % name)
@@ -223,88 +229,96 @@ def figure(doc, name: str, label: str, caption_text: str, width_cm: float = None
 
     size = _png_size(path)
     landscape = bool(size) and size[0] / size[1] >= 1.0
-
-    if landscape:
-        if width_cm is None:
-            width_cm = 12.5
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_before = Pt(6)
-        p.paragraph_format.space_after = Pt(0)
-        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-        p.paragraph_format.keep_with_next = True
-        p.add_run().add_picture(str(path), width=Cm(width_cm))
-        caption(doc, f"{label}  {caption_text}", after=7, before=3)
-        return
-
-    import copy as _copy
-
     if width_cm is None:
-        width_cm = 4.2
-    target = None
-    for para_obj in reversed(doc.paragraphs):
-        if para_obj.text.strip():
-            target = para_obj
-            break
-    if target is None:
-        target = doc.add_paragraph()
-    target.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        # 竖屏取 3.4cm：高约 7.4cm ≈ 16 行，页面仍能留 30 行以上给文字
+        width_cm = 12.5 if landscape else 3.4
 
-    run = target.add_run()
-    run.add_picture(str(path), width=Cm(width_cm))
-    height_cm = width_cm * (size[1] / size[0]) if size else 9.0
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(5)
+    p.paragraph_format.space_after = Pt(0)
+    # 嵌入图所在段落必须用单倍行距，固定行距会把图裁成一行高
+    p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    p.paragraph_format.keep_with_next = True   # 图与题注不分页
+    p.add_run().add_picture(str(path), width=Cm(width_cm))
 
-    inline = run._r.find(".//" + qn("wp:inline"))
-    if inline is None:
-        return
+    cap = doc.add_paragraph()
+    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    cap.paragraph_format.space_before = Pt(1)
+    cap.paragraph_format.space_after = Pt(6)
+    cap.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    try:
+        cap.style = doc.styles["Caption"]
+    except KeyError:
+        pass
+    run = cap.add_run(f"{label}  {caption_text}")
+    font(run, 9)
+    run.font.color.rgb = RGBColor(0, 0, 0)
+    run.font.italic = False
 
-    anchor = OxmlElement("wp:anchor")
-    for key, value in (
-        ("distT", "0"), ("distB", "0"), ("distL", "114300"), ("distR", "0"),
-        ("simplePos", "0"), ("relativeHeight", "251658240"),
-        ("behindDoc", "0"), ("locked", "0"), ("layoutInCell", "1"),
-        ("allowOverlap", "1"),
-    ):
-        anchor.set(key, value)
 
-    simple = OxmlElement("wp:simplePos")
-    simple.set("x", "0")
-    simple.set("y", "0")
-    anchor.append(simple)
+def figure_row(doc, items, width_cm: float = 3.4) -> None:
+    """一行并排多图，每张图下方各自跟题注（居中）。
 
-    pos_h = OxmlElement("wp:positionH")
-    pos_h.set("relativeFrom", "margin")
-    align_h = OxmlElement("wp:align")
-    align_h.text = "right"
-    pos_h.append(align_h)
-    anchor.append(pos_h)
+    用无边框表格实现：图片与题注都放在同一个单元格里，
+    题注紧贴图片下方，位置由单元格排版保证，不会偏移。
+    """
+    cols = len(items)
+    t = doc.add_table(rows=1, cols=cols)
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    t.autofit = False
 
-    pos_v = OxmlElement("wp:positionV")
-    pos_v.set("relativeFrom", "paragraph")
-    off = OxmlElement("wp:posOffset")
-    off.text = "0"
-    pos_v.append(off)
-    anchor.append(pos_v)
+    tbl_pr = t._tbl.tblPr
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tbl_pr.append(layout)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement("w:%s" % edge)
+        el.set(qn("w:val"), "none")
+        el.set(qn("w:sz"), "0")
+        borders.append(el)
+    tbl_pr.append(borders)
 
-    for tag in ("wp:extent", "wp:effectExtent"):
-        el = inline.find(qn(tag))
-        if el is not None:
-            anchor.append(_copy.deepcopy(el))
+    cell_w = width_cm + 1.2
+    for idx, (name, label, cap_text) in enumerate(items):
+        t.columns[idx].width = Cm(cell_w)
+        cell = t.rows[0].cells[idx]
+        cell.width = Cm(cell_w)
 
-    wrap = OxmlElement("wp:wrapSquare")
-    wrap.set("wrapText", "left")
-    anchor.append(wrap)
+        p1 = cell.paragraphs[0]
+        p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p1.paragraph_format.space_before = Pt(2)
+        p1.paragraph_format.space_after = Pt(1)
+        p1.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        path = IMAGES / name
+        if path.exists():
+            p1.add_run().add_picture(str(path), width=Cm(width_cm))
+        else:
+            print("  ⚠️ 缺图：%s" % name)
 
-    for tag in ("wp:docPr", "a:graphic"):
-        el = inline.find(qn(tag))
-        if el is not None:
-            anchor.append(_copy.deepcopy(el))
+        p2 = cell.add_paragraph()
+        p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p2.paragraph_format.space_before = Pt(0)
+        p2.paragraph_format.space_after = Pt(4)
+        p2.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        try:
+            p2.style = doc.styles["Caption"]
+        except KeyError:
+            pass
+        run = p2.add_run(f"{label}  {cap_text}")
+        font(run, 9)
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        run.font.italic = False
 
-    inline.getparent().replace(inline, anchor)
+    for row in t.rows:
+        row._tr.get_or_add_trPr().append(OxmlElement("w:cantSplit"))
 
-    _vml_caption(doc, f"{label}  {caption_text}", width_cm,
-                 offset_pt=height_cm / 2.54 * 72 + 7,
-                 shape_id="cap" + label.replace("图", "").replace("-", "_"))
+    spacer = doc.add_paragraph()
+    spacer.paragraph_format.space_before = Pt(0)
+    spacer.paragraph_format.space_after = Pt(2)
+    spacer.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    spacer.paragraph_format.line_spacing = Pt(6)
 
 
 def table(doc, label: str, cap_text: str, header, rows, widths) -> None:
@@ -633,11 +647,14 @@ def build() -> Path:
               "再按编号列出操作步骤；步骤里的名称与应用内显示一致，可对照操作。")
 
     section(doc, "3.1", "登录与注册")
+    figure_row(doc, [
+        ("18-登录.png", "图3-1", "登录与注册入口"),
+        ("02-聊天详情.png", "图3-2", "对话详情"),
+    ])
     para(doc, "启动后进入登录页。页面提供账号名与密码输入框，下方有“忘记密码”“没有账号请点击注册”"
               "两个入口（如图3-1）。注册时填账号名与密码，账号名最长 20 个字符且不能与已有账号重名；"
               "注册成功即进入登录状态，系统按序分配一个 8 位数字编号作为账号唯一标识，"
               "这个编号可以给家属，用于绑定。")
-    figure(doc, "18-登录.png", "图3-1", "登录与注册入口")
     steps(doc, [
         "（1）输入账号名称。新用户先点“没有账号请点击注册”。",
         "（2）输入密码。密码框右侧有显示与隐藏的切换图标，老人打字慢时可以打开核对。",
@@ -670,7 +687,6 @@ def build() -> Path:
     para(doc, "点会话进入详情页。底部输入框打字，点发送；发送失败的消息右侧显示红色感叹号，"
               "点一下重发；长按消息可复制。回复按行分开，一行一句，不写成一大段，"
               "老人看起来轻松，语音播报时也好与口型对上（如图3-2）。")
-    figure(doc, "02-聊天详情.png", "图3-2", "对话详情")
     para(doc, "对话里有两套说法。一套是陪伴助手，用在日常聊天，句子短、用词口语，"
               "不说“您好，请问有什么可以帮您”；另一套是健康顾问，用在医疗健康话题，"
               "回答末尾补一句固定提示：仅供参考，实际情况请以医嘱为准，及时线下就医。")
@@ -697,8 +713,11 @@ def build() -> Path:
               "按住麦克风时按钮变色并显示“正在听”，松手即发送，不需要再点发送。")
 
     section(doc, "3.4", "语音与三维数字人")
+    figure_row(doc, [
+        ("10-数字人通话.png", "图3-3", "三维数字人通话"),
+        ("15-健康档案.png", "图3-4", "健康档案"),
+    ])
     para(doc, "语音做三件事：把说的话转成文字，把回复念出来，让数字人的嘴跟着动（如图3-3）。")
-    figure(doc, "10-数字人通话.png", "图3-3", "三维数字人通话")
     steps(doc, [
         "（1）在对话页按住麦克风说话，松开即发送。",
         "（2）页面显示“正在听”，识别完文字自动填入输入框；识别有误可直接改文字。",
@@ -732,7 +751,6 @@ def build() -> Path:
               "比如“饭后两小时”；列表按时间倒序，趋势图能切日、周、月。"
               "血压要求同时填高压与低压，高压范围 50 到 300、低压 30 到 200，"
               "且高压必须大于低压，填反了会提示。")
-    figure(doc, "15-健康档案.png", "图3-4", "健康档案")
     steps(doc, [
         "（1）进“我的”，点“健康档案”。",
         "（2）点右上角“记录”，选择血压、血糖或体重。",
@@ -763,10 +781,13 @@ def build() -> Path:
     ])
 
     section(doc, "3.8", "用药与日程提醒")
+    figure_row(doc, [
+        ("05-康养计划.png", "图3-5", "康养计划"),
+        ("12-智能体角色.png", "图3-6", "智能体角色列表"),
+    ])
     para(doc, "提醒分三类：日常计划是每天都要做的事，比如早饭后吃药；每周计划是每周固定某天做的事；"
               "特别计划是一次性的，比如下周三复查，过了那天不再提醒。分三类是为了不让老人"
               "把每天吃的药和下周三复查混在一起（如图3-5）。")
-    figure(doc, "05-康养计划.png", "图3-5", "康养计划")
     steps(doc, [
         "（1）进入底部“日程”，点“日常计划”添加，填事项、时刻与重复规则。",
         "（2）点“每周计划”，选星期与时刻。",
@@ -815,7 +836,6 @@ def build() -> Path:
     para(doc, "可以建多个角色，每个填名字、关系、性格、口头禅与怎么称呼（如图3-6）。"
               "关系显示在对话列表里，老人按平时的叫法就能找；设好称呼方式后，"
               "这个称呼会进入长期记忆。")
-    figure(doc, "12-智能体角色.png", "图3-6", "智能体角色列表")
     steps(doc, [
         "（1）进“我的”，点“智能体角色”。",
         "（2）点“新建角色”，填名字、关系、性格、口头禅。",
