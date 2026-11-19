@@ -26,6 +26,7 @@ from pathlib import Path
 
 FINAL = Path(r"E:\ppt\比邻AI.ppt\软著材料-终版")
 SM_SCRIPT = Path(r"E:\UI\.uni-shot\gen-copyright.py")
+MANUAL_SCRIPT = Path(r"E:\UI\.uni-shot\gen-manual-ref.py")
 FM_SCRIPT = Path(r"E:\UI\.uni-shot\gen-copyright-form.py")
 
 
@@ -66,7 +67,10 @@ def main() -> None:
                 path = sm.make_source_doc(7, 13.0)[0]
                 print("  源程序 → %s" % deliver(path).name)
             if args.only in ("manual", "all"):
-                path = sm.make_manual_doc()
+                # 说明书用参考件格式的生成器（章节编号、图X-X/表X-X、页眉页脚）
+                mr = load("mr", MANUAL_SCRIPT)
+                mr.OUT = tmp_dir
+                path = mr.build()
                 print("  说明书 → %s" % deliver(path).name)
 
         if args.only in ("form", "checklist", "all"):
