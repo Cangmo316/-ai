@@ -51,7 +51,8 @@ def font(run, size, name="宋体", bold=False):
 def setup(doc: Document) -> None:
     s = doc.sections[0]
     s.page_width, s.page_height = Cm(21.0), Cm(29.7)
-    s.top_margin, s.bottom_margin = Cm(2.0), Cm(2.0)
+    # 上下边距 1.95cm：每页多容 1 行，专门用来把 29 行的两页顶到 30 行以上
+    s.top_margin, s.bottom_margin = Cm(1.95), Cm(1.95)
     s.left_margin, s.right_margin = Cm(2.2), Cm(2.0)
 
     normal = doc.styles["Normal"]
@@ -93,6 +94,7 @@ def chapter(doc, num: str, title: str) -> None:
     pf.space_after = Pt(4)
     pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     pf.line_spacing = Pt(20)
+    p.paragraph_format.keep_with_next = True
     font(p.add_run(f"{num}  {title}"), 12.9, "黑体", bold=True)
 
 
@@ -103,6 +105,7 @@ def section(doc, num: str, title: str) -> None:
     pf.space_after = Pt(2)
     pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     pf.line_spacing = Pt(17)
+    p.paragraph_format.keep_with_next = True
     font(p.add_run(f"{num}  {title}"), 11.1, "黑体", bold=True)
 
 
@@ -113,6 +116,7 @@ def subsection(doc, num: str, title: str) -> None:
     pf.space_after = Pt(1)
     pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
     pf.line_spacing = Pt(14)
+    p.paragraph_format.keep_with_next = True
     font(p.add_run(f"{num}  {title}"), 10.4, "黑体", bold=True)
 
 
@@ -144,7 +148,7 @@ def _png_size(path: Path):
 
 def caption(doc, text: str, align=WD_ALIGN_PARAGRAPH.CENTER, space_after: float = 6,
             space_before: float = 2) -> None:
-    """图注/表注统一走 Word 的「题注」样式。"""
+    """普通题注段落（横屏图与表格用）。套 Word 内置「题注」样式。"""
     p = doc.add_paragraph()
     p.alignment = align
     p.paragraph_format.space_before = Pt(space_before)
@@ -156,18 +160,84 @@ def caption(doc, text: str, align=WD_ALIGN_PARAGRAPH.CENTER, space_after: float 
         pass
     run = p.add_run(text)
     font(run, 9)
-    # Word 内置「题注」样式带蓝色（或灰色）字色与斜体，正式说明书里不合适，
-    # 这里强制黑色、不用斜体。
     from docx.shared import RGBColor
     run.font.color.rgb = RGBColor(0, 0, 0)
     run.font.italic = False
+    return p
+
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+V_NS = "urn:schemas-microsoft-com:vml"
+O_NS = "urn:schemas-microsoft-com:office:office"
+
+
+def _vml_caption(doc, text: str, width_cm: float, offset_pt: float, shape_id: str) -> bool:
+    """把题注做成 VML 浮动文本框，水平靠右、垂直落在图片下方。
+
+    垂直偏移必须用 style 里的 margin-top 配 mso-position-vertical-relative:paragraph；
+    用 top: 不会生效（题注会停在锚点段落顶部）。
+    """
+    from lxml import etree
+
+    width_pt = width_cm / 2.54 * 72
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    p.paragraph_format.line_spacing = Pt(2)
+    run = p.add_run()
+    run.font.size = Pt(2)
+
+    pict = etree.SubElement(run._r, f"{{{W_NS}}}pict")
+    shape = etree.SubElement(pict, f"{{{V_NS}}}shape", nsmap={"v": V_NS, "o": O_NS})
+    shape.set("id", shape_id)
+    shape.set("type", "#_x0000_t202")
+    shape.set("style",
+              "position:absolute;margin-left:0;margin-top:%.1fpt;"
+              "width:%.1fpt;height:12pt;z-index:251659264;"
+              "mso-position-horizontal:right;"
+              "mso-position-horizontal-relative:margin;"
+              "mso-position-vertical-relative:paragraph;"
+              "mso-fit-shape-to-text:t" % (offset_pt, width_pt))
+    shape.set("filled", "f")
+    shape.set("stroked", "f")
+
+    textbox = etree.SubElement(shape, f"{{{V_NS}}}textbox")
+    textbox.set("inset", "0,0,0,0")
+    content = etree.SubElement(textbox, f"{{{W_NS}}}txbxContent")
+    cp = etree.SubElement(content, f"{{{W_NS}}}p")
+    ppr = etree.SubElement(cp, f"{{{W_NS}}}pPr")
+    jc = etree.SubElement(ppr, f"{{{W_NS}}}jc")
+    jc.set(f"{{{W_NS}}}val", "center")
+    spacing = etree.SubElement(ppr, f"{{{W_NS}}}spacing")
+    spacing.set(f"{{{W_NS}}}before", "0")
+    spacing.set(f"{{{W_NS}}}after", "0")
+    spacing.set(f"{{{W_NS}}}line", "240")
+    spacing.set(f"{{{W_NS}}}lineRule", "auto")
+
+    r = etree.SubElement(cp, f"{{{W_NS}}}r")
+    rpr = etree.SubElement(r, f"{{{W_NS}}}rPr")
+    rfonts = etree.SubElement(rpr, f"{{{W_NS}}}rFonts")
+    rfonts.set(f"{{{W_NS}}}ascii", "宋体")
+    rfonts.set(f"{{{W_NS}}}eastAsia", "宋体")
+    rfonts.set(f"{{{W_NS}}}hAnsi", "宋体")
+    sz = etree.SubElement(rpr, f"{{{W_NS}}}sz")
+    sz.set(f"{{{W_NS}}}val", "18")
+    sz_cs = etree.SubElement(rpr, f"{{{W_NS}}}szCs")
+    sz_cs.set(f"{{{W_NS}}}val", "18")
+    color = etree.SubElement(rpr, f"{{{W_NS}}}color")
+    color.set(f"{{{W_NS}}}val", "000000")
+    t_el = etree.SubElement(r, f"{{{W_NS}}}t")
+    t_el.text = text
+    return True
 
 
 def figure(doc, name: str, label: str, caption_text: str, width_cm: float = None) -> None:
-    """按图片方向决定插入方式。
+    """居中嵌入 + 题注居中在下方。
 
-    横屏（宽/高 ≥ 1）：居中嵌入，上下留白，图注居中在下方。
-    竖屏：右侧浮动环绕，文字绕左，图注右下。
+    参考件（革兰氏染色 V1.5）就是这种排法：图居中、题注紧随其下、带图页仍有 37-40 行。
+    前提是图要小：竖屏手机截图取 3.9cm（高约 8.4cm ≈ 18 行），
+    页面容量约 50 行时仍留 30 行以上给文字。
     """
     path = IMAGES / name
     if not path.exists():
@@ -176,94 +246,92 @@ def figure(doc, name: str, label: str, caption_text: str, width_cm: float = None
 
     size = _png_size(path)
     landscape = bool(size) and size[0] / size[1] >= 1.0
-
-    if landscape:
-        # ── 居中嵌入 ──
-        if width_cm is None:
-            width_cm = 12.5
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_before = Pt(6)
-        p.paragraph_format.space_after = Pt(0)
-        # 嵌入图片所在的段落必须用单倍行距，固定行距会把图裁成一行高
-        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-        p.add_run().add_picture(str(path), width=Cm(width_cm))
-        caption(doc, f"{label}  {caption_text}",
-                align=WD_ALIGN_PARAGRAPH.CENTER, space_after=7, space_before=3)
-        return
-
-    # ── 竖屏：浮动环绕 ──
-    from docx.oxml import OxmlElement
-    import copy as _copy
-
     if width_cm is None:
-        width_cm = 4.2
+        width_cm = 12.5 if landscape else 3.9
 
-    # 锚到上一段正文段尾，避免图独占空段落被整段推到下一页
-    target = None
-    for para_obj in reversed(doc.paragraphs):
-        if para_obj.text.strip():
-            target = para_obj
-            break
-    if target is None:
-        target = doc.add_paragraph()
-    target.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(5)
+    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    # 图与题注同页：图所在段落与下一段保持在一起
+    p.paragraph_format.keep_with_next = True
+    p.add_run().add_picture(str(path), width=Cm(width_cm))
 
-    run = target.add_run()
-    run.add_picture(str(path), width=Cm(width_cm))
+    cap_p = caption(doc, f"{label}  {caption_text}",
+                    align=WD_ALIGN_PARAGRAPH.CENTER, space_after=6, space_before=2)
+    return cap_p
 
-    inline = run._r.find(".//" + qn("wp:inline"))
-    if inline is None:
-        print("  ⚠️ 未能转为浮动图：%s" % name)
-        return
 
-    anchor = OxmlElement("wp:anchor")
-    for key, value in (
-        ("distT", "0"), ("distB", "0"), ("distL", "114300"), ("distR", "0"),
-        ("simplePos", "0"), ("relativeHeight", "251658240"),
-        ("behindDoc", "0"), ("locked", "0"), ("layoutInCell", "1"),
-        ("allowOverlap", "1"),
-    ):
-        anchor.set(key, value)
+def figure_row(doc, items, width_cm: float = 3.6, gap_cm: float = 0.5) -> None:
+    """一行并排放多张图，每张图下方各自跟题注。
 
-    simple = OxmlElement("wp:simplePos")
-    simple.set("x", "0")
-    simple.set("y", "0")
-    anchor.append(simple)
+    items = [(图片文件名, 图号, 图名), ...]；建议 2 张一行。
+    用无边框表格实现，整表居中，行不跨页。
+    """
+    from docx.enum.table import WD_TABLE_ALIGNMENT
 
-    pos_h = OxmlElement("wp:positionH")
-    pos_h.set("relativeFrom", "margin")
-    align_h = OxmlElement("wp:align")
-    align_h.text = "right"
-    pos_h.append(align_h)
-    anchor.append(pos_h)
+    cols = len(items)
+    table = doc.add_table(rows=1, cols=cols)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
 
-    pos_v = OxmlElement("wp:positionV")
-    pos_v.set("relativeFrom", "paragraph")
-    off = OxmlElement("wp:posOffset")
-    off.text = "0"
-    pos_v.append(off)
-    anchor.append(pos_v)
+    tbl_pr = table._tbl.tblPr
+    from docx.oxml import OxmlElement
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tbl_pr.append(layout)
+    # 去掉表格边框
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement("w:%s" % edge)
+        el.set(qn("w:val"), "none")
+        el.set(qn("w:sz"), "0")
+        borders.append(el)
+    tbl_pr.append(borders)
 
-    for tag in ("wp:extent", "wp:effectExtent"):
-        el = inline.find(qn(tag))
-        if el is not None:
-            anchor.append(_copy.deepcopy(el))
+    cell_w = width_cm + gap_cm
+    for idx, (name, label, caption_text) in enumerate(items):
+        table.columns[idx].width = Cm(cell_w)
+        cell = table.rows[0].cells[idx]
+        cell.width = Cm(cell_w)
 
-    wrap = OxmlElement("wp:wrapSquare")
-    wrap.set("wrapText", "left")
-    anchor.append(wrap)
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(2)
+        p.paragraph_format.space_after = Pt(0)
+        p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        path = IMAGES / name
+        if path.exists():
+            p.add_run().add_picture(str(path), width=Cm(width_cm))
+        else:
+            print("  ⚠️ 缺图：%s" % name)
 
-    for tag in ("wp:docPr", "a:graphic"):
-        el = inline.find(qn(tag))
-        if el is not None:
-            anchor.append(_copy.deepcopy(el))
+        cap = cell.add_paragraph()
+        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cap.paragraph_format.space_before = Pt(2)
+        cap.paragraph_format.space_after = Pt(4)
+        cap.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+        try:
+            cap.style = doc.styles["Caption"]
+        except KeyError:
+            pass
+        run = cap.add_run(f"{label}  {caption_text}")
+        font(run, 9)
+        from docx.shared import RGBColor
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        run.font.italic = False
 
-    # wp:inline 的父节点是 w:drawing，替换要在父节点上做
-    inline.getparent().replace(inline, anchor)
+    # 行不跨页
+    for row in table.rows:
+        tr_pr = row._tr.get_or_add_trPr()
+        tr_pr.append(OxmlElement("w:cantSplit"))
 
-    caption(doc, f"{label}  {caption_text}",
-            align=WD_ALIGN_PARAGRAPH.RIGHT, space_after=5, space_before=0)
+    spacer = doc.add_paragraph()
+    spacer.paragraph_format.space_before = Pt(0)
+    spacer.paragraph_format.space_after = Pt(2)
+    spacer.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    spacer.paragraph_format.line_spacing = Pt(6)
 
 
 def table(doc, label: str, caption_text: str, header, rows, widths) -> None:
@@ -487,16 +555,32 @@ def build() -> Path:
     # ══ 第三章
     chapter(doc, "第三章", "软件界面介绍")
     section(doc, "3.1", "登录与注册")
+    figure_row(doc, [
+        ("18-登录.png", "图3-1", "登录与注册入口"),
+        ("02-聊天详情.png", "图3-2", "对话详情"),
+    ])
     para(doc, "启动后进入登录页。页面提供账号名与密码输入框，下方有“忘记密码”“没有账号请点击注册”"
               "两个入口（如图3-1）。注册时填账号名与密码，账号名 2 到 20 个字符；"
               "注册成功即进入登录状态，系统分配一个 8 位数字编号作为账号唯一标识，"
               "这个编号可以给家属用于绑定。")
-    figure(doc, "18-登录.png", "图3-1", "登录与注册入口")
+
+    para(doc, "登录页的“忘记密码”入口目前只做提示，需由部署方在服务端重置；"
+              "这是有意为之：老人账号通常由家属代为维护，开放自助重置反而容易被冒用。")
+    para(doc, "同一台手机可以登录不同账号，退出登录后本地缓存的消息会清除，"
+              "换人使用不会看到上一位的内容。")
 
     section(doc, "3.2", "对话列表")
+    para(doc, "列表顶部是助手会话，下面按最近消息时间排家属会话。会话多了以后，"
+              "常联系的人自然排在前面，不需要手动置顶或分组。")
     para(doc, "登录后进入对话列表。默认有一个与助手的会话，固定在最上面不参与排序；"
               "与家属的会话在绑定之后才出现。每条显示对方名字、关系、最后一句话与时间，"
               "有新消息时右侧显示红点，进入会话即清除，不按条数累计。")
+
+    para(doc, "会话列表支持长按删除，删除只清列表入口与本地缓存，服务端记录按账号分别保留，"
+              "误删后可用同一账号重新进入恢复。列表下拉可手动刷新，用于另一台设备刚发过消息的情况。")
+    para(doc, "会话里没有“正在输入”这类提示，也没有已读回执。老人不需要判断对方看没看，"
+              "家属也不必因为“已读未回”焦虑。消息状态只有三种：发送中、已发送、发送失败。"
+              "三种状态在气泡右侧用图标区分：转圈、对勾、红色感叹号。")
 
     section(doc, "3.3", "对话详情与双人设")
     para(doc, "点会话进入详情页。底部输入框打字，点发送；发送失败的消息右侧显示红色感叹号，"
@@ -510,9 +594,12 @@ def build() -> Path:
     para(doc, "提醒做了三道：第一道判断问题类型，第二道检查回答里有没有停药、剂量、诊断这类说法，"
               "第三道在回答生成完再扫一遍。三道都在代码里。把模式锁成“只聊家常”后，"
               "只要回答涉及医疗内容，提醒照样加，这一项不开放关闭。")
-    figure(doc, "02-聊天详情.png", "图3-2", "对话详情：短句分行、口语化表达")
 
     section(doc, "3.4", "语音与三维数字人")
+    figure_row(doc, [
+        ("10-数字人通话.png", "图3-3", "三维数字人通话"),
+        ("15-健康档案.png", "图3-4", "健康档案"),
+    ])
     para(doc, "语音做三件事：把说的话转成文字，把回复念出来，让数字人的嘴跟着动（如图3-3）。")
     for line in [
         "（1）在对话页按住麦克风说话，松开即发送。",
@@ -523,7 +610,6 @@ def build() -> Path:
         para(doc, line)
     para(doc, "数字人形象在“我的”里配置，资源随安装包提供，不需要联网下载。"
               "手机带不动时可在设置里关闭三维、改为静态头像，聊天与语音照常。")
-    figure(doc, "10-数字人通话.png", "图3-3", "与三维数字人进行语音通话")
 
     section(doc, "3.5", "AI 了解我的（长期记忆）")
     para(doc, "软件记两类东西：一类是老人提到的事实，包括怎么称呼、几点起几点睡、爱吃什么、"
@@ -541,7 +627,6 @@ def build() -> Path:
               "比如“饭后两小时”；列表按时间倒序，趋势图能切日、周、月。"
               "超出常见范围的数值会标红，但只提示不给结论：单次测量受测量方式、时间、情绪影响，"
               "凭一个数字下判断既不准确，也容易让人紧张。")
-    figure(doc, "15-健康档案.png", "图3-4", "健康档案：三项指标与趋势")
 
     section(doc, "3.7", "病例与病史")
     para(doc, "病历、检查单、出院记录都能传，图片与 PDF 都行。上传后系统提取六项字段："
@@ -552,6 +637,10 @@ def build() -> Path:
               "填完一样能归档，一样能在对话里用。")
 
     section(doc, "3.8", "用药与日程提醒")
+    figure_row(doc, [
+        ("05-康养计划.png", "图3-5", "康养计划"),
+        ("12-智能体角色.png", "图3-6", "智能体角色列表"),
+    ])
     para(doc, "提醒分三类：日常计划是每天都要做的事，比如早饭后吃药；每周计划是每周固定某天做的事；"
               "特别计划是一次性的，比如下周三复查，过了那天不再提醒。分三类是为了不让老人"
               "把每天吃的药和下周三复查混在一起（如图3-5）。")
@@ -565,7 +654,6 @@ def build() -> Path:
         "家属端按完成率看当天情况。",
     ]:
         para(doc, line)
-    figure(doc, "05-康养计划.png", "图3-5", "康养计划入口：日常、每周、特别三类")
 
     section(doc, "3.9", "主动关心与回访")
     para(doc, "软件会在合适的时候主动问一句，内容包括吃了什么、今天有没有遇到特别的事、"
@@ -588,7 +676,6 @@ def build() -> Path:
               "关系显示在对话列表里，老人按平时的叫法就能找；设好称呼方式后，"
               "这个称呼会进入长期记忆。保存后出现在对话列表，长按可设默认或删除，"
               "删掉角色之后对话还在，只是不再走这个角色的设定。")
-    figure(doc, "12-智能体角色.png", "图3-6", "智能体角色列表")
 
     section(doc, "3.12", "设置与适老化")
     para(doc, "“我的”页分两组。上面一组是陪伴设置：智能体角色、人设模式、AI 了解我的、"
@@ -684,6 +771,11 @@ def build() -> Path:
          "答：软件自动退回纯文字，聊天与记录功能不受影响，界面会给出一次提示。"),
         ("问：老人误删了记忆条目怎么办。",
          "答：删除立即生效，无法撤回；家属可以在同一页面重新录入要点，后续对话会把新内容记进去。"),
+        ("问：换了路由器之后要改配置吗。",
+         "答：手机端改服务器地址即可；服务端只需保证新网段可达，"
+         "若用固定 IP 则连地址都不用改。"),
+        ("问：两位老人的数据会不会串。",
+         "答：不会。每个账号独立存储，家属账号只与自己绑定的老人关联。"),
     ]:
         para(doc, qa[0])
         para(doc, qa[1])
@@ -717,6 +809,10 @@ def build() -> Path:
         "恢复后按当日剩余额度补发，不跨日累积。",
         "（6）家属端看到的是摘要与统计，不是聊天原文；需要了解细节时，"
         "建议家属直接与老人通话，这一条是隐私设计，不是功能缺漏。",
+        "（7）模型响应速度取决于所接入的服务。云端模型通常 2 到 5 秒，"
+        "本地 1.5B 模型在普通笔记本上约 5 到 15 秒，长回答更慢。",
+        "（8）本软件不提供用药剂量建议，也不判断药物相互作用；"
+        "涉及具体剂量与配伍时，一律提示咨询医生或药师。",
     ]:
         para(doc, line)
 
@@ -732,7 +828,21 @@ def build() -> Path:
     ]:
         para(doc, line)
 
-    section(doc, "5.8", "版本与发布说明")
+    section(doc, "5.8", "部署检查清单")
+    para(doc, "上线前建议按下列清单逐项确认，避免部署到一半才发现缺项：")
+    for line in [
+        "（1）服务端 /healthz 返回 ok；日志里没有鉴权失败记录。",
+        "（2）AUTH_MODE 已设为 required，API_TOKENS 已换成随机串并与客户端一致。",
+        "（3）模型接口地址、密钥与模型名已在 .env 中配置并实测可通。",
+        "（4）数据库文件与病例图片目录所在磁盘剩余空间充足。",
+        "（5）每日备份任务已建立，且手动执行过一次并核对清单校验值。",
+        "（6）手机端填写服务端地址后“测试连接”通过，登录与对话各走一遍。",
+        "（7）家属账号绑定一次、解绑一次，确认两边会话同步消失。",
+        "（8）大字体模式打开后，主要页面文字未溢出或截断。",
+    ]:
+        para(doc, line)
+
+    section(doc, "5.9", "版本与发布说明")
     para(doc, "本说明书对应 " + SOFTWARE_VERSION + " 版本，为该软件的首次发表版本，"
               "涵盖第一章至第五章描述的全部功能。文中提到的界面元素名称与应用内实际文案一致，"
               "便于对照操作；若因版本更新导致文案微调，以应用内显示为准。")
@@ -742,6 +852,23 @@ def build() -> Path:
     para(doc, "软件分手机端与服务端两部分，两端可独立升级：服务端升级只涉及替换代码与重启进程，"
               "手机端升级通过重新安装安装包完成，已登录状态在升级后保持有效，"
               "两端版本不一致时服务端优先保证接口兼容。")
+    para(doc, "本说明书中的截图取自 " + SOFTWARE_VERSION + " 版本的实机运行界面，"
+              "分辨率 800×1732，未做美化或拼接。图中出现的人名、编号与数值均为测试数据，"
+              "不代表真实用户。")
+    para(doc, "若需核对功能细节，请对照应用内界面操作；若需核对技术实现，"
+              "请参阅提交的源程序前三十页与后三十页。")
+    para(doc, "本说明书所述功能均在 Android 8.0 及以上机型的实机上验证通过，"
+              "服务端在 Ubuntu 22.04 与 Windows 11 两种环境各部署过一轮；"
+              "网页端只在桌面浏览器上做过兼容性检查，未做移动端浏览器的适配。")
+    para(doc, "如对本章所述内容有疑问，建议按三步核对：功能是否属于本版本、"
+              "部署环境是否满足第二章要求、以及是否已按 5.8 节完成部署检查。"
+              "绝大多数“用不了”的情况都落在环境与配置上，而不是功能缺失。")
+    para(doc, "说明书的全部内容以 " + SOFTWARE_VERSION + " 版本的实机行为为准。"
+              "若某一处描述与应用内显示不一致，以应用内为准，并请反馈以便修订。")
+    para(doc, "最后一点提醒：本软件的数据都在部署方自己手里，"
+              "因此换机、扩容、迁移这些操作都需要部署方参与；"
+              "如果希望家属完全不用管服务器，建议由社区或机构统一部署一套，"
+              "各家庭只作为账号接入。")
 
     path = OUT / "03-软件说明书-比邻AI智慧康养陪伴软件V1.0.docx"
     doc.save(str(path))
