@@ -20,20 +20,20 @@ OUT = SRC / "jpg"
 
 # (源文件名, 输出名, 质量)
 JOBS = [
-    ("fig-00-系统架构.png", "fig-00-系统架构.jpg", 92),
-    ("shot-01-主菜单.png", "shot-01-主菜单.jpg", 86),
-    ("shot-02-设置.png", "shot-02-设置.jpg", 86),
-    ("shot-03-计时方式.png", "shot-03-计时方式.jpg", 86),
-    ("shot-04-制片阶段.png", "shot-04-制片阶段.jpg", 86),
-    ("shot-06-40倍视野-宽幅.png", "shot-06-40倍视野-宽幅.jpg", 86),
-    ("shot-07-100倍视野-宽幅.png", "shot-07-100倍视野-宽幅.jpg", 86),
-    ("shot-05-AI对话.png", "shot-05-AI对话.jpg", 86),
-    ("shot-08-林医生立绘.png", "shot-08-林医生立绘.jpg", 90),
-    ("shot-09-剧情对话.png", "shot-09-剧情对话.jpg", 86),
-    ("shot-10-随堂问答.png", "shot-10-随堂问答.jpg", 86),
+    ("fig-00-系统架构.png", "fig-00-系统架构.jpg", 90),
+    ("shot-01-主菜单.png", "shot-01-主菜单.jpg", 80),
+    ("shot-02-设置.png", "shot-02-设置.jpg", 80),
+    ("shot-03-计时方式.png", "shot-03-计时方式.jpg", 80),
+    ("shot-04-制片阶段.png", "shot-04-制片阶段.jpg", 80),
+    ("shot-06-40倍视野-宽幅.png", "shot-06-40倍视野-宽幅.jpg", 80),
+    ("shot-07-100倍视野-宽幅.png", "shot-07-100倍视野-宽幅.jpg", 80),
+    ("shot-05-AI对话.png", "shot-05-AI对话.jpg", 80),
+    ("shot-08-林医生立绘.png", "shot-08-林医生立绘.jpg", 85),
+    ("shot-09-剧情对话.png", "shot-09-剧情对话.jpg", 80),
+    ("shot-10-随堂问答.png", "shot-10-随堂问答.jpg", 80),
 ]
 
-MAX_W = 1500
+MAX_W = 1100
 
 
 def convert() -> None:
